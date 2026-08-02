@@ -15,6 +15,50 @@
   <title>ASCEND · Discipline System</title>
 </head>
 <body data-state="standby">
+  <svg class="glyph-sprite" aria-hidden="true" focusable="false">
+    <symbol id="glyph-apex" viewBox="0 0 24 24"><path d="M12 2 8.8 10.1 12 8.6l3.2 1.5L12 2Z"/><path d="m8.8 10.1-4.6 3.2 5.5-.8L12 22l2.3-9.5 5.5.8-4.6-3.2"/></symbol>
+    <symbol id="glyph-signal" viewBox="0 0 24 24"><path d="M12 3 9.4 10 12 8.8l2.6 1.2L12 3Z"/><path d="M5 13.5c2-1.4 4.2-2.1 7-2.1s5 .7 7 2.1"/><path d="M7.2 17c1.4-.9 3-1.4 4.8-1.4s3.4.5 4.8 1.4"/><path d="M10 20.2h4"/></symbol>
+    <symbol id="glyph-sleep" viewBox="0 0 24 24"><path d="M15.8 4.2a7.8 7.8 0 1 0 3.9 13.7 8.6 8.6 0 0 1-3.9-13.7Z"/><path d="m12 7-1.1 2.5L8.4 10.6l2.5 1.1L12 14.2l1.1-2.5 2.5-1.1-2.5-1.1L12 7Z"/></symbol>
+    <symbol id="glyph-wake" viewBox="0 0 24 24"><path d="M12 2 8.5 10.5 12 9l3.5 1.5L12 2Z"/><path d="M12 9v13"/><path d="m7.5 15 4.5-3.5 4.5 3.5"/></symbol>
+    <symbol id="glyph-confirm" viewBox="0 0 24 24"><path d="m12 3 5 5-5 13L7 8l5-5Z"/><path d="m9.2 11.6 2 2 4-4"/></symbol>
+    <symbol id="glyph-reset" viewBox="0 0 24 24"><path d="M5 6h14v12H5z"/><path d="M8 3v6M16 3v6M8 15h8"/></symbol>
+    <symbol id="glyph-water" viewBox="0 0 24 24"><path d="M12 2.8s-6 7.1-6 12a6 6 0 0 0 12 0c0-4.9-6-12-6-12Z"/><path d="M9.1 15.5a3.1 3.1 0 0 0 3.1 3"/></symbol>
+    <symbol id="glyph-shine" viewBox="0 0 24 24"><path d="m12 2 1.6 6.4L20 10l-6.4 1.6L12 18l-1.6-6.4L4 10l6.4-1.6L12 2Z"/><path d="m18.5 15 .7 2.8 2.8.7-2.8.7-.7 2.8-.7-2.8-2.8-.7 2.8-.7.7-2.8Z"/></symbol>
+    <symbol id="glyph-stretch" viewBox="0 0 24 24"><path d="M4 15c3.2-6.5 6.1-6.5 8.7 0 2.2 5.4 4.7 4.5 7.3-2"/><path d="M4 9c2.5 2 4.5 2 6 0s3.5-2 6 0 4 1.8 4 1.8"/></symbol>
+    <symbol id="glyph-bath" viewBox="0 0 24 24"><path d="M5 13h14v2.3a5 5 0 0 1-5 5h-4a5 5 0 0 1-5-5V13Z"/><path d="M7 13V8.5a3 3 0 0 1 6 0"/><path d="M15.5 6.2 17 4.7M18.2 9h2.1M16.7 11.7l1.5 1.5"/></symbol>
+    <symbol id="glyph-meal" viewBox="0 0 24 24"><path d="M4 11h16a8 8 0 0 1-16 0Z"/><path d="M7 7c1-1.6 2-1.6 3 0s2 1.6 3 0 2-1.6 3 0"/><path d="M8 20h8"/></symbol>
+    <symbol id="glyph-list" viewBox="0 0 24 24"><path d="M8 6h11M8 12h11M8 18h11"/><path d="m3.5 6 1 1 2-2M3.5 12l1 1 2-2M3.5 18l1 1 2-2"/></symbol>
+    <symbol id="glyph-work" viewBox="0 0 24 24"><path d="m12 3 8 9-8 9-8-9 8-9Z"/><path d="m12 7 4.5 5-4.5 5-4.5-5 4.5-5Z"/></symbol>
+    <symbol id="glyph-grid" viewBox="0 0 24 24"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z"/><path d="m15.5 17 1.3 1.3 2.4-2.8"/></symbol>
+    <symbol id="glyph-trade" viewBox="0 0 24 24"><path d="M4 19V5M4 19h16"/><path d="m7 15 4-4 3 2 5-6"/><path d="M17 7h2v2"/></symbol>
+    <symbol id="glyph-close" viewBox="0 0 24 24"><path d="M6 6 18 18M18 6 6 18"/><path d="m12 2 2.1 4.1L12 8.2 9.9 6.1 12 2Z"/></symbol>
+    <symbol id="glyph-next" viewBox="0 0 24 24"><path d="M5 12h13"/><path d="m13 6 6 6-6 6"/><path d="m5 8-2 4 2 4"/></symbol>
+    <symbol id="glyph-academic" viewBox="0 0 24 24"><path d="M4 5.5c3.1-.7 5.8-.1 8 1.8 2.2-1.9 4.9-2.5 8-1.8v13c-3.1-.7-5.8-.1-8 1.8-2.2-1.9-4.9-2.5-8-1.8v-13Z"/><path d="M12 7.3v13"/></symbol>
+    <symbol id="glyph-success" viewBox="0 0 24 24"><path d="m12 2 3.2 7.3L12 8l-3.2 1.3L12 2Z"/><path d="m6.5 13 3.2 3.2 7.8-8"/><path d="m7.5 18.5 4.5 3 4.5-3"/></symbol>
+    <symbol id="glyph-failure" viewBox="0 0 24 24"><path d="m12 2 3.2 7.2L12 8l-3.2 1.2L12 2Z"/><path d="m7 12 10 8M17 12 7 20"/></symbol>
+    <symbol id="glyph-profile" viewBox="0 0 24 24"><path d="M12 3a4 4 0 1 1 0 8 4 4 0 0 1 0-8Z"/><path d="M5 21c.7-5 3-7.5 7-7.5S18.3 16 19 21"/><path d="m12 14 1.5 2.4L12 20l-1.5-3.6L12 14Z"/></symbol>
+    <symbol id="glyph-data" viewBox="0 0 24 24"><path d="M4 7h13"/><path d="m14 4 3 3-3 3"/><path d="M20 17H7"/><path d="m10 14-3 3 3 3"/></symbol>
+    <symbol id="glyph-lock" viewBox="0 0 24 24"><path d="M6 10h12v10H6z"/><path d="M8.5 10V7a3.5 3.5 0 0 1 7 0v3"/><path d="m12 13 1.3 2-1.3 2-1.3-2 1.3-2Z"/></symbol>
+    <symbol id="glyph-chevron-left" viewBox="0 0 24 24"><path d="m15.5 5-7 7 7 7"/></symbol>
+    <symbol id="glyph-chevron-right" viewBox="0 0 24 24"><path d="m8.5 5 7 7-7 7"/></symbol>
+    <symbol id="glyph-emergency" viewBox="0 0 24 24"><path d="M12 3 21 20H3L12 3Z"/><path d="M12 8v6M12 17.5v.5"/></symbol>
+    <symbol id="glyph-update" viewBox="0 0 24 24"><path d="M5 8a8 8 0 0 1 13.5-2"/><path d="M19 3v5h-5"/><path d="M19 16a8 8 0 0 1-13.5 2"/><path d="M5 21v-5h5"/></symbol>
+    <symbol id="glyph-offline" viewBox="0 0 24 24"><path d="M4 9c4.8-4.1 11.2-4.1 16 0M7 13c3-2.5 7-2.5 10 0M10 17c1.2-1 2.8-1 4 0"/><path d="M3 3 21 21"/></symbol>
+    <symbol id="glyph-save" viewBox="0 0 24 24"><path d="M5 3h12l2 2v16H5z"/><path d="M8 3v6h8V3M8 17h8"/></symbol>
+  </svg>
+
+  <div class="launch-splash" id="launchSplash" aria-hidden="true">
+    <img src="assets/inapp-logo.png" alt="" draggable="false">
+    <strong>ASCEND</strong>
+    <small>SYSTEM LINK ESTABLISHED</small>
+  </div>
+
+  <div class="orientation-guard" id="orientationGuard" hidden>
+    <img src="assets/inapp-logo.png" alt="" draggable="false">
+    <p class="eyebrow">DISPLAY PROTOCOL</p>
+    <h1>Portrait Mode Required</h1>
+    <span>Rotate your device to continue.</span>
+  </div>
   <div class="system-grid" aria-hidden="true"></div>
   <div class="energy-field" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
 
@@ -30,7 +74,7 @@
     </header>
 
     <section class="screen setup-screen" id="setupScreen" hidden>
-      <div class="system-emblem" aria-hidden="true"><img class="system-emblem-image" src="assets/inapp-logo.png" alt="" draggable="false"></div>
+      <div class="system-emblem" aria-hidden="true"><img class="system-emblem-image" src="assets/inapp-logo.png" alt=""></div>
       <p class="eyebrow">SYSTEM INITIALIZATION</p>
       <h1>Discipline Training</h1>
       <p class="lead">Five fixed directives. Schedule-driven classes. Sequential actions. Every required subtask must be cleared before its deadline.</p>
@@ -49,7 +93,7 @@
     <section class="screen early-wake-screen" id="earlyWakeScreen" hidden>
       <div class="early-core system-panel">
         <section class="state-zone state-zone-upper early-upper" aria-label="Early wake status">
-          <div class="signal-icon" aria-hidden="true">⌁</div>
+          <div class="signal-icon glyph-frame" aria-hidden="true"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-signal"></use></svg></div>
           <p class="eyebrow">EARLY WAKE SIGN-IN</p>
           <h1>Are you fully awake?</h1>
           <p class="lead">Available from 4:00 AM to 4:59 AM. Confirm only when you are ready to begin. The completed hold time becomes your official wake time.</p>
@@ -67,9 +111,9 @@
     </section>
 
     <section class="screen sleep-window-screen" id="sleepScreen" hidden>
-      <div class="sleep-core system-panel">
+      <div class="sleep-core system-panel"><img class="state-watermark sleep-watermark" src="assets/inapp-logo.png" alt="" aria-hidden="true" draggable="false">
         <section class="state-zone state-zone-upper sleep-upper" aria-label="Recovery state">
-          <div class="sleep-symbol" aria-hidden="true">☾</div>
+          <div class="sleep-symbol glyph-frame" aria-hidden="true"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-sleep"></use></svg></div>
           <p class="eyebrow">RECOVERY STATE</p>
           <h1>Sleep Window</h1>
           <p class="sleep-range">10:00 PM – 5:00 AM</p>
@@ -170,9 +214,9 @@
         <strong id="deadlineCountdown">00:45:00 LEFT</strong>
       </div>
 
-      <article class="focus-card system-panel" id="focusCard">
+      <article class="focus-card system-panel" id="focusCard"><img class="state-watermark protocol-watermark" src="assets/inapp-logo.png" alt="" aria-hidden="true" draggable="false">
         <section class="task-zone task-zone-upper" aria-label="Current task">
-          <div class="focus-sigil" id="focusSigil" aria-hidden="true"><span id="focusIcon">↑</span></div>
+          <div class="focus-sigil glyph-frame" id="focusSigil" aria-hidden="true"><span id="focusIcon"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-wake"></use></svg></span></div>
           <p class="eyebrow" id="subtaskType">CURRENT DIRECTIVE</p>
           <h1 id="subtaskTitle">Leave your bed</h1>
           <p class="subtask-copy" id="subtaskCopy">Stand up and place both feet on the floor.</p>
@@ -203,7 +247,7 @@
     </section>
 
     <section class="screen result-screen" id="resultScreen" hidden>
-      <div class="result-emblem" id="resultEmblem">✓</div>
+      <div class="result-emblem glyph-result" id="resultEmblem"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-success"></use></svg></div>
       <div class="result-xp-burst" id="dayXpBurst" aria-hidden="true"></div>
       <p class="eyebrow" id="resultEyebrow">DAY CLEARED</p>
       <h1 id="resultTitle">Discipline Maintained</h1>
@@ -236,7 +280,7 @@
     </section>
 
     <section class="screen protocol-result-screen" id="protocolResultScreen" hidden>
-      <div class="result-emblem small" id="protocolResultEmblem">✓</div>
+      <div class="result-emblem small glyph-result" id="protocolResultEmblem"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-success"></use></svg></div>
       <div class="result-xp-burst compact" id="protocolXpBurst" aria-hidden="true"></div>
       <p class="eyebrow" id="protocolResultEyebrow">PROTOCOL CLEARED</p>
       <h1 id="protocolResultTitle">Wake Protocol Complete</h1>
@@ -260,7 +304,7 @@
   <div class="schedule-overlay" id="scheduleOverlay" hidden>
     <div class="schedule-panel system-panel">
       <section class="control-home-view" id="controlHomeView">
-        <div class="config-sigil" aria-hidden="true">◇</div>
+        <div class="config-sigil glyph-frame" aria-hidden="true"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-profile"></use></svg></div>
         <p class="eyebrow">HIDDEN SYSTEM CONTROL</p>
         <h2>System Control Center</h2>
         <p class="schedule-hint">Private progression, schedule, and academic records.</p>
@@ -273,7 +317,7 @@
       </section>
 
       <section class="academic-home-view" id="academicHomeView" hidden>
-        <div class="config-sigil" aria-hidden="true">▤</div>
+        <div class="config-sigil glyph-frame" aria-hidden="true"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-academic"></use></svg></div>
         <p class="eyebrow">ACADEMIC CONTROL</p>
         <h2>Academic Control Center</h2>
         <div class="config-summary two-stat">
@@ -293,7 +337,7 @@
         <div class="section-tabs five" id="profileTabs" aria-label="Profile sections"></div>
         <div class="profile-content" id="profileContent"></div>
         <div class="section-nav">
-          <button type="button" id="profilePrev">‹</button><span id="profilePageLabel">Identity</span><button type="button" id="profileNext">›</button>
+          <button type="button" id="profilePrev" aria-label="Previous profile section"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-chevron-left"></use></svg></button><span id="profilePageLabel">Identity</span><button type="button" id="profileNext" aria-label="Next profile section"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-chevron-right"></use></svg></button>
         </div>
         <button class="ghost-button" id="profileBack" type="button">Back</button>
       </section>
@@ -304,14 +348,14 @@
         <div class="section-tabs three" id="attendanceTabs" aria-label="Attendance sections"></div>
         <div class="attendance-content" id="attendanceContent"></div>
         <div class="section-nav" id="attendanceNav">
-          <button type="button" id="attendancePrev">‹</button><span id="attendancePageLabel">1 / 1</span><button type="button" id="attendanceNext">›</button>
+          <button type="button" id="attendancePrev" aria-label="Previous attendance record"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-chevron-left"></use></svg></button><span id="attendancePageLabel">1 / 1</span><button type="button" id="attendanceNext" aria-label="Next attendance record"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-chevron-right"></use></svg></button>
         </div>
         <button class="ghost-button" id="attendanceBack" type="button">Back</button>
       </section>
 
 
       <section class="data-backup-view" id="dataBackupView" hidden>
-        <div class="config-sigil data-sigil" aria-hidden="true">⇄</div>
+        <div class="config-sigil data-sigil glyph-frame" aria-hidden="true"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-data"></use></svg></div>
         <p class="eyebrow">LOCAL SYSTEM ARCHIVE</p>
         <h2>Data Backup & Restore</h2>
         <p class="schedule-hint">Export one offline file containing progress, attendance, schedules, tasks, settings, and milestones.</p>
@@ -346,7 +390,7 @@
         <div class="schedule-day-heading"><strong id="scheduleDayTitle">Monday</strong><span id="scheduleDayCount">0 classes</span></div>
         <div class="schedule-class-list" id="scheduleClassList"></div>
         <div class="schedule-page-nav" id="schedulePageNav" hidden>
-          <button type="button" id="schedulePagePrev">‹</button><span id="schedulePageLabel">1 / 1</span><button type="button" id="schedulePageNext">›</button>
+          <button type="button" id="schedulePagePrev" aria-label="Previous schedule page"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-chevron-left"></use></svg></button><span id="schedulePageLabel">1 / 1</span><button type="button" id="schedulePageNext" aria-label="Next schedule page"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-chevron-right"></use></svg></button>
         </div>
         <div class="schedule-overview-actions">
           <button class="system-button compact-button" id="scheduleAdd" type="button"><b>Add Class</b></button>
@@ -380,7 +424,7 @@
 
   <div class="emergency-overlay" id="emergencyOverlay" hidden>
     <div class="emergency-panel system-panel">
-      <div class="emergency-symbol">!</div>
+      <div class="emergency-symbol glyph-frame"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-emergency"></use></svg></div>
       <p class="eyebrow">EMERGENCY OVERRIDE</p>
       <h2>Exit Active Protocol?</h2>
       <p>Use only for illness, danger, urgent communication, or technical failure.</p>
@@ -402,6 +446,18 @@
   <div class="breach-warning" id="breachWarning" hidden>
     <strong id="breachTitle">FOCUS BREACH RECORDED</strong>
     <p id="breachCopy">The deadline continued while ASCEND was hidden.</p>
+  </div>
+
+
+  <div class="system-notice" id="systemNotice" hidden role="status" aria-live="polite">
+    <div class="notice-glyph"><svg class="system-glyph" viewBox="0 0 24 24"><use id="noticeGlyphUse" href="#glyph-save"></use></svg></div>
+    <div><strong id="noticeTitle">LOCAL DATA SAVED</strong><span id="noticeCopy">Device record synchronized.</span></div>
+  </div>
+
+  <div class="system-update-prompt" id="updatePrompt" hidden role="status" aria-live="polite">
+    <div class="notice-glyph"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-update"></use></svg></div>
+    <div><strong>SYSTEM UPDATE READY</strong><span>A newer ASCEND build is prepared.</span></div>
+    <button id="applyUpdate" type="button">Refresh</button>
   </div>
 
   <script src="js/storage.js"></script>

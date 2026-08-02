@@ -21,8 +21,31 @@
   let lastResultAnimationKey=null;
   let achievementSeenTimer=null;
   let backupUi={pending:null,fileName:''};
+  let noticeTimer=null;
+  let noticeHideTimer=null;
+  let saveNoticeTimer=null;
+  let lastSaveNoticeAt=0;
+  let waitingServiceWorker=null;
+  let launchDismissed=false;
+  let orientationBlocked=false;
 
   const $=selector=>document.querySelector(selector);
+  const glyphNames=new Set(['apex','signal','sleep','wake','confirm','reset','water','shine','stretch','bath','meal','list','work','grid','trade','close','next','academic','success','failure','profile','data','lock','chevron-left','chevron-right','emergency','update','offline','save']);
+  const glyphAlias={
+    '◇':'apex','◆':'confirm','✦':'shine','⌁':'stretch','◈':'academic','A':'apex',
+    '↑':'wake','▰':'reset','◉':'water','◒':'meal','▤':'list','◎':'work','▦':'grid','✓':'success','×':'close','→':'next','☾':'sleep'
+  };
+  const normalizeGlyph=value=>glyphNames.has(value)?value:(glyphAlias[value]||'apex');
+  const glyphMarkup=(name,className='system-glyph')=>`<svg class="${className}" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#glyph-${normalizeGlyph(name)}"></use></svg>`;
+  const setGlyph=(target,name)=>{const element=typeof target==='string'?document.getElementById(target):target;if(!element)return;element.innerHTML=glyphMarkup(name);element.dataset.glyph=normalizeGlyph(name)};
+  const safeSession=(()=>{
+    const memory=new Map();
+    return{
+      get:key=>{try{return sessionStorage.getItem(key)}catch(error){return memory.get(key)||null}},
+      set:(key,value)=>{try{sessionStorage.setItem(key,String(value))}catch(error){memory.set(key,String(value))}},
+      remove:key=>{try{sessionStorage.removeItem(key)}catch(error){memory.delete(key)}}
+    };
+  })();
   const screens=['setupScreen','earlyWakeScreen','sleepScreen','freeScreen','classScreen','protocolScreen','resultScreen','protocolResultScreen'];
   const pad=n=>String(Math.max(0,Math.floor(n))).padStart(2,'0');
   const clamp=(value,min,max)=>Math.min(max,Math.max(min,value));
@@ -44,7 +67,37 @@
     if(screen){void screen.offsetWidth;screen.classList.add('screen-enter')}
     activeScreenId=id;
   };
-  const save=()=>S.save(state);
+  const noticeGlyphs={save:'save',backup:'data',restore:'confirm',offline:'offline',online:'signal',update:'update',installed:'success'};
+  const showSystemNotice=(kind,title,copy,duration=2300)=>{
+    const notice=$('#systemNotice');if(!notice)return;
+    clearTimeout(noticeTimer);clearTimeout(noticeHideTimer);
+    notice.className=`system-notice notice-${kind}`;
+    $('#noticeTitle').textContent=title;$('#noticeCopy').textContent=copy;
+    $('#noticeGlyphUse').setAttribute('href',`#glyph-${noticeGlyphs[kind]||'apex'}`);
+    notice.hidden=false;void notice.offsetWidth;notice.classList.add('notice-show');
+    noticeTimer=setTimeout(()=>{notice.classList.remove('notice-show');noticeHideTimer=setTimeout(()=>{notice.hidden=true},180)},duration);
+  };
+  const queueSaveNotice=()=>{
+    clearTimeout(saveNoticeTimer);
+    if(!state.initialized||!launchDismissed||document.hidden)return;
+    saveNoticeTimer=setTimeout(()=>{
+      const now=Date.now();if(now-lastSaveNoticeAt<2800)return;
+      lastSaveNoticeAt=now;showSystemNotice('save','LOCAL DATA SAVED','Device record synchronized.',1500);
+    },520);
+  };
+  const save=(options={})=>{const saved=S.save(state);if(!options.silent)queueSaveNotice();return saved};
+  const dismissLaunchSplash=()=>{
+    const splash=$('#launchSplash');if(!splash||launchDismissed)return;
+    const delay=Math.max(0,430-performance.now());
+    setTimeout(()=>{splash.classList.add('launch-leave');setTimeout(()=>{splash.hidden=true;launchDismissed=true;const installed=safeSession.get('ascend-update-installed');safeSession.remove('ascend-update-reloading');if(installed){safeSession.remove('ascend-update-installed');showSystemNotice('installed','SYSTEM UPDATE INSTALLED','ASCEND is running the newest cached build.',2600)}},220)},delay);
+  };
+  const updateOrientationGuard=()=>{
+    const touchDevice=navigator.maxTouchPoints>0||matchMedia('(pointer:coarse)').matches;
+    orientationBlocked=touchDevice&&innerWidth>innerHeight&&innerHeight<=620&&innerWidth<=1100;
+    document.body.classList.toggle('orientation-blocked',orientationBlocked);
+    const guard=$('#orientationGuard');if(guard)guard.hidden=!orientationBlocked;
+    if(orientationBlocked){cancelHold();releaseWakeLock()}else if(activeProtocolRecord())requestWakeLock();
+  };
   const currentKey=()=>S.dateKey(new Date());
   const requiredProtocolCount=5;
 
@@ -70,58 +123,58 @@
 
   const protocolBlueprints=[
     {
-      id:'wake',short:'WAKE',name:'Wake Protocol',icon:'↑',start:'05:00',end:'06:00',xp:120,
+      id:'wake',short:'WAKE',name:'Wake Protocol',icon:'wake',start:'05:00',end:'06:00',xp:120,
       prep:'Water must be ready before sleep. The directive begins when your wake time is recorded.',
       subtasks:()=>[
-        {id:'wake-confirm',title:'Wake state confirmed',copy:variants('Official wake time recorded.','Player consciousness confirmed.'),icon:'◇',type:'system'},
-        {id:'leave-bed',title:'Leave your bed',copy:variants('Stand up and place both feet on the floor. Do not return to bed.','Rise immediately. Remaining in bed is not permitted.'),icon:'↑',type:'hold'},
-        {id:'make-bed',title:'Make your bed',copy:variants('Restore order immediately. Finish the bed before continuing.','Restore the sleeping area before progression.'),icon:'▰',type:'hold'},
-        {id:'hydrate',title:'Drink one full glass of water',copy:variants('Hydration is required before progression.','Drink one full glass of water.'),icon:'◉',type:'hold'},
-        {id:'hygiene',title:'Brush teeth and wash face',copy:variants('Complete basic morning hygiene before continuing.','Brush your teeth and wash your face.'),icon:'✦',type:'hold'},
-        {id:'stretch',title:'Morning Stretch Dungeon',copy:variants('Complete fifteen minutes of controlled full-body stretching.','Restore mobility for fifteen uninterrupted minutes.'),icon:'⌁',type:'timer',duration:15},
-        {id:'bath',title:'Take a bath',copy:variants('Complete your bath and prepare yourself for the day.','Finish bathing before the Wake Protocol deadline.'),icon:'◇',type:'hold'}
+        {id:'wake-confirm',title:'Wake state confirmed',copy:variants('Official wake time recorded.','Player consciousness confirmed.'),icon:'confirm',type:'system'},
+        {id:'leave-bed',title:'Leave your bed',copy:variants('Stand up and place both feet on the floor. Do not return to bed.','Rise immediately. Remaining in bed is not permitted.'),icon:'wake',type:'hold'},
+        {id:'make-bed',title:'Make your bed',copy:variants('Restore order immediately. Finish the bed before continuing.','Restore the sleeping area before progression.'),icon:'reset',type:'hold'},
+        {id:'hydrate',title:'Drink one full glass of water',copy:variants('Hydration is required before progression.','Drink one full glass of water.'),icon:'water',type:'hold'},
+        {id:'hygiene',title:'Brush teeth and wash face',copy:variants('Complete basic morning hygiene before continuing.','Brush your teeth and wash your face.'),icon:'shine',type:'hold'},
+        {id:'stretch',title:'Morning Stretch Dungeon',copy:variants('Complete fifteen minutes of controlled full-body stretching.','Restore mobility for fifteen uninterrupted minutes.'),icon:'stretch',type:'timer',duration:15},
+        {id:'bath',title:'Take a bath',copy:variants('Complete your bath and prepare yourself for the day.','Finish bathing before the Wake Protocol deadline.'),icon:'confirm',type:'hold'}
       ]
     },
     {
-      id:'breakfast',short:'MEAL',name:'Breakfast Protocol',icon:'◒',start:'06:00',end:'07:00',xp:90,
+      id:'breakfast',short:'MEAL',name:'Breakfast Protocol',icon:'meal',start:'06:00',end:'07:00',xp:90,
       prep:'Prepare a proper breakfast with protein and enough food for healthy weight gain.',
       subtasks:()=>[
-        {id:'breakfast-prepare',title:'Prepare breakfast',copy:variants('Prepare a complete morning meal.','Begin meal preparation immediately.'),icon:'▤',type:'hold'},
-        {id:'breakfast-eat',title:'Eat a proper breakfast',copy:variants('Finish the prepared meal. Do not intentionally skip it.','Complete the full morning meal.'),icon:'◒',type:'hold'},
-        {id:'breakfast-water',title:'Drink one glass of water',copy:variants('Complete morning hydration with the meal.','Drink one full glass of water.'),icon:'◉',type:'hold'},
-        {id:'breakfast-quality',title:'Confirm nutrition standard',copy:variants('Confirm that the meal included protein and enough food to support healthy weight gain.','Protein and sufficient food are required.'),icon:'✓',type:'tap'}
+        {id:'breakfast-prepare',title:'Prepare breakfast',copy:variants('Prepare a complete morning meal.','Begin meal preparation immediately.'),icon:'list',type:'hold'},
+        {id:'breakfast-eat',title:'Eat a proper breakfast',copy:variants('Finish the prepared meal. Do not intentionally skip it.','Complete the full morning meal.'),icon:'meal',type:'hold'},
+        {id:'breakfast-water',title:'Drink one glass of water',copy:variants('Complete morning hydration with the meal.','Drink one full glass of water.'),icon:'water',type:'hold'},
+        {id:'breakfast-quality',title:'Confirm nutrition standard',copy:variants('Confirm that the meal included protein and enough food to support healthy weight gain.','Protein and sufficient food are required.'),icon:'success',type:'tap'}
       ]
     },
     {
-      id:'dinner',short:'DINNER',name:'Dinner Protocol',icon:'◒',start:'19:30',end:'20:00',xp:90,
+      id:'dinner',short:'DINNER',name:'Dinner Protocol',icon:'meal',start:'19:30',end:'20:00',xp:90,
       prep:'Prepare dinner before the fixed window so the evening schedule remains protected.',
       subtasks:()=>[
-        {id:'dinner-prepare',title:'Prepare dinner',copy:variants('Prepare the evening meal without delaying the protocol.','Begin dinner preparation.'),icon:'▤',type:'hold'},
-        {id:'dinner-eat',title:'Eat the full meal',copy:variants('Complete the evening meal within the fixed window.','Finish your dinner.'),icon:'◒',type:'hold'},
-        {id:'dinner-water',title:'Drink one glass of water',copy:variants('Complete hydration with dinner.','Drink one full glass of water.'),icon:'◉',type:'hold'},
-        {id:'dinner-quality',title:'Confirm nutrition standard',copy:variants('Confirm that dinner included protein and enough food for recovery and healthy weight gain.','Confirm the meal supported recovery.'),icon:'✓',type:'tap'}
+        {id:'dinner-prepare',title:'Prepare dinner',copy:variants('Prepare the evening meal without delaying the protocol.','Begin dinner preparation.'),icon:'list',type:'hold'},
+        {id:'dinner-eat',title:'Eat the full meal',copy:variants('Complete the evening meal within the fixed window.','Finish your dinner.'),icon:'meal',type:'hold'},
+        {id:'dinner-water',title:'Drink one glass of water',copy:variants('Complete hydration with dinner.','Drink one full glass of water.'),icon:'water',type:'hold'},
+        {id:'dinner-quality',title:'Confirm nutrition standard',copy:variants('Confirm that dinner included protein and enough food for recovery and healthy weight gain.','Confirm the meal supported recovery.'),icon:'success',type:'tap'}
       ]
     },
     {
-      id:'productivity',short:'WORK',name:'Productivity Protocol',icon:'◎',start:'20:00',end:'21:00',xp:180,
+      id:'productivity',short:'WORK',name:'Productivity Protocol',icon:'work',start:'20:00',end:'21:00',xp:180,
       prep:'Prepare your workspace. Saved subjects, deadlines, unfinished tasks, and trading notes will synchronize here.',
       subtasks:()=>[
-        {id:'environment-reset',title:'Environment Reset Dungeon',copy:variants('Clear the desk, remove distractions, and prepare your laptop, charger, notes, and water.','Restore the work environment before execution.'),icon:'▦',type:'timer',duration:10},
-        {id:'subject-audit',title:'Subject Task Audit',copy:variants('Review each linked subject, enter pending work, and assign deadlines.','Audit each subject before selecting tonight’s execution plan.'),icon:'▤',type:'audit'},
-        {id:'execution-plan',title:'Choose tonight’s execution mode',copy:variants('Select one priority, divide the session across subjects, or use Academic Maintenance when nothing is pending.','Choose the work pattern that matches the actual workload.'),icon:'◎',type:'planner'},
-        {id:'trading-review',title:'Trading Discipline Review',copy:variants('Review positions or watchlists, check risk limits, and record one observation. A no-trade decision is valid.','Review the market without forcing an entry.'),icon:'◇',type:'trading',duration:8},
-        {id:'productivity-close',title:'Close the productivity session',copy:variants('Save work, preserve unfinished tasks, and close unnecessary tabs and applications.','Secure all outputs and end the session cleanly.'),icon:'✓',type:'hold'}
+        {id:'environment-reset',title:'Environment Reset Dungeon',copy:variants('Clear the desk, remove distractions, and prepare your laptop, charger, notes, and water.','Restore the work environment before execution.'),icon:'grid',type:'timer',duration:10},
+        {id:'subject-audit',title:'Subject Task Audit',copy:variants('Review each linked subject, enter pending work, and assign deadlines.','Audit each subject before selecting tonight’s execution plan.'),icon:'list',type:'audit'},
+        {id:'execution-plan',title:'Choose tonight’s execution mode',copy:variants('Select one priority, divide the session across subjects, or use Academic Maintenance when nothing is pending.','Choose the work pattern that matches the actual workload.'),icon:'work',type:'planner'},
+        {id:'trading-review',title:'Trading Discipline Review',copy:variants('Review positions or watchlists, check risk limits, and record one observation. A no-trade decision is valid.','Review the market without forcing an entry.'),icon:'trade',type:'trading',duration:8},
+        {id:'productivity-close',title:'Close the productivity session',copy:variants('Save work, preserve unfinished tasks, and close unnecessary tabs and applications.','Secure all outputs and end the session cleanly.'),icon:'success',type:'hold'}
       ]
     },
     {
-      id:'shutdown',short:'SLEEP',name:'Shutdown Protocol',icon:'☾',start:'21:00',end:'22:00',xp:120,
+      id:'shutdown',short:'SLEEP',name:'Shutdown Protocol',icon:'sleep',start:'21:00',end:'22:00',xp:120,
       prep:'The day is not cleared until work is closed, tomorrow is prepared, and bedtime is protected.',
       subtasks:()=>[
-        {id:'close-day',title:'Close the day',copy:variants('Save all work, close school and trading apps, close unnecessary tabs, and turn on Do Not Disturb.','End all productive and entertainment activity.'),icon:'×',type:'hold'},
-        {id:'prepare-tomorrow',title:'Prepare tomorrow’s essentials',copy:variants('Prepare clothes, bag, documents, chargers, water, and confirm the 5:00 AM alarm.','Remove every avoidable obstacle from tomorrow morning.'),icon:'→',type:'hold'},
-        {id:'night-hygiene',title:'Night hygiene and shower',copy:variants('Take a shower, brush teeth, wash face, use the bathroom, and complete necessary personal care.','Complete the full night hygiene routine.'),icon:'✦',type:'hold'},
-        {id:'wind-down',title:'Screen-Free Wind-Down Dungeon',copy:variants('Remain screen-free for fifteen minutes. Quiet rest, prayer, breathing, or gentle stretching are allowed.','No browsing, videos, games, trading, or schoolwork.'),icon:'☾',type:'timer',duration:15},
-        {id:'bed',title:'Enter bed and turn off the lights',copy:variants('The day is complete. Enter bed and turn off the lights.','Final directive: bed, lights off, no further phone use.'),icon:'☾',type:'hold',holdDuration:3000}
+        {id:'close-day',title:'Close the day',copy:variants('Save all work, close school and trading apps, close unnecessary tabs, and turn on Do Not Disturb.','End all productive and entertainment activity.'),icon:'close',type:'hold'},
+        {id:'prepare-tomorrow',title:'Prepare tomorrow’s essentials',copy:variants('Prepare clothes, bag, documents, chargers, water, and confirm the 5:00 AM alarm.','Remove every avoidable obstacle from tomorrow morning.'),icon:'next',type:'hold'},
+        {id:'night-hygiene',title:'Night hygiene and shower',copy:variants('Take a shower, brush teeth, wash face, use the bathroom, and complete necessary personal care.','Complete the full night hygiene routine.'),icon:'shine',type:'hold'},
+        {id:'wind-down',title:'Screen-Free Wind-Down Dungeon',copy:variants('Remain screen-free for fifteen minutes. Quiet rest, prayer, breathing, or gentle stretching are allowed.','No browsing, videos, games, trading, or schoolwork.'),icon:'sleep',type:'timer',duration:15},
+        {id:'bed',title:'Enter bed and turn off the lights',copy:variants('The day is complete. Enter bed and turn off the lights.','Final directive: bed, lights off, no further phone use.'),icon:'sleep',type:'hold',holdDuration:3000}
       ]
     }
   ];
@@ -214,7 +267,7 @@
     save();
     const config=blueprint(protocol.id);
     show('protocolResultScreen');
-    $('#protocolResultEmblem').classList.remove('failed');$('#protocolResultEmblem').textContent='✓';
+    $('#protocolResultEmblem').classList.remove('failed');setGlyph('protocolResultEmblem','success');
     $('#protocolResultEyebrow').textContent=protocol.boss?'WEEKLY BOSS DEFEATED':'PROTOCOL CLEARED';
     $('#protocolResultTitle').textContent=`${protocol.name} Complete`;
     $('#protocolResultMessage').textContent='Every required subtask was completed before the deadline.';
@@ -496,7 +549,10 @@
       boss:[150,60,150,60,260],
       attendance:[130,50,190],
       dismissal:[100,40,100,40,190],
-      emergency:[320,90,320]
+      emergency:[320,90,320],
+      hold:[18],
+      'hold-mid':[28],
+      'hold-final':[38]
     }[kind]||[60];
     navigator.vibrate(pattern);
   };
@@ -661,7 +717,7 @@
     const selected=plan.selectedIds.includes(task.id);
     $('#customTaskArea').innerHTML=`
       <div class="task-picker"><span>${plan.index+1} / ${tasks.length}</span><strong>${escapeHtml(task.title)}</strong><small>${escapeHtml(task.subjectName)} · ${task.deadline||'No deadline'} · ${task.difficulty}</small></div>
-      <div class="picker-nav"><button type="button" data-custom="task-prev">‹</button><button class="${selected?'selected':''}" type="button" data-custom="task-toggle">${plan.mode==='single'?'Select This Task':selected?'Selected':'Add to Sprint'}</button><button type="button" data-custom="task-next">›</button></div>
+      <div class="picker-nav"><button type="button" data-custom="task-prev" aria-label="Previous task">${glyphMarkup('chevron-left')}</button><button class="${selected?'selected':''}" type="button" data-custom="task-toggle">${plan.mode==='single'?'Select This Task':selected?'Selected':'Add to Sprint'}</button><button type="button" data-custom="task-next" aria-label="Next task">${glyphMarkup('chevron-right')}</button></div>
       <button class="confirm-plan" type="button" data-custom="confirm-plan" ${plan.selectedIds.length?'':'disabled'}>Confirm ${plan.mode==='single'?'Priority':`${plan.selectedIds.length} Task Sprint`}</button>`;
   };
 
@@ -720,7 +776,7 @@
     const punctual=protocolOnTime(record,protocol);$('#punctualityBadge').textContent=task.type==='timer'||task.type==='academic'||task.type==='trading'?`FOCUS ${focusIntegrity(protocol)}%`:punctual?'ON TIME':'LATE';$('#punctualityBadge').classList.toggle('late',!punctual);
     $('#deadlineCountdown').textContent=`${formatDuration(deadlineMs)} LEFT`;
     $('#focusSigil').hidden=['audit','planner','academic','trading'].includes(task.type);
-    $('#focusIcon').textContent=task.icon||config.icon;$('#subtaskType').textContent=protocol.boss&&['execution-plan'].includes(task.id)?'WEEKLY BOSS DIRECTIVE':'CURRENT DIRECTIVE';
+    setGlyph('focusIcon',task.icon||config.icon);$('#subtaskType').textContent=protocol.boss&&['execution-plan'].includes(task.id)?'WEEKLY BOSS DIRECTIVE':'CURRENT DIRECTIVE';
     $('#subtaskTitle').textContent=task.title;$('#subtaskCopy').textContent=stepCopy(task);
     $('#completedSteps').textContent=`${protocol.steps.filter(step=>step.status==='completed').length} / ${protocol.steps.length} completed`;
     $('#protocolXp').textContent=`${Math.round(config.xp*(protocol.boss?1.35:1))} XP available`;
@@ -734,7 +790,7 @@
 
   const renderResult=record=>{
     releaseWakeLock();show('resultScreen');document.body.dataset.state=record.status==='cleared'?'active':'critical';
-    const cleared=record.status==='cleared';$('#resultEmblem').classList.toggle('failed',!cleared);$('#resultEmblem').textContent=cleared?'✓':'×';
+    const cleared=record.status==='cleared';$('#resultEmblem').classList.toggle('failed',!cleared);setGlyph('resultEmblem',cleared?'success':'failure');
     $('#resultEyebrow').textContent=cleared?(record.rankAdvanced?'RANK ADVANCED':record.perfectClear?'PERFECT CLEAR':record.weeklyBossCleared?'WEEKLY BOSS DEFEATED':'DAY CLEARED'):'DAY FAILED';
     $('#resultTitle').textContent=cleared?'Discipline Maintained':'Discipline Broken';
     $('#resultMessage').textContent=cleared?'Every required protocol was completed before the daily cutoff.':'At least one required protocol failed. Daily XP and the streak were lost.';
@@ -790,10 +846,22 @@
     }
   };
 
-  const cancelHold=(owner=null)=>{if(!holdSession)return;if(owner&&holdSession.owner!==owner)return;cancelAnimationFrame(holdSession.raf);holdSession.onProgress?.(0);holdSession=null};
+  const cancelHold=(owner=null)=>{
+    if(!holdSession)return;if(owner&&holdSession.owner!==owner)return;
+    cancelAnimationFrame(holdSession.raf);holdSession.onProgress?.(0);
+    if(navigator.vibrate)navigator.vibrate(0);
+    document.body.classList.remove('hold-active');delete document.body.dataset.holdOwner;holdSession=null;
+  };
   const beginHold=(owner,duration,onProgress,onComplete)=>{
-    cancelHold();const started=performance.now();
-    const frame=now=>{const progress=clamp((now-started)/duration,0,1);onProgress?.(progress);if(progress>=1){holdSession=null;onProgress?.(0);onComplete()}else holdSession.raf=requestAnimationFrame(frame)};
+    cancelHold();const started=performance.now(),checkpoints=[.25,.5,.75],checkpointOwners=new Set(['brand','schedule-access','emergency-exit','clock-backup']);let checkpointIndex=0;
+    document.body.classList.add('hold-active');document.body.dataset.holdOwner=owner;
+    const frame=now=>{
+      const progress=clamp((now-started)/duration,0,1);onProgress?.(progress);
+      if(checkpointOwners.has(owner)&&checkpointIndex<checkpoints.length&&progress>=checkpoints[checkpointIndex]){haptic(checkpointIndex===1?'hold-mid':'hold');checkpointIndex+=1}
+      if(progress>=1){
+        holdSession=null;onProgress?.(0);document.body.classList.remove('hold-active');delete document.body.dataset.holdOwner;haptic('hold-final');onComplete();
+      }else holdSession.raf=requestAnimationFrame(frame);
+    };
     holdSession={owner,raf:requestAnimationFrame(frame),onProgress};
   };
 
@@ -819,10 +887,10 @@
   const installAcademicPlan=(protocol,planner,mode,selectedIds=[])=>{
     protocol.steps=protocol.steps.filter(step=>!step.generatedAcademic);
     const plannerIndex=protocol.steps.indexOf(planner);const total=protocol.boss?30:25;let generated=[];
-    if(mode==='maintenance')generated=[{id:`academic-maintenance-${Date.now()}`,title:protocol.boss?'Weekly Boss Academic Maintenance':'Academic Maintenance',copy:variants('Review notes, read ahead, organize files, or prepare for the next class.','Use the block to strengthen academic readiness.'),icon:'◎',type:'academic',duration:total,generatedAcademic:true,status:'pending',startedAt:null,completedAt:null}];
+    if(mode==='maintenance')generated=[{id:`academic-maintenance-${Date.now()}`,title:protocol.boss?'Weekly Boss Academic Maintenance':'Academic Maintenance',copy:variants('Review notes, read ahead, organize files, or prepare for the next class.','Use the block to strengthen academic readiness.'),icon:'work',type:'academic',duration:total,generatedAcademic:true,status:'pending',startedAt:null,completedAt:null}];
     else{
       const tasks=selectedIds.map(id=>state.academicTasks.find(task=>task.id===id)).filter(Boolean);const each=Math.max(5,Math.floor(total/tasks.length));let remaining=total;
-      generated=tasks.map((task,index)=>{const duration=index===tasks.length-1?remaining:each;remaining-=duration;return{id:`academic-${task.id}-${Date.now()}-${index}`,title:task.title,copy:variants(`Execute ${task.subjectName}: ${task.title}.`,`Complete a focused block for ${task.subjectName}.`),icon:'◈',type:'academic',duration,taskId:task.id,generatedAcademic:true,status:'pending',startedAt:null,completedAt:null}});
+      generated=tasks.map((task,index)=>{const duration=index===tasks.length-1?remaining:each;remaining-=duration;return{id:`academic-${task.id}-${Date.now()}-${index}`,title:task.title,copy:variants(`Execute ${task.subjectName}: ${task.title}.`,`Complete a focused block for ${task.subjectName}.`),icon:'academic',type:'academic',duration,taskId:task.id,generatedAcademic:true,status:'pending',startedAt:null,completedAt:null}});
     }
     protocol.steps.splice(plannerIndex+1,0,...generated);planner.status='completed';planner.startedAt=planner.startedAt||new Date().toISOString();planner.completedAt=new Date().toISOString();save();renderApp();
   };
@@ -979,7 +1047,8 @@
     const academic=overallAcademicStats(),achievements=achievementList(),unlockedTitles=achievements.filter(item=>item.unlocked).map(item=>item.title);
     if(!unlockedTitles.includes(state.player.title)){state.player.title=unlockedTitles[0]||'Discipline Initiate';save()}
     if(controlUi.profilePage===0){
-      $('#profileContent').innerHTML=`<div class="profile-identity"><div class="profile-emblem">${escapeHtml(state.player.emblem||'◇')}</div><div><span>PLAYER</span><strong>${escapeHtml(state.player.codename||state.player.name)}</strong><small>${escapeHtml(state.player.title)}</small></div></div><div class="profile-form"><label>Name<input id="profileNameEdit" type="text" maxlength="40" value="${escapeHtml(state.player.name)}"></label><label>Codename<input id="profileCodenameEdit" type="text" maxlength="24" value="${escapeHtml(state.player.codename||'')}"></label><label>Emblem<select id="profileEmblemEdit">${['◇','◆','✦','⌁','◈','A'].map(value=>`<option ${value===state.player.emblem?'selected':''}>${value}</option>`).join('')}</select></label><label>Title<select id="profileTitleEdit">${unlockedTitles.map(value=>`<option ${value===state.player.title?'selected':''}>${escapeHtml(value)}</option>`).join('')}</select></label></div><button class="custom-primary" type="button" data-profile-action="save-identity">Save Identity</button>`;
+      const emblemOptions=[['apex','Apex'],['confirm','Shard'],['shine','Radiance'],['stretch','Flow'],['academic','Scholar'],['work','Core']],activeEmblem=normalizeGlyph(state.player.emblem);
+      $('#profileContent').innerHTML=`<div class="profile-identity"><div class="profile-emblem">${glyphMarkup(activeEmblem)}</div><div><span>PLAYER</span><strong>${escapeHtml(state.player.codename||state.player.name)}</strong><small>${escapeHtml(state.player.title)}</small></div></div><div class="profile-form"><label>Name<input id="profileNameEdit" type="text" maxlength="40" value="${escapeHtml(state.player.name)}"></label><label>Codename<input id="profileCodenameEdit" type="text" maxlength="24" value="${escapeHtml(state.player.codename||'')}"></label><label>Emblem<select id="profileEmblemEdit">${emblemOptions.map(([value,label])=>`<option value="${value}" ${value===activeEmblem?'selected':''}>${label}</option>`).join('')}</select></label><label>Title<select id="profileTitleEdit">${unlockedTitles.map(value=>`<option ${value===state.player.title?'selected':''}>${escapeHtml(value)}</option>`).join('')}</select></label></div><button class="custom-primary" type="button" data-profile-action="save-identity">Save Identity</button>`;
     }else if(controlUi.profilePage===1){
       const required=clearDaysRequired(state.player.level),nextRank=state.player.pendingRank||eligibleRank(state.player.level,state.player.rank)||'S';
       const progress=state.player.mastered?100:required?Math.round(state.player.levelClearDays/required*100):100;
@@ -989,7 +1058,7 @@
       const all=protocolBlueprints.map(config=>({config,stats:directiveStats(config.id)}));const selected=all[clamp(controlUi.directiveIndex,0,all.length-1)];
       const strongest=[...all].sort((a,b)=>b.stats.completionRate-a.stats.completionRate)[0],weakest=[...all].sort((a,b)=>a.stats.completionRate-b.stats.completionRate)[0];
       const days=Object.values(state.dayRecords),integrityValues=days.flatMap(day=>Object.values(day.protocols||{}).map(focusIntegrity));const integrity=integrityValues.length?Math.round(integrityValues.reduce((a,b)=>a+b,0)/integrityValues.length):100;
-      $('#profileContent').innerHTML=`<div class="stat-grid"><div><span>CURRENT STREAK</span><strong>${state.player.streak}</strong></div><div><span>BEST STREAK</span><strong>${state.player.bestStreak}</strong></div><div><span>PERFECT CLEARS</span><strong>${state.player.perfectClears||0}</strong></div><div><span>FOCUS INTEGRITY</span><strong>${integrity}%</strong></div></div><div class="profile-detail directive-detail"><span>${escapeHtml(selected.config.name.toUpperCase())}</span><strong>${selected.stats.completionRate}% CLEAR · ${selected.stats.onTimeRate}% ON TIME</strong><small>${selected.stats.clears} clears · Most missed: ${escapeHtml(selected.stats.mostMissed)}</small><div class="mini-nav"><button type="button" data-profile-action="directive-prev">‹</button><b>${controlUi.directiveIndex+1} / ${all.length}</b><button type="button" data-profile-action="directive-next">›</button></div></div><div class="analysis-line"><span>STRONGEST</span><strong>${escapeHtml(strongest.config.name)}</strong><span>WEAKEST</span><strong>${escapeHtml(weakest.config.name)}</strong></div>`;
+      $('#profileContent').innerHTML=`<div class="stat-grid"><div><span>CURRENT STREAK</span><strong>${state.player.streak}</strong></div><div><span>BEST STREAK</span><strong>${state.player.bestStreak}</strong></div><div><span>PERFECT CLEARS</span><strong>${state.player.perfectClears||0}</strong></div><div><span>FOCUS INTEGRITY</span><strong>${integrity}%</strong></div></div><div class="profile-detail directive-detail"><span>${escapeHtml(selected.config.name.toUpperCase())}</span><strong>${selected.stats.completionRate}% CLEAR · ${selected.stats.onTimeRate}% ON TIME</strong><small>${selected.stats.clears} clears · Most missed: ${escapeHtml(selected.stats.mostMissed)}</small><div class="mini-nav"><button type="button" data-profile-action="directive-prev" aria-label="Previous directive">${glyphMarkup('chevron-left')}</button><b>${controlUi.directiveIndex+1} / ${all.length}</b><button type="button" data-profile-action="directive-next" aria-label="Next directive">${glyphMarkup('chevron-right')}</button></div></div><div class="analysis-line"><span>STRONGEST</span><strong>${escapeHtml(strongest.config.name)}</strong><span>WEAKEST</span><strong>${escapeHtml(weakest.config.name)}</strong></div>`;
     }else if(controlUi.profilePage===3){
       const highest=[...academic.subjects].sort((a,b)=>b.level-a.level||b.xp-a.xp)[0];
       const analysis=academic.attendanceRate>=90?'Attendance is reliable.':academic.required?'Attendance consistency needs reinforcement.':'Add classes to begin academic habit tracking.';
@@ -999,7 +1068,7 @@
       const pageSize=4,totalPages=Math.max(1,Math.ceil(achievements.length/pageSize));controlUi.achievementPage=clamp(controlUi.achievementPage,0,totalPages-1);
       const pageItems=achievements.slice(controlUi.achievementPage*pageSize,(controlUi.achievementPage+1)*pageSize),seen=new Set(state.player.achievementSeen||[]);
       const newIds=pageItems.filter(item=>item.unlocked&&!seen.has(item.id)).map(item=>item.id);
-      $('#profileContent').innerHTML=`<div class="achievement-summary"><span>UNLOCKED TITLES</span><strong>${achievements.filter(item=>item.unlocked).length} / ${achievements.length}</strong></div><div class="achievement-list">${pageItems.map(item=>`<div class="achievement-row ${item.unlocked?'unlocked':'locked'} ${item.unlocked&&!seen.has(item.id)?'new':''}"><div class="achievement-status">${item.unlocked?'✓':'◇'}</div><div><strong>${escapeHtml(item.title)}</strong><small>${item.unlocked?`Unlocked ${formatShortDate(item.unlockedAt)}`:'Locked'}</small><em class="achievement-requirement">${escapeHtml(item.detail)}</em></div>${item.unlocked&&!seen.has(item.id)?'<b>NEW</b>':''}</div>`).join('')}</div><div class="mini-nav achievement-nav"><button type="button" data-profile-action="achievement-prev">‹</button><b>${controlUi.achievementPage+1} / ${totalPages}</b><button type="button" data-profile-action="achievement-next">›</button></div>`;
+      $('#profileContent').innerHTML=`<div class="achievement-summary"><span>UNLOCKED TITLES</span><strong>${achievements.filter(item=>item.unlocked).length} / ${achievements.length}</strong></div><div class="achievement-list">${pageItems.map(item=>`<div class="achievement-row ${item.unlocked?'unlocked':'locked'} ${item.unlocked&&!seen.has(item.id)?'new':''}"><div class="achievement-status">${glyphMarkup(item.unlocked?'success':'lock')}</div><div><strong>${escapeHtml(item.title)}</strong><small>${item.unlocked?`Unlocked ${formatShortDate(item.unlockedAt)}`:'Locked'}</small><em class="achievement-requirement">${escapeHtml(item.detail)}</em></div>${item.unlocked&&!seen.has(item.id)?'<b>NEW</b>':''}</div>`).join('')}</div><div class="mini-nav achievement-nav"><button type="button" data-profile-action="achievement-prev" aria-label="Previous achievements">${glyphMarkup('chevron-left')}</button><b>${controlUi.achievementPage+1} / ${totalPages}</b><button type="button" data-profile-action="achievement-next" aria-label="Next achievements">${glyphMarkup('chevron-right')}</button></div>`;
       clearTimeout(achievementSeenTimer);
       if(newIds.length)achievementSeenTimer=setTimeout(()=>{state.player.achievementSeen=[...new Set([...(state.player.achievementSeen||[]),...newIds])];save();document.querySelectorAll('.achievement-row.new').forEach(row=>row.classList.remove('new'))},1500);
     }
@@ -1057,10 +1126,10 @@
     return `ascend-backup-${S.dateKey(now)}-${time}.json`;
   };
   const exportDataBackup=()=>{
-    state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'backup',message:'Local ASCEND backup exported.'});save();
+    state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'backup',message:'Local ASCEND backup exported.'});save({silent:true});
     const blob=new Blob([S.createBackup(state)],{type:'application/json'}),url=URL.createObjectURL(blob),link=document.createElement('a');
     link.href=url;link.download=backupFilename();link.hidden=true;document.body.appendChild(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1500);
-    systemFeedback('clear','Backup exported.');renderDataBackup();
+    systemFeedback('clear','Backup exported.');showSystemNotice('backup','BACKUP COMPLETE','Offline archive downloaded successfully.',2400);renderDataBackup();
   };
   const clearBackupPreview=()=>{backupUi={pending:null,fileName:''};$('#backupFileInput').value='';renderDataBackup()};
   const previewBackupFile=async file=>{
@@ -1075,8 +1144,8 @@
     if(!backupUi.pending)return;
     state=backupUi.pending;
     state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'restore',message:`Local ASCEND backup restored${backupUi.fileName?`: ${backupUi.fileName}`:''}.`});
-    save();backupUi={pending:null,fileName:''};controlUi.correction=false;scheduleUi.editId=null;activeScreenId=null;
-    closeScheduleOverlay();renderApp();showBreachWarning('BACKUP RESTORED','Progress, schedules, attendance, tasks, settings, and milestones were restored.','clear');
+    save({silent:true});backupUi={pending:null,fileName:''};controlUi.correction=false;scheduleUi.editId=null;activeScreenId=null;
+    closeScheduleOverlay();renderApp();showSystemNotice('restore','BACKUP RESTORED','Progress and local records were replaced safely.',2800);showBreachWarning('BACKUP RESTORED','Progress, schedules, attendance, tasks, settings, and milestones were restored.','clear');
   };
   const openControlOverlay=()=>{
     if(activeProtocolRecord()||classStateAt(new Date())||$('#freeScreen').hidden)return;
@@ -1136,7 +1205,43 @@
   const startBrandEmergencyHold=()=>{if(!activeProtocolRecord())return;beginHold('brand',6000,progress=>{const brand=$('#systemBrand');brand.style.setProperty('--emergency-progress',`${progress*360}deg`);brand.style.setProperty('--emergency-glow',`${8+progress*16}px`);brand.style.setProperty('--emergency-scale',String(1+progress*.045));brand.classList.toggle('emergency-arming',progress>.02)},()=>{resetBrandEmergencyHold();openEmergencyOverlay('brand-hold')})};
   const armClockBackup=()=>{clockArmedUntil=Date.now()+6000;$('#clockPanel').classList.add('backup-armed');showBreachWarning('OVERRIDE GESTURE ARMED','Hold the clock for 3 seconds to open Emergency Override.');setTimeout(()=>{if(Date.now()>=clockArmedUntil)$('#clockPanel').classList.remove('backup-armed')},6100)};
 
+  const revealUpdatePrompt=worker=>{
+    if(!worker||waitingServiceWorker===worker)return;waitingServiceWorker=worker;
+    const prompt=$('#updatePrompt');if(prompt){prompt.hidden=false;void prompt.offsetWidth;prompt.classList.add('update-show')}
+    showSystemNotice('update','SYSTEM UPDATE READY','Refresh when you are ready to load the newest build.',3000);
+  };
+  const setupServiceWorker=()=>{
+    if(!('serviceWorker' in navigator))return;
+    navigator.serviceWorker.register('./service-worker.js').then(registration=>{
+      if(registration.waiting&&navigator.serviceWorker.controller)revealUpdatePrompt(registration.waiting);
+      registration.addEventListener('updatefound',()=>{
+        const worker=registration.installing;if(!worker)return;
+        worker.addEventListener('statechange',()=>{if(worker.state==='installed'&&navigator.serviceWorker.controller)revealUpdatePrompt(worker)});
+      });
+      registration.update().catch(()=>{});
+    }).catch(()=>{});
+    navigator.serviceWorker.addEventListener('controllerchange',()=>{
+      if(safeSession.get('ascend-update-reloading'))return;
+      safeSession.set('ascend-update-reloading','1');
+      safeSession.set('ascend-update-installed','1');
+      location.reload();
+    });
+  };
+
   const wireEvents=()=>{
+    $('#applyUpdate').addEventListener('click',()=>{
+      if(!waitingServiceWorker)return;
+      safeSession.remove('ascend-update-reloading');
+      $('#applyUpdate').disabled=true;$('#applyUpdate').textContent='Applying';
+      waitingServiceWorker.postMessage({type:'SKIP_WAITING'});
+    });
+    window.addEventListener('offline',()=>showSystemNotice('offline','OFFLINE MODE','ASCEND will continue using device storage.',3000));
+    window.addEventListener('online',()=>showSystemNotice('online','CONNECTION RESTORED','Local operation remains synchronized.',2200));
+    window.addEventListener('resize',updateOrientationGuard,{passive:true});
+    window.addEventListener('orientationchange',()=>setTimeout(updateOrientationGuard,80),{passive:true});
+    window.addEventListener('blur',()=>cancelHold());
+    document.addEventListener('pointerup',()=>cancelHold());
+    document.addEventListener('pointercancel',()=>cancelHold());
     $('#activateButton').addEventListener('click',()=>{const name=$('#playerName').value.trim();if(!name){$('#playerName').focus();return}state.player.name=name;state.initialized=true;state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'system',message:'Discipline System activated at Level 1.'});save();renderApp()});
     $('#earlyWakeButton').addEventListener('pointerdown',event=>{event.preventDefault();beginHold('early-wake',2000,progress=>{$('#earlyWakeFill').style.width=`${progress*100}%`},confirmEarlyWake)});
     ['pointerup','pointercancel','pointerleave'].forEach(type=>$('#earlyWakeButton').addEventListener(type,()=>cancelHold('early-wake')));
@@ -1175,7 +1280,7 @@
     $('#profileContent').addEventListener('click',event=>{
       const button=event.target.closest('[data-profile-action]');if(!button)return;const action=button.dataset.profileAction;
       if(action==='save-identity'){
-        const name=$('#profileNameEdit')?.value.trim(),codename=$('#profileCodenameEdit')?.value.trim()||'',emblem=$('#profileEmblemEdit')?.value||'◇',title=$('#profileTitleEdit')?.value||'Discipline Initiate';
+        const name=$('#profileNameEdit')?.value.trim(),codename=$('#profileCodenameEdit')?.value.trim()||'',emblem=normalizeGlyph($('#profileEmblemEdit')?.value||'apex'),title=$('#profileTitleEdit')?.value||'Discipline Initiate';
         if(!name){showBreachWarning('NAME REQUIRED','Player name cannot be empty.');return}
         state.player.name=name;state.player.codename=codename;state.player.emblem=emblem;state.player.title=title;state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'profile',message:'Player identity updated.'});save();systemFeedback('clear','Profile saved.');renderProfile();return;
       }
@@ -1205,13 +1310,13 @@
 
     $('#scheduleOverlay').addEventListener('click',event=>{if(event.target===$('#scheduleOverlay'))closeScheduleOverlay()});
     $('#emergencyOverlay').addEventListener('click',event=>{if(event.target===$('#emergencyOverlay'))closeEmergencyOverlay()});
-    document.querySelectorAll('.brand-mark-image,.system-emblem-image,.free-watermark').forEach(image=>{
+    document.querySelectorAll('.brand-mark-image,.system-emblem-image,.free-watermark,.state-watermark,.launch-splash img,.orientation-guard img').forEach(image=>{
       image.draggable=false;
       image.addEventListener('dragstart',event=>event.preventDefault());
       image.addEventListener('contextmenu',event=>event.preventDefault());
     });
     document.addEventListener('contextmenu',event=>{
-      if(event.target.closest('.brand,.system-emblem,.free-watermark'))event.preventDefault();
+      if(event.target.closest('.brand,.system-emblem,.free-watermark,.state-watermark,.hold-button,.compact-status,.glyph-frame'))event.preventDefault();
     });
     $('#systemBrand').addEventListener('pointerdown',event=>{event.preventDefault();startBrandEmergencyHold()});
     ['pointerup','pointercancel','pointerleave'].forEach(type=>$('#systemBrand').addEventListener(type,()=>{cancelHold('brand');resetBrandEmergencyHold()}));
@@ -1243,7 +1348,8 @@
     window.addEventListener('pageshow',renderApp);window.addEventListener('focus',renderApp);
   };
 
-  const tick=()=>{updateClock();if(holdSession||transitionLocked||!$('#scheduleOverlay').hidden)return;renderApp()};
-  if('serviceWorker' in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js').catch(()=>{}))}
-  wireEvents();renderApp();setInterval(tick,1000);
+  const tick=()=>{updateClock();if(orientationBlocked||holdSession||transitionLocked||!$('#scheduleOverlay').hidden)return;renderApp()};
+  wireEvents();updateOrientationGuard();renderApp();dismissLaunchSplash();setupServiceWorker();
+  if(!navigator.onLine)setTimeout(()=>showSystemNotice('offline','OFFLINE MODE','ASCEND is operating from device storage.',2600),900);
+  setInterval(tick,1000);
 })();
