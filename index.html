@@ -1,0 +1,377 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no">
+  <meta name="theme-color" content="#020510">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="description" content="ASCEND is a fixed-time, sequential self-discipline and academic attendance system.">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="assets/icon-192.png">
+  <link rel="apple-touch-icon" href="assets/icon-192.png">
+  <link rel="stylesheet" href="css/style.css">
+  <title>ASCEND · Discipline System</title>
+</head>
+<body data-state="standby">
+  <div class="system-grid" aria-hidden="true"></div>
+  <div class="energy-field" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+
+  <main class="app-shell" id="appShell">
+    <header class="topbar">
+      <button class="brand" id="systemBrand" type="button" aria-label="ASCEND System">
+        <span class="brand-mark"><b>A</b></span>
+        <span class="brand-copy"><strong>ASCEND</strong><small>DISCIPLINE SYSTEM</small></span>
+      </button>
+      <button class="clock" id="clockPanel" type="button" aria-label="Current time">
+        <strong id="clockTime">--:--:--</strong><span id="clockDate">---</span>
+      </button>
+    </header>
+
+    <section class="screen setup-screen" id="setupScreen" hidden>
+      <div class="system-emblem" aria-hidden="true"><span>◇</span></div>
+      <p class="eyebrow">SYSTEM INITIALIZATION</p>
+      <h1>Discipline Training</h1>
+      <p class="lead">Five fixed directives. Schedule-driven classes. Sequential actions. Every required subtask must be cleared before its deadline.</p>
+      <label class="field-label" for="playerName">Player name</label>
+      <input class="field selectable" id="playerName" type="text" maxlength="40" placeholder="Enter your name" autocomplete="name">
+      <div class="setup-summary system-panel">
+        <span>Maximum level</span><strong>50</strong>
+        <span>Wake directive</span><strong>5:00 AM</strong>
+        <span>Class window</span><strong>7:30 AM–7:30 PM</strong>
+        <span>Final deadline</span><strong>10:00 PM</strong>
+      </div>
+      <p class="setup-help">During a Free Window, hold the Level–Rank–Streak panel for 5 seconds. Emergency override: hold the ASCEND emblem for 6 seconds.</p>
+      <button class="system-button" id="activateButton" type="button"><span></span><b>Activate System</b></button>
+    </section>
+
+    <section class="screen early-wake-screen" id="earlyWakeScreen" hidden>
+      <div class="early-core system-panel">
+        <section class="state-zone state-zone-upper early-upper" aria-label="Early wake status">
+          <div class="signal-icon" aria-hidden="true">⌁</div>
+          <p class="eyebrow">EARLY WAKE SIGN-IN</p>
+          <h1>Are you fully awake?</h1>
+          <p class="lead">Available from 4:00 AM to 4:59 AM. Confirm only when you are ready to begin. The completed hold time becomes your official wake time.</p>
+        </section>
+        <section class="state-zone state-zone-middle early-middle" aria-label="Scheduled wake time">
+          <div class="early-time"><span>SCHEDULED WAKE</span><strong>5:00 AM</strong></div>
+        </section>
+        <section class="state-zone state-zone-lower early-lower" aria-label="Early wake actions">
+          <button class="system-button hold-button" id="earlyWakeButton" type="button">
+            <span class="hold-fill" id="earlyWakeFill"></span><b>Hold to Confirm Awake</b>
+          </button>
+          <button class="ghost-button" id="notYetButton" type="button">Not Yet</button>
+        </section>
+      </div>
+    </section>
+
+    <section class="screen sleep-window-screen" id="sleepScreen" hidden>
+      <div class="sleep-core system-panel">
+        <section class="state-zone state-zone-upper sleep-upper" aria-label="Recovery state">
+          <div class="sleep-symbol" aria-hidden="true">☾</div>
+          <p class="eyebrow">RECOVERY STATE</p>
+          <h1>Sleep Window</h1>
+          <p class="sleep-range">10:00 PM – 5:00 AM</p>
+        </section>
+        <section class="state-zone state-zone-middle sleep-middle" aria-label="Next wake countdown">
+          <span class="sleep-kicker">NEXT WAKE DIRECTIVE</span>
+          <div class="sleep-countdown" id="sleepCountdown">00:00:00</div>
+          <strong class="sleep-next-time" id="sleepNextTime">Today at 5:00 AM</strong>
+        </section>
+        <section class="state-zone state-zone-lower sleep-lower" aria-label="Recovery guidance">
+          <p class="sleep-message" id="sleepMessage">Early Wake Sign-In unlocks at 4:00 AM.</p>
+        </section>
+      </div>
+    </section>
+
+    <section class="screen free-screen" id="freeScreen" hidden>
+      <div class="compact-status" id="compactStatus" aria-label="Hold for hidden System Control Center">
+        <div><span>LEVEL</span><strong id="freeLevel">1</strong></div>
+        <div><span>RANK</span><strong id="freeRank">E</strong></div>
+        <div><span>STREAK</span><strong id="freeStreak">0</strong></div>
+      </div>
+
+      <div class="free-core system-panel">
+        <section class="state-zone state-zone-upper free-upper" aria-label="Next scheduled state">
+          <p class="eyebrow" id="freeEyebrow">FREE WINDOW</p>
+          <span class="directive-kicker" id="freeKicker">NEXT DIRECTIVE</span>
+          <h1 id="freeTitle">Wake Protocol</h1>
+          <p class="next-time" id="freeNextTime">Starts at 5:00 AM</p>
+        </section>
+        <section class="state-zone state-zone-middle free-middle" aria-label="Time remaining">
+          <div class="countdown" id="freeCountdown">00:00:00</div>
+        </section>
+        <section class="state-zone state-zone-lower free-lower" aria-label="Preparation and status">
+          <p class="prep-note" id="freePrep">Prepare for the next directive.</p>
+          <div class="free-status-copy"><span id="freeProgressText">0 / 3 clear days</span><strong id="disciplineState">COMPLIANCE</strong></div>
+        </section>
+      </div>
+    </section>
+
+    <section class="screen class-screen" id="classScreen" hidden>
+      <div class="class-head">
+        <div>
+          <p class="eyebrow" id="classEyebrow">CLASS ATTENDANCE</p>
+          <h2 id="classWindow">9:30 AM – 11:00 AM</h2>
+        </div>
+        <span class="class-status-chip" id="classStatusChip">CHECK-IN</span>
+      </div>
+
+      <article class="class-card system-panel">
+        <section class="state-zone state-zone-upper class-upper" aria-label="Class identity">
+          <span class="class-code" id="classCode">SUBJECT</span>
+          <h1 id="classTitle">Research 2</h1>
+          <p class="class-location" id="classLocation">Room / Online</p>
+        </section>
+        <section class="state-zone state-zone-middle class-middle" aria-label="Class timing and status">
+          <div class="class-countdown" id="classCountdown">00:15:00</div>
+          <p class="class-question" id="classQuestion">Are you already in class?</p>
+        </section>
+        <section class="state-zone state-zone-lower class-lower" aria-label="Class actions">
+          <div class="class-action-grid" id="classCheckinActions">
+            <button class="system-button compact-button hold-button" id="classConfirmButton" type="button"><span class="hold-fill" id="classConfirmFill"></span><b>Hold to Confirm Present</b></button>
+            <button class="ghost-button" type="button" data-class-action="not-yet">Not There Yet</button>
+            <button class="ghost-button" type="button" data-class-action="cancelled">Class Cancelled</button>
+            <button class="ghost-button danger-ghost" type="button" data-class-action="absent">Mark Absent</button>
+          </div>
+
+          <div class="class-action-grid" id="classActiveActions" hidden>
+            <button class="system-button compact-button" type="button" data-class-action="dismissed">Dismissed</button>
+            <button class="ghost-button" type="button" data-class-action="ongoing">Still Ongoing</button>
+            <button class="ghost-button" type="button" data-class-action="dismissed-early">Dismissed Early</button>
+            <button class="ghost-button danger-ghost" type="button" data-class-action="cancelled">Class Was Cancelled</button>
+          </div>
+
+          <div class="class-action-grid" id="classResolveActions" hidden>
+            <button class="system-button compact-button" type="button" data-class-action="resolve-present">I Attended</button>
+            <button class="ghost-button" type="button" data-class-action="resolve-late">I Was Late</button>
+            <button class="ghost-button" type="button" data-class-action="cancelled">Class Was Cancelled</button>
+            <button class="ghost-button danger-ghost" type="button" data-class-action="absent">I Was Absent</button>
+          </div>
+
+          <p class="class-footnote" id="classFootnote">Attendance XP is finalized after dismissal is recorded.</p>
+        </section>
+      </article>
+    </section>
+
+    <section class="screen protocol-screen" id="protocolScreen" hidden>
+      <div class="protocol-head">
+        <div>
+          <p class="eyebrow" id="protocolLabel">WAKE PROTOCOL</p>
+          <h2 id="protocolWindow">5:00 AM – 6:00 AM</h2>
+        </div>
+        <div class="step-count"><strong id="stepCurrent">1</strong><span>/</span><b id="stepTotal">7</b></div>
+      </div>
+
+      <div class="deadline-row">
+        <span id="punctualityBadge">ON TIME</span>
+        <strong id="deadlineCountdown">00:45:00 LEFT</strong>
+      </div>
+
+      <article class="focus-card system-panel" id="focusCard">
+        <section class="task-zone task-zone-upper" aria-label="Current task">
+          <div class="focus-sigil" id="focusSigil" aria-hidden="true"><span id="focusIcon">↑</span></div>
+          <p class="eyebrow" id="subtaskType">CURRENT DIRECTIVE</p>
+          <h1 id="subtaskTitle">Leave your bed</h1>
+          <p class="subtask-copy" id="subtaskCopy">Stand up and place both feet on the floor.</p>
+        </section>
+
+        <section class="task-zone task-zone-middle" aria-label="Task timing and details">
+          <div class="subtask-timer" id="subtaskTimer" hidden>
+            <strong id="timerValue">00:00</strong>
+            <span id="timerCaption">REQUIRED TIME</span>
+          </div>
+
+          <div class="custom-task-area" id="customTaskArea" hidden></div>
+        </section>
+
+        <section class="task-zone task-zone-lower" aria-label="Task action">
+          <button class="system-button action-button" id="actionButton" type="button">
+            <span class="hold-fill" id="holdFill"></span>
+            <b id="actionLabel">Hold to Confirm</b>
+          </button>
+          <p class="focus-note" id="focusNote">Complete this action before continuing.</p>
+        </section>
+      </article>
+
+      <div class="protocol-status-line">
+        <span id="completedSteps">0 completed</span>
+        <strong id="protocolXp">100 XP</strong>
+      </div>
+    </section>
+
+    <section class="screen result-screen" id="resultScreen" hidden>
+      <div class="result-emblem" id="resultEmblem">✓</div>
+      <p class="eyebrow" id="resultEyebrow">DAY CLEARED</p>
+      <h1 id="resultTitle">Discipline Maintained</h1>
+      <p class="lead" id="resultMessage">Every required directive was completed.</p>
+      <div class="result-seal" id="resultSeal" hidden>PERFECT CLEAR</div>
+
+      <div class="result-grid">
+        <div><span>Protocols</span><strong id="resultProtocols">5/5</strong></div>
+        <div><span>On time</span><strong id="resultOnTime">100%</strong></div>
+        <div><span>XP earned</span><strong id="resultXp">0</strong></div>
+        <div><span>Level · Rank</span><strong id="resultLevel">1 · E</strong></div>
+      </div>
+
+      <div class="auto-reward" id="autoReward">
+        <span>AUTOMATIC REWARD</span>
+        <strong id="rewardText">Recovery and leisure unlocked.</strong>
+      </div>
+
+      <div class="mastery-message" id="masteryMessage" hidden>
+        <span>SELF-DISCIPLINE MASTERED</span>
+        <strong>External enforcement is no longer required.</strong>
+        <div class="mastery-actions">
+          <button type="button" data-mastery="graduate">Graduate</button>
+          <button type="button" data-mastery="maintenance">Maintenance</button>
+          <button type="button" data-mastery="new-path">New Path</button>
+        </div>
+      </div>
+
+      <p class="tomorrow-note" id="tomorrowNote">Tomorrow begins again at 5:00 AM.</p>
+    </section>
+
+    <section class="screen protocol-result-screen" id="protocolResultScreen" hidden>
+      <div class="result-emblem small" id="protocolResultEmblem">✓</div>
+      <p class="eyebrow" id="protocolResultEyebrow">PROTOCOL CLEARED</p>
+      <h1 id="protocolResultTitle">Wake Protocol Complete</h1>
+      <p class="lead" id="protocolResultMessage">All required subtasks were completed.</p>
+      <div class="protocol-result-stats">
+        <div><span>Completed</span><strong id="protocolResultTime">5:42 AM</strong></div>
+        <div><span>Result</span><strong id="protocolResultStatus">ON TIME</strong></div>
+        <div><span>XP</span><strong id="protocolResultXp">+100</strong></div>
+      </div>
+      <p class="transition-copy">Loading next System state…</p>
+    </section>
+  </main>
+
+  <div class="system-overlay" id="systemOverlay" hidden>
+    <div class="portal-rings" aria-hidden="true"><i></i><i></i><i></i></div>
+    <p id="overlayEyebrow">SUBTASK CONFIRMED</p>
+    <h2 id="overlayTitle">Directive Complete</h2>
+    <strong id="overlayValue">2 / 7</strong>
+  </div>
+
+  <div class="schedule-overlay" id="scheduleOverlay" hidden>
+    <div class="schedule-panel system-panel">
+      <section class="control-home-view" id="controlHomeView">
+        <div class="config-sigil" aria-hidden="true">◇</div>
+        <p class="eyebrow">HIDDEN SYSTEM CONTROL</p>
+        <h2>System Control Center</h2>
+        <p class="schedule-hint">Private progression, schedule, and academic records.</p>
+        <div class="control-actions">
+          <button class="system-button compact-button" id="openPlayerProfile" type="button"><b>Player Profile</b></button>
+          <button class="system-button compact-button secondary-system-button" id="openAcademicControl" type="button"><b>Academic Control Center</b></button>
+        </div>
+        <button class="ghost-button" id="scheduleClose" type="button">Close</button>
+      </section>
+
+      <section class="academic-home-view" id="academicHomeView" hidden>
+        <div class="config-sigil" aria-hidden="true">▤</div>
+        <p class="eyebrow">ACADEMIC CONTROL</p>
+        <h2>Academic Control Center</h2>
+        <div class="config-summary two-stat">
+          <div><span>ACTIVE CLASSES</span><strong id="scheduleHomeCount">0</strong></div>
+          <div><span>ACADEMIC XP</span><strong id="academicHomeXp">0</strong></div>
+        </div>
+        <div class="control-actions">
+          <button class="system-button compact-button" id="scheduleConfigEdit" type="button"><b>Class Schedule</b></button>
+          <button class="system-button compact-button secondary-system-button" id="openAttendance" type="button"><b>Attendance & Progress</b></button>
+        </div>
+        <button class="ghost-button" id="academicBack" type="button">Back</button>
+      </section>
+
+      <section class="profile-view" id="profileView" hidden>
+        <p class="eyebrow">HIDDEN PLAYER RECORD</p>
+        <h2>Player Profile</h2>
+        <div class="section-tabs five" id="profileTabs" aria-label="Profile sections"></div>
+        <div class="profile-content" id="profileContent"></div>
+        <div class="section-nav">
+          <button type="button" id="profilePrev">‹</button><span id="profilePageLabel">Identity</span><button type="button" id="profileNext">›</button>
+        </div>
+        <button class="ghost-button" id="profileBack" type="button">Back</button>
+      </section>
+
+      <section class="attendance-view" id="attendanceView" hidden>
+        <p class="eyebrow">ACADEMIC RECORD</p>
+        <h2>Attendance & Progress</h2>
+        <div class="section-tabs three" id="attendanceTabs" aria-label="Attendance sections"></div>
+        <div class="attendance-content" id="attendanceContent"></div>
+        <div class="section-nav" id="attendanceNav">
+          <button type="button" id="attendancePrev">‹</button><span id="attendancePageLabel">1 / 1</span><button type="button" id="attendanceNext">›</button>
+        </div>
+        <button class="ghost-button" id="attendanceBack" type="button">Back</button>
+      </section>
+
+      <section class="schedule-overview-view" id="scheduleOverviewView" hidden>
+        <p class="eyebrow">SCHEDULE OVERVIEW</p>
+        <h2>Class Schedule</h2>
+        <p class="schedule-hint">Choose a day, then select a class to edit. Changes affect future meetings only.</p>
+        <div class="schedule-week-tabs" id="scheduleWeekTabs" aria-label="Choose weekday"></div>
+        <div class="schedule-day-heading"><strong id="scheduleDayTitle">Monday</strong><span id="scheduleDayCount">0 classes</span></div>
+        <div class="schedule-class-list" id="scheduleClassList"></div>
+        <div class="schedule-page-nav" id="schedulePageNav" hidden>
+          <button type="button" id="schedulePagePrev">‹</button><span id="schedulePageLabel">1 / 1</span><button type="button" id="schedulePageNext">›</button>
+        </div>
+        <div class="schedule-overview-actions">
+          <button class="system-button compact-button" id="scheduleAdd" type="button"><b>Add Class</b></button>
+          <button class="ghost-button" id="scheduleOverviewBack" type="button">Back</button>
+        </div>
+      </section>
+
+      <section class="schedule-edit-view" id="scheduleEditView" hidden>
+        <p class="eyebrow">CLASS CONFIGURATION</p>
+        <h2 id="scheduleEditTitle">Edit Class</h2>
+        <p class="schedule-hint">Future prompts update immediately. Existing attendance, XP, and task history are preserved.</p>
+        <div class="schedule-form">
+          <label>Subject<input class="selectable" id="scheduleSubject" type="text" maxlength="50" placeholder="Subject name"></label>
+          <label>Code<input class="selectable" id="scheduleCode" type="text" maxlength="12" placeholder="Optional code"></label>
+          <label>Day<select class="selectable" id="scheduleDay"><option value="1">Monday</option><option value="2">Tuesday</option><option value="3">Wednesday</option><option value="4">Thursday</option><option value="5">Friday</option><option value="6">Saturday</option><option value="0">Sunday</option></select></label>
+          <label>Modality<select class="selectable" id="scheduleModality"><option value="Onsite">Onsite</option><option value="Online">Online</option><option value="Hybrid">Hybrid</option></select></label>
+          <label>Location<input class="selectable" id="scheduleRoom" type="text" maxlength="30" placeholder="Room / Meeting link"></label>
+          <label>Start<span class="time-shell"><input class="selectable" id="scheduleStart" type="time" value="08:00"></span></label>
+          <label>End<span class="time-shell"><input class="selectable" id="scheduleEnd" type="time" value="09:00"></span></label>
+        </div>
+        <div class="schedule-edit-actions">
+          <button class="ghost-button" id="scheduleBack" type="button">Back</button>
+          <button class="system-button compact-button" id="scheduleSave" type="button"><b id="scheduleSaveLabel">Save Changes</b></button>
+        </div>
+        <button class="danger-button hold-button schedule-delete-button" id="scheduleDelete" type="button">
+          <span class="hold-fill" id="scheduleDeleteFill"></span><b>Hold to Delete Class</b>
+        </button>
+      </section>
+    </div>
+  </div>
+
+  <div class="emergency-overlay" id="emergencyOverlay" hidden>
+    <div class="emergency-panel system-panel">
+      <div class="emergency-symbol">!</div>
+      <p class="eyebrow">EMERGENCY OVERRIDE</p>
+      <h2>Exit Active Protocol?</h2>
+      <p>Use only for illness, danger, urgent communication, or technical failure.</p>
+      <label for="emergencyReason">Reason</label>
+      <select class="selectable" id="emergencyReason">
+        <option value="health">Health or illness</option>
+        <option value="personal">Personal emergency</option>
+        <option value="communication">Urgent communication</option>
+        <option value="technical">Technical problem</option>
+        <option value="other">Other emergency</option>
+      </select>
+      <button class="danger-button hold-button" id="confirmEmergencyButton" type="button">
+        <span class="hold-fill" id="emergencyExitFill"></span><b>Hold to Exit Protocol</b>
+      </button>
+      <button class="ghost-button" id="returnDirectiveButton" type="button">Return to Directive</button>
+    </div>
+  </div>
+
+  <div class="breach-warning" id="breachWarning" hidden>
+    <strong id="breachTitle">FOCUS BREACH RECORDED</strong>
+    <p id="breachCopy">The deadline continued while ASCEND was hidden.</p>
+  </div>
+
+  <script src="js/storage.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
