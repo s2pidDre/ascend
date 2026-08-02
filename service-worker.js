@@ -1,4 +1,4 @@
-const CACHE='ascend-discipline-v26-mobile-polish';
+const CACHE='ascend-discipline-v27-reliability';
 const ASSETS=[
   './',
   './index.html',
@@ -36,4 +36,14 @@ self.addEventListener('fetch',event=>{
       return response;
     }).catch(()=>caches.match('./index.html')))
   );
+});
+
+
+self.addEventListener('notificationclick',event=>{
+  event.notification.close();
+  event.waitUntil(clients.matchAll({type:'window',includeUncontrolled:true}).then(windows=>{
+    const existing=windows.find(client=>'focus' in client);
+    if(existing)return existing.focus();
+    return clients.openWindow('./index.html');
+  }));
 });

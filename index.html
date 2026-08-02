@@ -45,6 +45,11 @@
     <symbol id="glyph-update" viewBox="0 0 24 24"><path d="M5 8a8 8 0 0 1 13.5-2"/><path d="M19 3v5h-5"/><path d="M19 16a8 8 0 0 1-13.5 2"/><path d="M5 21v-5h5"/></symbol>
     <symbol id="glyph-offline" viewBox="0 0 24 24"><path d="M4 9c4.8-4.1 11.2-4.1 16 0M7 13c3-2.5 7-2.5 10 0M10 17c1.2-1 2.8-1 4 0"/><path d="M3 3 21 21"/></symbol>
     <symbol id="glyph-save" viewBox="0 0 24 24"><path d="M5 3h12l2 2v16H5z"/><path d="M8 3v6h8V3M8 17h8"/></symbol>
+    <symbol id="glyph-shield" viewBox="0 0 24 24"><path d="M12 2 20 5v6c0 5.2-3.2 9-8 11-4.8-2-8-5.8-8-11V5l8-3Z"/><path d="m8.5 12 2.2 2.2 4.8-5"/></symbol>
+    <symbol id="glyph-bell" viewBox="0 0 24 24"><path d="M6 16h12l-1.5-2.5V9a4.5 4.5 0 0 0-9 0v4.5L6 16Z"/><path d="M10 19h4"/></symbol>
+    <symbol id="glyph-calendar" viewBox="0 0 24 24"><path d="M4 5h16v15H4z"/><path d="M8 2v6M16 2v6M4 10h16"/><path d="m9 15 2 2 4-4"/></symbol>
+    <symbol id="glyph-recovery" viewBox="0 0 24 24"><path d="M5 8a8 8 0 1 1-1 7"/><path d="M5 3v5h5"/><path d="m12 7 1.8 3.5L17 12l-3.2 1.5L12 17l-1.8-3.5L7 12l3.2-1.5L12 7Z"/></symbol>
+    <symbol id="glyph-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
   </svg>
 
   <div class="launch-splash" id="launchSplash" aria-hidden="true">
@@ -312,6 +317,7 @@
           <button class="system-button compact-button" id="openPlayerProfile" type="button"><b>Player Profile</b></button>
           <button class="system-button compact-button secondary-system-button" id="openAcademicControl" type="button"><b>Academic Control Center</b></button>
           <button class="ghost-button data-backup-entry" id="openDataBackup" type="button">Data Backup & Restore</button>
+          <button class="ghost-button data-backup-entry" id="openSystemIntegrity" type="button">System Integrity & Alerts</button>
         </div>
         <button class="ghost-button" id="scheduleClose" type="button">Close</button>
       </section>
@@ -327,6 +333,7 @@
         <div class="control-actions">
           <button class="system-button compact-button" id="scheduleConfigEdit" type="button"><b>Class Schedule</b></button>
           <button class="system-button compact-button secondary-system-button" id="openAttendance" type="button"><b>Attendance & Progress</b></button>
+          <button class="ghost-button" id="openScheduleExceptions" type="button">Schedule Exceptions</button>
         </div>
         <button class="ghost-button" id="academicBack" type="button">Back</button>
       </section>
@@ -353,6 +360,45 @@
         <button class="ghost-button" id="attendanceBack" type="button">Back</button>
       </section>
 
+      <section class="system-integrity-view" id="systemIntegrityView" hidden>
+        <div class="config-sigil glyph-frame" aria-hidden="true"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-shield"></use></svg></div>
+        <p class="eyebrow">SYSTEM RELIABILITY</p>
+        <h2>Integrity & Alerts</h2>
+        <div class="integrity-summary">
+          <div><span>CLOCK</span><strong id="integrityClockStatus">TRUSTED</strong></div>
+          <div><span>STORAGE</span><strong id="integrityStorageStatus">CHECKING</strong></div>
+          <div><span>SNAPSHOTS</span><strong id="integritySnapshotCount">0 / 7</strong></div>
+          <div><span>ALERTS</span><strong id="integrityNotificationStatus">OFF</strong></div>
+        </div>
+        <p class="integrity-copy" id="integrityCopy">Timeline checks and automatic recovery are active.</p>
+        <div class="integrity-actions">
+          <button class="danger-button" id="verifyClock" type="button" hidden><b>Verify Current Device Time</b></button>
+          <button class="system-button compact-button" id="toggleNotifications" type="button"><b>Enable Local Alerts</b></button>
+          <button class="system-button compact-button secondary-system-button" id="toggleWakeLock" type="button"><b>Keep Screen Awake: On</b></button>
+          <button class="ghost-button" id="createIntegritySnapshot" type="button">Create Recovery Snapshot</button>
+          <button class="ghost-button" id="restoreLatestSnapshot" type="button">Restore Latest Snapshot</button>
+        </div>
+        <button class="ghost-button" id="systemIntegrityBack" type="button">Back</button>
+      </section>
+
+      <section class="schedule-exceptions-view" id="scheduleExceptionsView" hidden>
+        <div class="config-sigil glyph-frame" aria-hidden="true"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-calendar"></use></svg></div>
+        <p class="eyebrow">ONE-DAY OVERRIDES</p>
+        <h2>Schedule Exceptions</h2>
+        <div class="exception-form">
+          <label>Date<input class="selectable" id="exceptionDate" type="date"></label>
+          <label>Type<select class="selectable" id="exceptionType"><option value="no-classes">No Classes</option><option value="cancel">Cancel One Class</option><option value="reschedule">Reschedule Class</option><option value="special">Exam / Special Meeting</option></select></label>
+          <label class="exception-class-field">Class<select class="selectable" id="exceptionClass"></select></label>
+          <label class="exception-time-field">Start<span class="time-shell"><input class="selectable" id="exceptionStart" type="time"></span></label>
+          <label class="exception-time-field">End<span class="time-shell"><input class="selectable" id="exceptionEnd" type="time"></span></label>
+          <label class="exception-note-field">Note<input class="selectable" id="exceptionNote" type="text" maxlength="100" placeholder="Optional reason or exam note"></label>
+        </div>
+        <button class="system-button compact-button" id="saveScheduleException" type="button"><b>Save Exception</b></button>
+        <div class="exception-record" id="exceptionRecord"><span>NO EXCEPTIONS</span><strong>Normal schedule active</strong><small>One-day changes appear here.</small></div>
+        <div class="section-nav" id="exceptionNav" hidden><button type="button" id="exceptionPrev" aria-label="Previous exception"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-chevron-left"></use></svg></button><span id="exceptionPageLabel">1 / 1</span><button type="button" id="exceptionNext" aria-label="Next exception"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-chevron-right"></use></svg></button></div>
+        <button class="danger-button compact-danger" id="deleteScheduleException" type="button" hidden><b>Delete Exception</b></button>
+        <button class="ghost-button" id="scheduleExceptionsBack" type="button">Back</button>
+      </section>
 
       <section class="data-backup-view" id="dataBackupView" hidden>
         <div class="config-sigil data-sigil glyph-frame" aria-hidden="true"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-data"></use></svg></div>
@@ -378,7 +424,8 @@
             <button class="ghost-button" id="cancelBackupRestore" type="button">Cancel</button>
           </div>
         </div>
-        <p class="backup-footnote">Routine activity logs are automatically limited. Milestones remain preserved.</p>
+        <div class="snapshot-strip"><span>AUTOMATIC SNAPSHOTS</span><strong id="snapshotStripCount">0 available</strong><small id="snapshotStripLatest">No recovery snapshot yet.</small></div>
+        <p class="backup-footnote">Routine activity logs are automatically limited. Up to seven daily recovery snapshots are kept locally.</p>
         <button class="ghost-button" id="dataBackupBack" type="button">Back</button>
       </section>
 
@@ -419,6 +466,21 @@
           <span class="hold-fill" id="scheduleDeleteFill"></span><b>Hold to Delete Class</b>
         </button>
       </section>
+    </div>
+  </div>
+
+  <div class="recovery-overlay" id="recoveryOverlay" hidden>
+    <div class="recovery-panel system-panel">
+      <div class="emergency-symbol recovery-symbol glyph-frame"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-recovery"></use></svg></div>
+      <p class="eyebrow">RECOVERY PROTOCOL</p>
+      <h2>Re-enter the Sequence</h2>
+      <p id="recoveryCopy">A failed day was recorded. Acknowledge the cause and arm one recovery action. No XP is awarded for recovery.</p>
+      <label for="recoveryReason">Failure reason</label>
+      <select class="selectable" id="recoveryReason"><option value="overslept">Overslept</option><option value="forgot">Forgot or lost track</option><option value="device">Device unavailable</option><option value="schedule">Schedule changed</option><option value="health">Health or illness</option><option value="intentional">Intentional skip</option><option value="other">Other</option></select>
+      <label for="recoveryAction">Recovery action</label>
+      <select class="selectable" id="recoveryAction"><option value="prepare">Prepare the next protocol now</option><option value="alarm">Confirm alarm and required materials</option><option value="environment">Reset the environment</option><option value="review">Review the missed sequence</option></select>
+      <div class="recovery-protection"><span>NEXT PROTOCOL PROTECTION</span><strong id="recoveryProtectedProtocol">Wake Protocol</strong><small>Normal completion is still required. No free XP.</small></div>
+      <button class="system-button" id="completeRecovery" type="button"><b>Acknowledge & Arm Recovery</b></button>
     </div>
   </div>
 

@@ -28,9 +28,15 @@
   let waitingServiceWorker=null;
   let launchDismissed=false;
   let orientationBlocked=false;
+  let exceptionUi={index:0};
+  let clockBaseline={wall:Date.now(),mono:performance.now()};
+  let clockAlertShown=false;
+  let notificationSweepAt=0;
+  let storageCheckAt=0;
+  let integrityHeartbeatAt=0;
 
   const $=selector=>document.querySelector(selector);
-  const glyphNames=new Set(['apex','signal','sleep','wake','confirm','reset','water','shine','stretch','bath','meal','list','work','grid','trade','close','next','academic','success','failure','profile','data','lock','chevron-left','chevron-right','emergency','update','offline','save']);
+  const glyphNames=new Set(['apex','signal','sleep','wake','confirm','reset','water','shine','stretch','bath','meal','list','work','grid','trade','close','next','academic','success','failure','profile','data','lock','chevron-left','chevron-right','emergency','update','offline','save','shield','bell','calendar','recovery','clock']);
   const glyphAlias={
     '◇':'apex','◆':'confirm','✦':'shine','⌁':'stretch','◈':'academic','A':'apex',
     '↑':'wake','▰':'reset','◉':'water','◒':'meal','▤':'list','◎':'work','▦':'grid','✓':'success','×':'close','→':'next','☾':'sleep'
@@ -67,7 +73,7 @@
     if(screen){void screen.offsetWidth;screen.classList.add('screen-enter')}
     activeScreenId=id;
   };
-  const noticeGlyphs={save:'save',backup:'data',restore:'confirm',offline:'offline',online:'signal',update:'update',installed:'success'};
+  const noticeGlyphs={save:'save',backup:'data',restore:'confirm',offline:'offline',online:'signal',update:'update',installed:'success',integrity:'shield',snapshot:'data',alert:'bell',recovery:'recovery'};
   const showSystemNotice=(kind,title,copy,duration=2300)=>{
     const notice=$('#systemNotice');if(!notice)return;
     clearTimeout(noticeTimer);clearTimeout(noticeHideTimer);
@@ -85,7 +91,7 @@
       lastSaveNoticeAt=now;showSystemNotice('save','LOCAL DATA SAVED','Device record synchronized.',1500);
     },520);
   };
-  const save=(options={})=>{const saved=S.save(state);if(!options.silent)queueSaveNotice();return saved};
+  const save=(options={})=>{reconcileStateMachine();if(state.integrity?.clockStatus==='trusted')state.integrity.lastWallTime=new Date().toISOString();const saved=S.save(state);if(!options.silent)queueSaveNotice();return saved};
   const dismissLaunchSplash=()=>{
     const splash=$('#launchSplash');if(!splash||launchDismissed)return;
     const delay=Math.max(0,430-performance.now());
@@ -100,6 +106,55 @@
   };
   const currentKey=()=>S.dateKey(new Date());
   const requiredProtocolCount=5;
+  const protocolTransitions={pending:new Set(['active','failed']),active:new Set(['cleared','failed']),cleared:new Set(),failed:new Set()};
+  const stepTransitions={pending:new Set(['active','completed']),active:new Set(['completed']),completed:new Set()};
+  const transitionProtocol=(protocol,next,meta={})=>{
+    if(!protocol||protocol.status===next)return protocol?.status===next;
+    if(!protocolTransitions[protocol.status]?.has(next))return false;
+    protocol.status=next;
+    if(next==='active')protocol.startedAt=protocol.startedAt||meta.at||new Date().toISOString();
+    if(['cleared','failed'].includes(next))protocol.completedAt=protocol.completedAt||meta.at||new Date().toISOString();
+    if(next==='failed'){protocol.earnedXp=0;protocol.failureReason=meta.reason||protocol.failureReason||'Protocol failed.'}
+    return true;
+  };
+  const transitionStep=(step,next,at=new Date().toISOString())=>{
+    if(!step||step.status===next)return step?.status===next;
+    if(!stepTransitions[step.status]?.has(next))return false;
+    step.status=next;
+    if(next==='active')step.startedAt=step.startedAt||at;
+    if(next==='completed'){step.startedAt=step.startedAt||at;step.completedAt=step.completedAt||at}
+    return true;
+  };
+  const reconcileStateMachine=()=>{
+    Object.values(state.dayRecords||{}).forEach(day=>{
+      const protocols=Object.values(day.protocols||{});let activeFound=false;
+      protocols.sort((a,b)=>String(a.startedAt||'').localeCompare(String(b.startedAt||''))).forEach(protocol=>{
+        if(!['pending','active','cleared','failed'].includes(protocol.status))protocol.status='pending';
+        if(protocol.status==='active'){if(activeFound)protocol.status='pending';else activeFound=true}
+        (protocol.steps||[]).forEach(step=>{if(!['pending','active','completed'].includes(step.status))step.status='pending'});
+        if(protocol.status==='cleared')(protocol.steps||[]).forEach(step=>{if(step.status!=='completed')transitionStep(step,'completed',protocol.completedAt||new Date().toISOString())});
+      });
+      day.completedProtocols=protocols.filter(protocol=>protocol.status==='cleared').length;
+      day.failedProtocols=protocols.filter(protocol=>protocol.status==='failed').length;
+    });
+  };
+  const recordMoment=(record,time)=>new Date(`${record.date}T${time}:00`);
+  const flagClockIntegrity=(reason,delta=0)=>{
+    state.integrity=state.integrity||{};
+    if(state.integrity.clockStatus==='flagged')return;
+    state.integrity.clockStatus='flagged';state.integrity.rewardHold=true;state.integrity.lastFlag={at:new Date().toISOString(),reason,delta:Math.round(delta)};
+    state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'integrity',message:`Clock integrity flagged: ${reason}. Rewards placed on hold.`});
+    S.save(state);
+    if(!clockAlertShown){clockAlertShown=true;showBreachWarning('DEVICE TIME CHANGE DETECTED','Deadlines continue, but XP rewards are held until the current device time is verified.');showSystemNotice('integrity','REWARD HOLD ACTIVE','Verify device time in System Integrity.',3600)}
+  };
+  const checkClockIntegrity=()=>{
+    const now=Date.now(),expected=clockBaseline.wall+(performance.now()-clockBaseline.mono),drift=now-expected;
+    if(Math.abs(drift)>180000){flagClockIntegrity(drift<0?'Device clock moved backward during this session.':'Device clock jumped forward during this session.',drift);clockBaseline={wall:now,mono:performance.now()}}
+    const last=state.integrity?.lastWallTime?new Date(state.integrity.lastWallTime).getTime():0;
+    if(last&&now<last-120000)flagClockIntegrity('Current device time is earlier than the last trusted checkpoint.',now-last);
+    return state.integrity?.clockStatus!=='flagged';
+  };
+
 
   const stages=[
     {max:10,name:'COMPLIANCE'},
@@ -196,23 +251,66 @@
     }).map(entry=>({key:subjectKey(entry.subject),name:entry.subject,code:entry.code||''})).sort((a,b)=>a.name.localeCompare(b.name));
   };
 
+  const buildWeeklyBossPlan=(date=new Date())=>{
+    const key=S.dateKey(date),cutoff=new Date(date);cutoff.setDate(cutoff.getDate()-7);const cutoffKey=S.dateKey(cutoff);
+    const recent=Object.values(state.dayRecords||{}).filter(day=>day.date<key&&day.date>=cutoffKey);
+    const morningFailures=recent.reduce((sum,day)=>sum+['wake','breakfast'].filter(id=>day.protocols?.[id]?.status==='failed').length,0);
+    const breaches=recent.reduce((sum,day)=>sum+Object.values(day.protocols||{}).reduce((count,protocol)=>count+Number(protocol.focusBreaches||0),0),0);
+    const pending=state.academicTasks.filter(task=>task.status!=='completed').length;
+    const absences=state.attendanceRecords.filter(record=>record.scheduledDate>=cutoffKey&&record.scheduledDate<key&&['absent','unverified'].includes(record.status)).length;
+    if(morningFailures>=2)return{id:'dawn-chain',title:'Dawn Chain',copy:'Clear Wake and Breakfast on time, then complete the full day.',requirements:['Wake on time','Breakfast on time','Full day clear']};
+    if(absences>=1)return{id:'attendance-lock',title:'Attendance Lock',copy:'Resolve every scheduled class and complete the full day without an absence.',requirements:['No absent class','No unresolved class','Full day clear']};
+    if(pending>=2)return{id:'deadline-hunter',title:'Deadline Hunter',copy:'Complete at least one academic task during Productivity and clear the full day.',requirements:['Complete one task','Productivity clear','Full day clear'],baselineCompleted:state.academicTasks.filter(task=>task.status==='completed').length};
+    if(breaches>=2)return{id:'focus-unbroken',title:'Focus Unbroken',copy:'Clear every protocol without hiding ASCEND during an active directive.',requirements:['Full day clear','Zero focus breaches']};
+    return{id:'perfect-sequence',title:'Perfect Sequence',copy:'Achieve a Perfect Clear across the complete Saturday sequence.',requirements:['All protocols on time','Zero focus breaches','Full day clear']};
+  };
+  const rankTrialPlanFor=rank=>{
+    const plans={
+      D:{rank:'D',attendance:0,streak:0,bosses:0,perfect:false,maxBreaches:1,onTime:80},
+      C:{rank:'C',attendance:75,streak:2,bosses:0,perfect:true,maxBreaches:0,onTime:90},
+      B:{rank:'B',attendance:80,streak:3,bosses:1,perfect:true,maxBreaches:0,onTime:90},
+      A:{rank:'A',attendance:90,streak:5,bosses:1,perfect:true,maxBreaches:0,onTime:100},
+      S:{rank:'S',attendance:95,streak:7,bosses:2,perfect:true,maxBreaches:0,onTime:100}
+    };
+    return plans[rank]||null;
+  };
+  const bossClearCount=()=>Object.values(state.dayRecords||{}).filter(day=>day.weeklyBossCleared).length;
+  const evaluateWeeklyBoss=(record,cleared,totalBreaches)=>{
+    if(!record.weeklyBoss||!record.weeklyBossPlan)return false;
+    const plan=record.weeklyBossPlan;
+    if(!cleared)return false;
+    if(plan.id==='dawn-chain')return ['wake','breakfast'].every(id=>record.protocols[id]?.status==='cleared'&&protocolOnTime(record,record.protocols[id]));
+    if(plan.id==='attendance-lock')return !state.attendanceRecords.some(item=>item.scheduledDate===record.date&&['absent','unverified'].includes(item.status));
+    if(plan.id==='deadline-hunter')return state.academicTasks.filter(task=>task.status==='completed').length>Number(plan.baselineCompleted||0)&&record.protocols.productivity?.status==='cleared';
+    if(plan.id==='focus-unbroken')return totalBreaches===0;
+    return record.onTimePercentage===100&&totalBreaches===0;
+  };
+  const evaluateRankTrial=(record,totalBreaches)=>{
+    const plan=record.rankTrialPlan;if(!plan)return false;
+    const academic=overallAcademicStats();
+    return record.status==='cleared'&&record.onTimePercentage>=plan.onTime&&totalBreaches<=plan.maxBreaches&&(!plan.perfect||record.perfectClear)&&academic.attendanceRate>=plan.attendance&&state.player.streak>=plan.streak&&bossClearCount()>=plan.bosses;
+  };
+
   const createDayRecord=(date=new Date())=>{
     const key=S.dateKey(date);
     if(state.dayRecords[key])return state.dayRecords[key];
     const protocols={};
     const weeklyBoss=isWeeklyBossDate(date);
+    const weeklyBossPlan=weeklyBoss?buildWeeklyBossPlan(date):null;
+    const rankTrialPlan=state.player.pendingRank?rankTrialPlanFor(state.player.pendingRank):null;
     protocolBlueprints.forEach(config=>{
       const steps=config.subtasks(state.player.level).map(step=>({...step,status:'pending',startedAt:null,completedAt:null}));
       protocols[config.id]={
         id:config.id,name:config.name,start:config.start,end:config.end,xp:config.xp,
         status:'pending',steps,startedAt:null,completedAt:null,earnedXp:0,focusBreaches:0,hiddenMilliseconds:0,
-        boss:weeklyBoss&&config.id==='productivity'
+        boss:weeklyBoss&&config.id==='productivity',resolutionKey:null
       };
     });
     const record={
       date:key,status:'active',createdAt:new Date().toISOString(),protocols,completedProtocols:0,failedProtocols:0,
       wakeCheckInAt:null,wakeStatus:null,totalXp:0,onTimePercentage:0,automaticReward:null,
-      weeklyBoss,weeklyBossCleared:false,perfectClear:false,rankTrialActive:Boolean(state.player.pendingRank),rankAdvanced:false,rankTrialFailed:false
+      weeklyBoss,weeklyBossPlan,weeklyBossCleared:false,perfectClear:false,rankTrialActive:Boolean(rankTrialPlan),rankTrialPlan,rankAdvanced:false,rankTrialFailed:false,
+      rewardApplied:false,heldXp:0,integrityStatus:state.integrity?.clockStatus||'trusted'
     };
     state.dayRecords[key]=record;
     save();
@@ -224,7 +322,12 @@
   const startProtocol=(record,config,now=new Date())=>{
     const protocol=record.protocols[config.id];
     if(protocol.status!=='pending')return protocol;
-    protocol.status='active';protocol.startedAt=now.toISOString();
+    if(!transitionProtocol(protocol,'active',{at:now.toISOString()}))return protocol;
+    if(state.recovery?.status==='completed'&&state.recovery.protectedDate===record.date&&state.recovery.protectedProtocolId===config.id){
+      protocol.recoveryProtected=true;state.recovery.status='consumed';state.recovery.consumedAt=now.toISOString();
+      state.logs.push({id:S.uid('log'),at:now.toISOString(),type:'recovery',message:`Recovery protection activated for ${config.name}. Normal completion remains required.`});
+      showSystemNotice('recovery','RECOVERY PROTECTION ACTIVE',`${config.name} must be completed normally.`,2600);
+    }
     state.logs.push({id:S.uid('log'),at:now.toISOString(),type:'protocol',message:`${config.name} started.`});
     save();systemFeedback(protocol.boss?'boss':'start',protocol.boss?'Weekly Boss issued.':'Directive issued.',`start-${record.date}-${config.id}`);
     return protocol;
@@ -236,7 +339,7 @@
     const minute=todayMinutes(now);
     record.wakeStatus=minute<300?'early':minute<=330?'on-time':'late';
     const protocol=startProtocol(record,blueprint('wake'),now);
-    const first=protocol.steps[0];first.status='completed';first.startedAt=now.toISOString();first.completedAt=now.toISOString();
+    const first=protocol.steps[0];transitionStep(first,'completed',now.toISOString());
     state.logs.push({id:S.uid('log'),at:now.toISOString(),type:'wake',message:`Wake recorded at ${formatClock(now)} (${record.wakeStatus}, ${source}).`});
     save();systemFeedback('start',record.wakeStatus==='late'?'Late wake recorded. Begin immediately.':'Wake state confirmed.',`wake-${record.date}`);
   };
@@ -261,7 +364,7 @@
   });
 
   const clearProtocol=async(record,protocol)=>{
-    protocol.status='cleared';protocol.completedAt=new Date().toISOString();protocol.earnedXp=calculateProtocolXp(record,protocol);
+    const completedAt=new Date().toISOString();if(!transitionProtocol(protocol,'cleared',{at:completedAt}))return;protocol.completedAt=completedAt;protocol.resolutionKey=protocol.resolutionKey||`${record.date}:${protocol.id}:cleared`;protocol.earnedXp=calculateProtocolXp(record,protocol);
     record.completedProtocols+=1;
     state.logs.push({id:S.uid('log'),at:protocol.completedAt,type:'clear',message:`${protocol.name} cleared for ${protocol.earnedXp} XP.`});
     save();
@@ -281,20 +384,24 @@
     transitionTimer=setTimeout(()=>{transitionLocked=false;finalizeDay(record,new Date());renderApp()},1300);
   };
 
-  const failProtocol=(record,protocol,reason,log=true)=>{
-    if(['cleared','failed'].includes(protocol.status))return;
-    protocol.status='failed';protocol.completedAt=new Date().toISOString();protocol.earnedXp=0;protocol.failureReason=reason;
-    record.failedProtocols+=1;
-    if(log)state.logs.push({id:S.uid('log'),at:protocol.completedAt,type:'failure',message:`${protocol.name} failed: ${reason}`});
-    save();systemFeedback('warning','Protocol failed.',`failed-${record.date}-${protocol.id}`);
+  const failProtocol=(record,protocol,reason,log=true,options={})=>{
+    if(!protocol||['cleared','failed'].includes(protocol.status))return false;
+    const at=new Date().toISOString();if(!transitionProtocol(protocol,'failed',{at,reason}))return false;
+    protocol.completedAt=at;protocol.resolutionKey=protocol.resolutionKey||`${record.date}:${protocol.id}:failed`;protocol.earnedXp=0;protocol.failureReason=reason;
+    record.failedProtocols=Object.values(record.protocols).filter(item=>item.status==='failed').length;
+    if(log)state.logs.push({id:S.uid('log'),at,type:'failure',message:`${protocol.name} failed: ${reason}`});
+    if(!options.defer){save();systemFeedback('warning','Protocol failed.',`failed-${record.date}-${protocol.id}`)}return true;
   };
 
   const evaluateDeadlines=(record,now=new Date())=>{
+    if(!record||record.status!=='active')return;
+    let failed=0;
     protocolBlueprints.forEach(config=>{
       const protocol=record.protocols[config.id];
-      if(['cleared','failed'].includes(protocol.status))return;
-      if(now>=timeOnDate(now,config.end))failProtocol(record,protocol,'The fixed deadline passed before every subtask was completed.');
+      if(!protocol||['cleared','failed'].includes(protocol.status))return;
+      if(now>=recordMoment(record,config.end)&&failProtocol(record,protocol,'The fixed deadline passed before every subtask was completed.',true,{defer:true}))failed+=1;
     });
+    if(failed){save();systemFeedback('warning',`${failed} protocol deadline${failed===1?'':'s'} resolved.`,`deadline-reconcile-${record.date}-${failed}`)}
   };
 
   const calculateOnTimePercentage=record=>{
@@ -309,43 +416,71 @@
     return 'Daily Clear reward: a planned leisure period after all obligations are complete.';
   };
 
-  const finalizeDay=(record,now=new Date(),force=false)=>{
-    if(record.status!=='active')return;
-    const resolved=Object.values(record.protocols).every(protocol=>['cleared','failed'].includes(protocol.status));
-    if(!force&&!resolved&&now<timeOnDate(now,'22:00'))return;
-    Object.values(record.protocols).forEach(protocol=>{if(!['cleared','failed'].includes(protocol.status))failProtocol(record,protocol,'The daily cutoff was reached before completion.',false)});
-    const cleared=record.failedProtocols===0&&record.completedProtocols===requiredProtocolCount;
-    record.status=cleared?'cleared':'failed';record.finalizedAt=now.toISOString();
-    const protocolXp=Object.values(record.protocols).reduce((sum,protocol)=>sum+(protocol.earnedXp||0),0);
-    record.totalXp=cleared?protocolXp:0;
-    record.onTimePercentage=calculateOnTimePercentage(record);
-    const totalBreaches=Object.values(record.protocols).reduce((sum,protocol)=>sum+(protocol.focusBreaches||0),0);
-    record.perfectClear=cleared&&record.onTimePercentage===100&&totalBreaches===0;
-    record.weeklyBossCleared=Boolean(record.weeklyBoss&&record.protocols.productivity?.status==='cleared');
-    if(cleared){
-      state.player.totalXp+=record.totalXp;state.player.streak+=1;state.player.bestStreak=Math.max(state.player.bestStreak,state.player.streak);
-      state.player.totalClearDays+=1;state.player.levelClearDays+=1;state.player.failureScar=false;
-      if(record.perfectClear){state.player.perfectClears=(state.player.perfectClears||0)+1;state.player.lastPerfectDate=record.date}
-      if(record.rankTrialActive){
-        state.player.rankTrialAttempts=(state.player.rankTrialAttempts||0)+1;
-        if(record.perfectClear&&state.player.pendingRank){state.player.rank=state.player.pendingRank;state.player.pendingRank=null;record.rankAdvanced=true}
-        else record.rankTrialFailed=true;
-      }
-      const required=clearDaysRequired(state.player.level);
-      if(state.player.level<state.player.maxLevel&&state.player.levelClearDays>=required){
-        state.player.level+=1;state.player.levelClearDays=0;record.levelAdvanced=true;
-        const target=eligibleRank(state.player.level,state.player.rank);if(target&&!state.player.pendingRank)state.player.pendingRank=target;
-        if(state.player.level>=state.player.maxLevel){state.player.level=state.player.maxLevel;state.player.mastered=true;state.player.masteredAt=now.toISOString()}
-      }
-      record.automaticReward=chooseReward(record);
-    }else{
-      state.player.streak=0;state.player.totalFailedDays+=1;state.player.failureScar=true;if(record.rankTrialActive)record.rankTrialFailed=true;
+  const applyClearedDayRewards=(record,now=new Date())=>{
+    if(record.rewardApplied)return false;
+    const totalBreaches=Object.values(record.protocols).reduce((sum,protocol)=>sum+Number(protocol.focusBreaches||0),0);
+    const xp=Number(record.baseXp??Object.values(record.protocols).reduce((sum,protocol)=>sum+Number(protocol.earnedXp||0),0));
+    state.player.totalXp+=xp;state.player.streak+=1;state.player.bestStreak=Math.max(state.player.bestStreak,state.player.streak);
+    state.player.totalClearDays+=1;state.player.levelClearDays+=1;state.player.failureScar=false;
+    record.totalXp=xp;record.heldXp=0;record.rewardApplied=true;record.rewardReleasedAt=now.toISOString();
+    if(record.perfectClear){state.player.perfectClears=(state.player.perfectClears||0)+1;state.player.lastPerfectDate=record.date}
+    if(record.rankTrialActive&&!record.rankTrialResolved){
+      state.player.rankTrialAttempts=(state.player.rankTrialAttempts||0)+1;
+      if(evaluateRankTrial(record,totalBreaches)&&state.player.pendingRank){state.player.rank=state.player.pendingRank;state.player.pendingRank=null;record.rankAdvanced=true}
+      else record.rankTrialFailed=true;
+      record.rankTrialResolved=true;
     }
-    state.logs.push({id:S.uid('log'),at:now.toISOString(),type:record.status,message:`Day ${record.status}. ${record.completedProtocols}/${requiredProtocolCount} protocols cleared.${record.perfectClear?' Perfect Clear achieved.':''}`});
+    const required=clearDaysRequired(state.player.level);
+    if(state.player.level<state.player.maxLevel&&state.player.levelClearDays>=required){
+      state.player.level+=1;state.player.levelClearDays=0;record.levelAdvanced=true;
+      const target=eligibleRank(state.player.level,state.player.rank);if(target&&!state.player.pendingRank)state.player.pendingRank=target;
+      if(state.player.level>=state.player.maxLevel){state.player.level=state.player.maxLevel;state.player.mastered=true;state.player.masteredAt=now.toISOString()}
+    }
+    record.automaticReward=chooseReward(record);return true;
+  };
+  const armRecoveryProtocol=record=>{
+    if(state.recovery?.active||state.recovery?.sourceDate===record.date)return;
+    const nextDate=new Date(`${record.date}T12:00:00`);nextDate.setDate(nextDate.getDate()+1);
+    state.recovery={active:true,status:'pending',sourceDate:record.date,reason:null,action:null,protectedDate:S.dateKey(nextDate),protectedProtocolId:'wake',completedAt:null};
+    state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'recovery',message:`Recovery Protocol armed after failed day ${record.date}.`});
+  };
+  const applyFailedDayOutcome=record=>{
+    if(record.outcomeApplied)return;
+    state.player.streak=0;state.player.totalFailedDays+=1;state.player.failureScar=true;record.outcomeApplied=true;
+    if(record.rankTrialActive){record.rankTrialFailed=true;record.rankTrialResolved=true;state.player.rankTrialAttempts=(state.player.rankTrialAttempts||0)+1}
+    armRecoveryProtocol(record);
+  };
+  const releaseHeldRewards=()=>{
+    const held=Object.values(state.dayRecords||{}).filter(day=>day.status==='cleared'&&!day.rewardApplied).sort((a,b)=>a.date.localeCompare(b.date));
+    held.forEach(day=>applyClearedDayRewards(day,new Date()));
+    if(held.length){state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'integrity',message:`Released ${held.length} held day reward(s) after time verification.`});save({silent:true})}
+    return held.length;
+  };
+  const finalizeDay=(record,now=new Date(),force=false)=>{
+    if(!record||record.status!=='active')return;
+    const resolved=Object.values(record.protocols).every(protocol=>['cleared','failed'].includes(protocol.status));
+    const cutoff=recordMoment(record,'22:00');
+    if(!force&&!resolved&&now<cutoff)return;
+    Object.values(record.protocols).forEach(protocol=>{if(!['cleared','failed'].includes(protocol.status))failProtocol(record,protocol,'The daily cutoff was reached before completion.',false,{defer:true})});
+    record.completedProtocols=Object.values(record.protocols).filter(protocol=>protocol.status==='cleared').length;
+    record.failedProtocols=Object.values(record.protocols).filter(protocol=>protocol.status==='failed').length;
+    const cleared=record.failedProtocols===0&&record.completedProtocols===requiredProtocolCount;
+    record.status=cleared?'cleared':'failed';record.finalizedAt=now.toISOString();record.baseXp=Object.values(record.protocols).reduce((sum,protocol)=>sum+Number(protocol.earnedXp||0),0);
+    record.onTimePercentage=calculateOnTimePercentage(record);
+    const totalBreaches=Object.values(record.protocols).reduce((sum,protocol)=>sum+Number(protocol.focusBreaches||0),0);
+    record.perfectClear=cleared&&record.onTimePercentage===100&&totalBreaches===0;
+    record.weeklyBossCleared=evaluateWeeklyBoss(record,cleared,totalBreaches);
+    if(cleared){
+      if(state.integrity?.rewardHold){record.heldXp=record.baseXp;record.totalXp=0;record.integrityStatus='held'}
+      else applyClearedDayRewards(record,now);
+    }else applyFailedDayOutcome(record);
+    state.logs.push({id:S.uid('log'),at:now.toISOString(),type:record.status,message:`Day ${record.status}. ${record.completedProtocols}/${requiredProtocolCount} protocols cleared.${record.perfectClear?' Perfect Clear achieved.':''}${record.weeklyBossCleared?' Weekly Boss defeated.':''}`});
     save();
     if(cleared){
-      if(record.rankAdvanced)systemFeedback('level',`${state.player.rank}-Rank achieved.`);
+      if(state.integrity?.rewardHold)showSystemNotice('integrity','CLEAR RECORDED · XP HELD','Verify device time to release progression rewards.',3600);
+      else if(record.rankAdvanced)systemFeedback('level',`${state.player.rank}-Rank achieved.`);
       else if(record.levelAdvanced)systemFeedback('level',`Level ${state.player.level} reached.`);
+      else if(record.weeklyBossCleared)systemFeedback('boss','Weekly Boss defeated.');
       else if(record.perfectClear)systemFeedback('clear','Perfect Clear.');
       else systemFeedback('clear','Daily Clear.');
     }else systemFeedback('warning','Day failed.');
@@ -367,7 +502,17 @@
     return protocolBlueprints.find(config=>minutes(config.start)>minute&&record.protocols[config.id].status==='pending')||null;
   };
 
-  const classesForDate=date=>activeSchedule().filter(entry=>Number(entry.day)===date.getDay()).sort((a,b)=>minutes(a.start)-minutes(b.start));
+  const exceptionsForDate=date=>state.scheduleExceptions.filter(item=>item.active!==false&&item.date===S.dateKey(date));
+  const classesForDate=date=>{
+    const exceptions=exceptionsForDate(date);
+    if(exceptions.some(item=>item.type==='no-classes'))return[];
+    let entries=activeSchedule().filter(entry=>Number(entry.day)===date.getDay()).map(entry=>({...entry}));
+    exceptions.forEach(exception=>{
+      if(exception.type==='cancel')entries=entries.filter(entry=>entry.id!==exception.classId);
+      if(['reschedule','special'].includes(exception.type))entries=entries.map(entry=>entry.id===exception.classId?{...entry,start:exception.start||entry.start,end:exception.end||entry.end,exceptionType:exception.type,exceptionNote:exception.note||'',exceptionId:exception.id}:entry);
+    });
+    return entries.sort((a,b)=>minutes(a.start)-minutes(b.start));
+  };
   const meetingKey=(entry,date=new Date())=>`${S.dateKey(date)}::${entry.id}`;
   const attendanceFor=(entry,date=new Date())=>state.attendanceRecords.find(record=>record.meetingKey===meetingKey(entry,date))||null;
   const nextClassAt=(date=new Date())=>classesForDate(date).find(entry=>minutes(entry.start)>todayMinutes(date)&&attendanceFor(entry,date)?.status!=='cancelled')||null;
@@ -481,7 +626,7 @@
     }
   };
   const renderClassScreen=(context,now=new Date())=>{
-    releaseWakeLock();show('classScreen');document.body.dataset.state=context.mode==='dismissal'||context.mode==='resolve'?'warning':'active';currentClassContext=context;
+    requestWakeLock();show('classScreen');document.body.dataset.state=context.mode==='dismissal'||context.mode==='resolve'?'warning':'active';currentClassContext=context;
     const {entry,record,start,end,mode}=context;
     $('#classCode').textContent=entry.code||'CLASS';$('#classTitle').textContent=entry.subject;
     $('#classWindow').textContent=`${formatTime(entry.start)} – ${formatTime(entry.end)}`;
@@ -510,13 +655,15 @@
 
   const updateCheckInAndEvaluation=()=>{
     if(!state.initialized)return null;
-    finalizePastDays();
+    checkClockIntegrity();finalizePastDays();
+    if(state.integrity?.clockStatus==='trusted'&&Object.values(state.dayRecords||{}).some(day=>day.status==='cleared'&&!day.rewardApplied))releaseHeldRewards();
     const now=new Date();
     const record=createDayRecord(now);
     const minute=todayMinutes(now);
     if(!record.wakeCheckInAt&&minute>=300&&minute<360&&document.visibilityState==='visible')recordWakeCheckIn(record,now,'automatic-window');
     evaluateDeadlines(record,now);
-    if(now>=timeOnDate(now,'22:00'))finalizeDay(record,now);
+    if(now>=recordMoment(record,'22:00'))finalizeDay(record,now);
+    sweepNotifications(record,now);checkStoragePressure();
     return record;
   };
 
@@ -581,8 +728,59 @@
     document.body.dataset.rank=state.player.rank||'E';
     document.body.style.setProperty('--aura-strength',String(clamp(.26+state.player.level*.006+state.player.streak*.012,.28,.9)));
   };
-  const requestWakeLock=async()=>{if(!state.settings.keepAwake||!('wakeLock' in navigator)||document.hidden||wakeLock)return;try{wakeLock=await navigator.wakeLock.request('screen');wakeLock.addEventListener('release',()=>{wakeLock=null})}catch(error){wakeLock=null}};
+  const requestWakeLock=async()=>{
+    if(!state.settings.keepAwake||!('wakeLock' in navigator)||document.hidden||wakeLock||orientationBlocked)return;
+    try{wakeLock=await navigator.wakeLock.request('screen');wakeLock.addEventListener('release',()=>{wakeLock=null;if(activeProtocolRecord()&&!document.hidden&&state.settings.keepAwake)setTimeout(requestWakeLock,250)},{once:true})}catch(error){wakeLock=null}
+  };
   const releaseWakeLock=()=>{try{wakeLock?.release()}catch(error){}wakeLock=null};
+  const sendLocalNotification=async(tag,title,body)=>{
+    if(!state.settings.notifications||!('Notification' in window)||Notification.permission!=='granted')return;
+    state.system.notificationLedger=state.system.notificationLedger||{};
+    if(state.system.notificationLedger[tag]||safeSession.get(`notify:${tag}`))return;
+    safeSession.set(`notify:${tag}`,'1');state.system.notificationLedger[tag]=new Date().toISOString();
+    const ledgerEntries=Object.entries(state.system.notificationLedger).sort((a,b)=>String(b[1]).localeCompare(String(a[1]))).slice(0,100);state.system.notificationLedger=Object.fromEntries(ledgerEntries);S.save(state);
+    try{const registration=await navigator.serviceWorker?.ready;if(registration?.showNotification)await registration.showNotification(title,{body,tag,icon:'assets/icon-192.png?v=20260803',badge:'assets/icon-192.png?v=20260803',silent:true,renotify:false});else new Notification(title,{body,tag,icon:'assets/icon-192.png?v=20260803',silent:true})}catch(error){}
+  };
+  const sweepNotifications=(record,now=new Date())=>{
+    if(!state.settings.notifications||Date.now()-notificationSweepAt<20000)return;notificationSweepAt=Date.now();
+    const lead=Number(state.settings.notificationLeadMinutes||10)*60000;
+    protocolBlueprints.forEach(config=>{
+      const protocol=record?.protocols?.[config.id];if(!protocol||protocol.status!=='pending')return;
+      const start=recordMoment(record,config.start),delta=start-now;
+      if(delta>0&&delta<=lead)sendLocalNotification(`${record.date}:${config.id}:start`,`${config.name} starts soon`,`${Math.max(1,Math.ceil(delta/60000))} minute(s) remaining before the fixed start.`);
+    });
+    const active=activeProtocolRecord();if(active){const deadline=recordMoment(record,active.end),delta=deadline-now;if(delta>0&&delta<=5*60000)sendLocalNotification(`${record.date}:${active.id}:deadline`,`${active.name} deadline approaching`,'Five minutes or less remain. Complete every required stage.')}
+    classesForDate(now).forEach(entry=>{
+      const attendance=attendanceFor(entry,now),start=timeOnDate(now,entry.start),end=timeOnDate(now,entry.end),untilStart=start-now,untilEnd=end-now;
+      if(untilStart>0&&untilStart<=15*60000)sendLocalNotification(`${S.dateKey(now)}:${entry.id}:class-open`,`${entry.subject} check-in opening`,`Class begins at ${formatTime(entry.start)}.`);
+      if(attendance?.checkInAt&&untilEnd>0&&untilEnd<=5*60000)sendLocalNotification(`${S.dateKey(now)}:${entry.id}:dismissal`,`${entry.subject} ending soon`,'Prepare to confirm class dismissal and finalize attendance XP.');
+      if(now>=end&&(!attendance||attendance.status==='unverified')&&now-end<=60*60000)sendLocalNotification(`${S.dateKey(now)}:${entry.id}:missed-checkin`,`${entry.subject} attendance unresolved`,'Open ASCEND and resolve the missed attendance confirmation.');
+    });
+    if(record?.weeklyBoss&&record.weeklyBossPlan){const boss=record.protocols?.productivity,start=recordMoment(record,'20:00'),delta=start-now;if(boss?.status==='pending'&&delta>0&&delta<=lead)sendLocalNotification(`${record.date}:weekly-boss`, `Weekly Boss: ${record.weeklyBossPlan.title}`,record.weeklyBossPlan.copy)}
+    Object.values(record?.protocols||{}).filter(protocol=>protocol.status==='failed'&&protocol.completedAt&&now-new Date(protocol.completedAt)<=60*60000).forEach(protocol=>sendLocalNotification(`${record.date}:${protocol.id}:failed`,`${protocol.name} failed`,protocol.failureReason||'The fixed deadline passed.'));
+  };
+  const storageReport=async()=>{
+    const localBytes=S.storageBytes(state);let usage=localBytes,quota=5*1024*1024;
+    try{const estimate=await navigator.storage?.estimate?.();if(estimate){usage=Math.max(usage,Number(estimate.usage||0));quota=Number(estimate.quota||quota)}}catch(error){}
+    return{usage,quota,ratio:quota?usage/quota:0,localBytes};
+  };
+  const checkStoragePressure=async(force=false)=>{
+    if(!force&&Date.now()-storageCheckAt<60000)return;storageCheckAt=Date.now();const report=await storageReport();
+    if(report.ratio>=.8||report.localBytes>=4*1024*1024){const today=S.dateKey();if(state.system.lastStorageWarningAt!==today){state.system.lastStorageWarningAt=today;state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'integrity',message:'Local storage pressure warning issued.'});save({silent:true});showSystemNotice('integrity','STORAGE CAPACITY WARNING','Export a backup. Routine logs are being limited automatically.',4200)}}
+    return report;
+  };
+  const syncRecoveryOverlay=()=>{
+    const overlay=$('#recoveryOverlay');if(!overlay)return;
+    const canShow=Boolean(state.recovery?.active)&&!activeProtocolRecord()&&!classStateAt(new Date())&&$('#scheduleOverlay').hidden&&$('#emergencyOverlay').hidden;
+    overlay.hidden=!canShow;
+    if(canShow){const config=blueprint(state.recovery.protectedProtocolId)||blueprint('wake');$('#recoveryProtectedProtocol').textContent=config.name;releaseWakeLock()}
+  };
+  const completeRecoveryProtocol=()=>{
+    if(!state.recovery?.active)return;
+    state.recovery.reason=$('#recoveryReason').value;state.recovery.action=$('#recoveryAction').value;state.recovery.status='completed';state.recovery.active=false;state.recovery.completedAt=new Date().toISOString();state.player.failureScar=false;
+    state.logs.push({id:S.uid('log'),at:state.recovery.completedAt,type:'recovery',message:`Recovery completed after ${state.recovery.sourceDate}: ${state.recovery.reason} · ${state.recovery.action}. Next ${state.recovery.protectedProtocolId} protected.`});
+    save();$('#recoveryOverlay').hidden=true;showSystemNotice('recovery','RECOVERY ARMED','The next protocol must still be completed normally.',3000);renderApp();
+  };
 
   const applyBodyState=(record,protocol,task,deadlineMs)=>{
     syncAmbientState(record,protocol);
@@ -636,8 +834,9 @@
       $('#freeNextTime').textContent=`Starts at ${formatTime(event.data.start)}`;$('#freeCountdown').textContent=formatDuration(event.time-now);
       const location=[event.data.modality,event.data.room].filter(Boolean).join(' · ');$('#freePrep').textContent=location?`Prepare for ${location}.`:'Prepare the required materials before class.';
     }else{
-      const config=event.data;$('#freeEyebrow').textContent='FREE WINDOW';$('#freeKicker').textContent=config.id==='productivity'&&record.weeklyBoss?'WEEKLY BOSS NEXT':'NEXT DIRECTIVE';
-      $('#freeTitle').textContent=config.name;$('#freeNextTime').textContent=`Starts at ${formatTime(config.start)}`;$('#freeCountdown').textContent=formatDuration(event.time-now);$('#freePrep').textContent=config.prep;
+      const config=event.data,bossNext=config.id==='productivity'&&record.weeklyBoss;
+      $('#freeEyebrow').textContent='FREE WINDOW';$('#freeKicker').textContent=bossNext?`WEEKLY BOSS · ${record.weeklyBossPlan?.title||'CHALLENGE'}`:'NEXT DIRECTIVE';
+      $('#freeTitle').textContent=config.name;$('#freeNextTime').textContent=`Starts at ${formatTime(config.start)}`;$('#freeCountdown').textContent=formatDuration(event.time-now);$('#freePrep').textContent=bossNext?record.weeklyBossPlan?.copy||config.prep:config.prep;
     }
   };
 
@@ -770,7 +969,7 @@
     const task=currentStep(protocol);
     if(!task){clearProtocol(record,protocol);return}
     const deadline=timeOnDate(new Date(),config.end);const deadlineMs=deadline-new Date();applyBodyState(record,protocol,task,deadlineMs);
-    $('#protocolLabel').textContent=protocol.boss?'WEEKLY BOSS · PRODUCTIVITY':config.name.toUpperCase();
+    $('#protocolLabel').textContent=protocol.boss?`WEEKLY BOSS · ${record.weeklyBossPlan?.title||'PRODUCTIVITY'}`:config.name.toUpperCase();
     $('#protocolWindow').textContent=`${formatTime(config.start)} – ${formatTime(config.end)}`;
     const index=protocol.steps.indexOf(task);$('#stepCurrent').textContent=index+1;$('#stepTotal').textContent=protocol.steps.length;
     const punctual=protocolOnTime(record,protocol);$('#punctualityBadge').textContent=task.type==='timer'||task.type==='academic'||task.type==='trading'?`FOCUS ${focusIntegrity(protocol)}%`:punctual?'ON TIME':'LATE';$('#punctualityBadge').classList.toggle('late',!punctual);
@@ -780,7 +979,7 @@
     $('#subtaskTitle').textContent=task.title;$('#subtaskCopy').textContent=stepCopy(task);
     $('#completedSteps').textContent=`${protocol.steps.filter(step=>step.status==='completed').length} / ${protocol.steps.length} completed`;
     $('#protocolXp').textContent=`${Math.round(config.xp*(protocol.boss?1.35:1))} XP available`;
-    $('#focusNote').textContent='Complete every required stage before the fixed deadline.';
+    $('#focusNote').textContent=protocol.boss?(record.weeklyBossPlan?.copy||'Complete the adaptive Weekly Boss objective.'):'Complete every required stage before the fixed deadline.';
     if(task.type==='audit')renderAudit(protocol,task);
     else if(task.type==='planner')renderPlanner(protocol,task);
     else if(task.type==='academic')renderAcademic(protocol,task);
@@ -791,13 +990,13 @@
   const renderResult=record=>{
     releaseWakeLock();show('resultScreen');document.body.dataset.state=record.status==='cleared'?'active':'critical';
     const cleared=record.status==='cleared';$('#resultEmblem').classList.toggle('failed',!cleared);setGlyph('resultEmblem',cleared?'success':'failure');
-    $('#resultEyebrow').textContent=cleared?(record.rankAdvanced?'RANK ADVANCED':record.perfectClear?'PERFECT CLEAR':record.weeklyBossCleared?'WEEKLY BOSS DEFEATED':'DAY CLEARED'):'DAY FAILED';
+    $('#resultEyebrow').textContent=cleared?(record.heldXp?'CLEAR RECORDED · REWARD HOLD':record.rankAdvanced?'RANK ADVANCED':record.perfectClear?'PERFECT CLEAR':record.weeklyBossCleared?'WEEKLY BOSS DEFEATED':'DAY CLEARED'):'DAY FAILED';
     $('#resultTitle').textContent=cleared?'Discipline Maintained':'Discipline Broken';
-    $('#resultMessage').textContent=cleared?'Every required protocol was completed before the daily cutoff.':'At least one required protocol failed. Daily XP and the streak were lost.';
-    $('#resultProtocols').textContent=`${record.completedProtocols}/${requiredProtocolCount}`;$('#resultOnTime').textContent=`${record.onTimePercentage}%`;$('#resultXp').textContent=record.totalXp;$('#resultLevel').textContent=`${state.player.level} · ${state.player.rank}`;
-    const sealText=record.rankAdvanced?`${state.player.rank}-RANK ACHIEVED`:record.perfectClear?'PERFECT CLEAR':record.rankTrialFailed?'RANK-UP TRIAL FAILED':record.weeklyBossCleared?'WEEKLY BOSS DEFEATED':'';
+    $('#resultMessage').textContent=cleared?(record.heldXp?'Clear recorded. Progression rewards are held until device time is verified.':'Every required protocol was completed before the daily cutoff.'):'At least one required protocol failed. Daily XP and the streak were lost.';
+    $('#resultProtocols').textContent=`${record.completedProtocols}/${requiredProtocolCount}`;$('#resultOnTime').textContent=`${record.onTimePercentage}%`;$('#resultXp').textContent=record.heldXp?`${record.heldXp} HELD`:record.totalXp;$('#resultLevel').textContent=`${state.player.level} · ${state.player.rank}`;
+    const sealText=record.heldXp?'TIME VERIFICATION REQUIRED':record.rankAdvanced?`${state.player.rank}-RANK ACHIEVED`:record.perfectClear?'PERFECT CLEAR':record.rankTrialFailed?'RANK-UP TRIAL FAILED':record.weeklyBossCleared?'WEEKLY BOSS DEFEATED':'';
     $('#resultSeal').hidden=!sealText;$('#resultSeal').textContent=sealText;$('#resultSeal').classList.toggle('failed',record.rankTrialFailed);
-    $('#autoReward').hidden=!cleared;$('#rewardText').textContent=record.automaticReward||'';$('#masteryMessage').hidden=!state.player.mastered;
+    $('#autoReward').hidden=!cleared||Boolean(record.heldXp);$('#rewardText').textContent=record.automaticReward||'';$('#masteryMessage').hidden=!state.player.mastered;
     $('#tomorrowNote').textContent='Tomorrow begins again at 5:00 AM.';
     const animationKey=`${record.date}-${record.status}-${record.totalXp}-${record.rankAdvanced?'rank':''}-${record.levelAdvanced?'level':''}`;
     if(lastResultAnimationKey!==animationKey){
@@ -811,6 +1010,7 @@
     const record=updateCheckInAndEvaluation();
     syncAmbientState(record,activeProtocolRecord());
     if(!state.initialized){renderSetup();return}
+    syncRecoveryOverlay();
     if(transitionLocked)return;
     const now=new Date();
     if(isSleepWindow(now)){renderSleep(now);return}
@@ -830,7 +1030,7 @@
     const record=dayRecord(),protocol=activeProtocolRecord();if(!record||!protocol)return;
     const task=currentStep(protocol);if(!task)return;
     if(task.type==='timer'&&task.status==='active'&&Date.now()-new Date(task.startedAt).getTime()<task.duration*60000)return;
-    task.status='completed';task.completedAt=new Date().toISOString();if(!task.startedAt)task.startedAt=task.completedAt;
+    if(!transitionStep(task,'completed',new Date().toISOString()))return;
     state.logs.push({id:S.uid('log'),at:task.completedAt,type:'subtask',message:`${task.title} completed.`});save();
     const count=protocol.steps.filter(step=>step.status==='completed').length;
     await showOverlay('SUBTASK CONFIRMED',task.title,`${count} / ${protocol.steps.length}`);
@@ -841,7 +1041,7 @@
     const protocol=activeProtocolRecord(),task=currentStep(protocol);if(!task||$('#actionButton').disabled)return;
     if(task.type==='tap')completeSubtask();
     else if(task.type==='timer'){
-      if(task.status==='pending'){task.status='active';task.startedAt=new Date().toISOString();save();systemFeedback('start','Timed directive started.',`timer-${protocol.id}-${task.id}-${task.startedAt}`);renderApp()}
+      if(task.status==='pending'){transitionStep(task,'active',new Date().toISOString());save();systemFeedback('start','Timed directive started.',`timer-${protocol.id}-${task.id}-${task.startedAt}`);renderApp()}
       else if(Date.now()-new Date(task.startedAt).getTime()>=task.duration*60000)completeSubtask();
     }
   };
@@ -892,7 +1092,7 @@
       const tasks=selectedIds.map(id=>state.academicTasks.find(task=>task.id===id)).filter(Boolean);const each=Math.max(5,Math.floor(total/tasks.length));let remaining=total;
       generated=tasks.map((task,index)=>{const duration=index===tasks.length-1?remaining:each;remaining-=duration;return{id:`academic-${task.id}-${Date.now()}-${index}`,title:task.title,copy:variants(`Execute ${task.subjectName}: ${task.title}.`,`Complete a focused block for ${task.subjectName}.`),icon:'academic',type:'academic',duration,taskId:task.id,generatedAcademic:true,status:'pending',startedAt:null,completedAt:null}});
     }
-    protocol.steps.splice(plannerIndex+1,0,...generated);planner.status='completed';planner.startedAt=planner.startedAt||new Date().toISOString();planner.completedAt=new Date().toISOString();save();renderApp();
+    protocol.steps.splice(plannerIndex+1,0,...generated);transitionStep(planner,'completed',new Date().toISOString());save();renderApp();
   };
 
   const handleCustomAction=event=>{
@@ -923,13 +1123,13 @@
       save();renderApp();return;
     }
     if(action==='confirm-plan'){installAcademicPlan(protocol,step,step.planState.mode,step.planState.selectedIds);return}
-    if(action==='start-academic'){step.status='active';step.startedAt=new Date().toISOString();save();systemFeedback(protocol.boss?'boss':'start',protocol.boss?'Weekly Boss focus started.':'Academic focus started.',`academic-${step.id}`);renderApp();return}
+    if(action==='start-academic'){transitionStep(step,'active',new Date().toISOString());save();systemFeedback(protocol.boss?'boss':'start',protocol.boss?'Weekly Boss focus started.':'Academic focus started.',`academic-${step.id}`);renderApp();return}
     if(action==='finish-maintenance'){completeCustomStep();return}
     if(action==='task-completed'||action==='task-progress'){
       const task=state.academicTasks.find(item=>item.id===step.taskId);if(task){task.workMinutes=(task.workMinutes||0)+step.duration;if(action==='task-completed'){task.status='completed';task.completedAt=new Date().toISOString()}}
       save();completeCustomStep();return;
     }
-    if(action==='start-trading'){step.status='active';step.startedAt=new Date().toISOString();save();systemFeedback('start','Trading review started.',`trading-${step.id}`);renderApp();return}
+    if(action==='start-trading'){transitionStep(step,'active',new Date().toISOString());save();systemFeedback('start','Trading review started.',`trading-${step.id}`);renderApp();return}
     if(action==='save-trading'){
       const observation=$('#tradingObservation')?.value.trim();const decision=$('#tradingDecision')?.value;if(!observation){showBreachWarning('OBSERVATION REQUIRED','Record one market observation before continuing.');return}
       state.tradingNotes.push({id:S.uid('trade'),at:new Date().toISOString(),observation,decision});save();completeCustomStep();
@@ -948,7 +1148,44 @@
     const today=new Date().getDay();if(scheduleEntriesForDay(today).length)return today;
     return scheduleDays.find(item=>scheduleEntriesForDay(item.value).length)?.value??today;
   };
-  const controlViews=['controlHomeView','academicHomeView','profileView','attendanceView','dataBackupView','scheduleOverviewView','scheduleEditView'];
+  const sortedExceptions=()=>[...state.scheduleExceptions].filter(item=>item.active!==false).sort((a,b)=>`${b.date}|${b.createdAt}`.localeCompare(`${a.date}|${a.createdAt}`));
+  const syncExceptionFields=()=>{
+    const type=$('#exceptionType').value,needsClass=type!=='no-classes',needsTime=['reschedule','special'].includes(type);
+    document.querySelector('.exception-class-field').hidden=!needsClass;
+    document.querySelectorAll('.exception-time-field').forEach(field=>field.hidden=!needsTime);
+  };
+  const renderScheduleExceptions=()=>{
+    setControlView('scheduleExceptionsView');
+    if(!$('#exceptionDate').value)$('#exceptionDate').value=S.dateKey(new Date());
+    const entries=activeSchedule().sort((a,b)=>a.subject.localeCompare(b.subject));
+    $('#exceptionClass').innerHTML=entries.length?entries.map(entry=>`<option value="${entry.id}">${escapeHtml(entry.subject)} · ${scheduleDayName(entry.day)}</option>`).join(''):'<option value="">No classes saved</option>';
+    syncExceptionFields();
+    const items=sortedExceptions();exceptionUi.index=clamp(exceptionUi.index,0,Math.max(0,items.length-1));const item=items[exceptionUi.index];
+    $('#exceptionNav').hidden=items.length<=1;$('#exceptionPageLabel').textContent=items.length?`${exceptionUi.index+1} / ${items.length}`:'0 / 0';
+    $('#exceptionPrev').disabled=exceptionUi.index===0;$('#exceptionNext').disabled=exceptionUi.index>=items.length-1;$('#deleteScheduleException').hidden=!item;
+    if(!item){$('#exceptionRecord').innerHTML='<span>NO EXCEPTIONS</span><strong>Normal schedule active</strong><small>One-day changes appear here.</small>';return}
+    const entry=state.classSchedule.find(value=>value.id===item.classId);const typeLabel={'no-classes':'NO CLASSES','cancel':'CLASS CANCELLED','reschedule':'CLASS RESCHEDULED','special':'EXAM / SPECIAL'}[item.type];
+    const time=item.start&&item.end?` · ${formatTime(item.start)}–${formatTime(item.end)}`:'';
+    $('#exceptionRecord').innerHTML=`<span>${escapeHtml(item.date)} · ${typeLabel}</span><strong>${escapeHtml(item.type==='no-classes'?'All scheduled classes':entry?.subject||'Class record')}</strong><small>${escapeHtml((item.note||'One-day schedule override')+time)}</small>`;
+  };
+  const saveScheduleException=()=>{
+    const date=$('#exceptionDate').value,type=$('#exceptionType').value,classId=type==='no-classes'?null:$('#exceptionClass').value,start=$('#exceptionStart').value,end=$('#exceptionEnd').value,note=$('#exceptionNote').value.trim();
+    if(!date){showBreachWarning('DATE REQUIRED','Choose the date for this exception.');return}
+    if(type!=='no-classes'&&!classId){showBreachWarning('CLASS REQUIRED','Choose the affected class.');return}
+    if(['reschedule','special'].includes(type)&&(!start||!end||minutes(end)<=minutes(start))){showBreachWarning('VALID TIME REQUIRED','Choose a valid start and end time.');return}
+    state.scheduleExceptions=state.scheduleExceptions.filter(item=>!(item.date===date&&item.type===type&&item.classId===classId));
+    state.scheduleExceptions.push({id:S.uid('exception'),date,type,classId,start:['reschedule','special'].includes(type)?start:'',end:['reschedule','special'].includes(type)?end:'',note,active:true,createdAt:new Date().toISOString()});
+    state.attendanceRecords.filter(record=>record.scheduledDate===date&&!record.finalized&&(type==='no-classes'||record.classId===classId)).forEach(record=>{
+      if(['no-classes','cancel'].includes(type)){record.status='cancelled';record.finalized=true;record.dismissalStatus='cancelled';record.dismissedAt=new Date().toISOString();record.pendingXp=0;record.xpAwarded=0}
+      else{record.scheduledStart=start;record.scheduledEnd=end;record.updatedAt=new Date().toISOString()}
+    });
+    state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'schedule',message:`Schedule exception saved for ${date}: ${type}.`});save();exceptionUi.index=0;renderScheduleExceptions();showSystemNotice('snapshot','SCHEDULE EXCEPTION SAVED','Only the selected date is affected.',2400);
+  };
+  const deleteScheduleException=()=>{
+    const item=sortedExceptions()[exceptionUi.index];if(!item)return;state.scheduleExceptions=state.scheduleExceptions.filter(value=>value.id!==item.id);state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'schedule',message:`Schedule exception deleted for ${item.date}.`});save();exceptionUi.index=Math.max(0,exceptionUi.index-1);renderScheduleExceptions();
+  };
+
+  const controlViews=['controlHomeView','academicHomeView','profileView','attendanceView','systemIntegrityView','scheduleExceptionsView','dataBackupView','scheduleOverviewView','scheduleEditView'];
   const setControlView=view=>{
     controlUi.view=view;
     controlViews.forEach(id=>{const node=document.getElementById(id);if(node)node.hidden=id!==view});
@@ -1039,6 +1276,34 @@
   const renderAcademicHome=()=>{
     setControlView('academicHomeView');const academic=overallAcademicStats();$('#scheduleHomeCount').textContent=activeSchedule().length;$('#academicHomeXp').textContent=academic.xp;
   };
+  const renderSystemIntegrity=async()=>{
+    setControlView('systemIntegrityView');
+    const snapshots=S.listSnapshots();const report=await storageReport();const percent=Math.min(999,Math.round(report.ratio*100));
+    $('#integrityClockStatus').textContent=state.integrity.clockStatus==='flagged'?'FLAGGED':'TRUSTED';
+    $('#integrityClockStatus').classList.toggle('critical-text',state.integrity.clockStatus==='flagged');
+    $('#integrityStorageStatus').textContent=report.ratio>=.8?'HIGH':`${percent}%`;
+    $('#integritySnapshotCount').textContent=`${snapshots.length} / 7`;
+    $('#integrityNotificationStatus').textContent=state.settings.notifications&&('Notification' in window)&&Notification.permission==='granted'?'ON':'OFF';
+    $('#integrityCopy').textContent=state.integrity.clockStatus==='flagged'?'Progression rewards are held. Confirm the correct device time to release them.':'Timeline checks, strict protocol states, and automatic recovery snapshots are active.';
+    $('#verifyClock').hidden=state.integrity.clockStatus!=='flagged';
+    $('#toggleNotifications b').textContent=state.settings.notifications?'Disable Local Alerts':'Enable Local Alerts';
+    $('#toggleWakeLock b').textContent=`Keep Screen Awake: ${state.settings.keepAwake?'On':'Off'}`;
+    $('#restoreLatestSnapshot').disabled=!snapshots.length;
+  };
+  const verifyDeviceClock=()=>{
+    state.integrity.clockStatus='trusted';state.integrity.rewardHold=false;state.integrity.lastFlag=null;state.integrity.lastVerifiedAt=new Date().toISOString();state.integrity.lastWallTime=new Date().toISOString();clockBaseline={wall:Date.now(),mono:performance.now()};clockAlertShown=false;
+    const released=releaseHeldRewards();state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'integrity',message:`Current device time verified. ${released} held reward(s) released.`});save({silent:true});showSystemNotice('integrity','DEVICE TIME VERIFIED',released?`${released} held reward(s) released.`:'Timeline trust restored.',3200);renderSystemIntegrity();
+  };
+  const toggleNotifications=async()=>{
+    if(!('Notification' in window)){showBreachWarning('ALERTS NOT SUPPORTED','This browser does not support local notifications.');return}
+    if(!state.settings.notifications){const permission=await Notification.requestPermission();if(permission!=='granted'){showBreachWarning('ALERT PERMISSION DENIED','Enable notifications in browser or app settings first.');return}state.settings.notifications=true}
+    else state.settings.notifications=false;
+    state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'integrity',message:`Local alerts ${state.settings.notifications?'enabled':'disabled'}.`});save();renderSystemIntegrity();
+  };
+  const restoreLatestSnapshot=()=>{
+    const latest=S.listSnapshots()[0];if(!latest){showBreachWarning('NO SNAPSHOT','No automatic recovery snapshot is available.');return}
+    try{state=S.restoreSnapshot(latest.id);state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'restore',message:`Latest automatic snapshot restored: ${latest.date}.`});save({silent:true});closeScheduleOverlay();activeScreenId=null;renderApp();showSystemNotice('restore','SNAPSHOT RESTORED',`Recovered local state from ${latest.date}.`,3200)}catch(error){showBreachWarning('RESTORE FAILED',error.message||'Snapshot could not be restored.')}
+  };
   const profilePages=['Identity','Progress','Discipline','Academics','Achievements'];
   const renderProfile=()=>{
     setControlView('profileView');controlUi.profilePage=clamp(controlUi.profilePage,0,profilePages.length-1);
@@ -1053,7 +1318,7 @@
       const required=clearDaysRequired(state.player.level),nextRank=state.player.pendingRank||eligibleRank(state.player.level,state.player.rank)||'S';
       const progress=state.player.mastered?100:required?Math.round(state.player.levelClearDays/required*100):100;
       const remaining=state.player.mastered?0:Math.max(0,required-state.player.levelClearDays);
-      $('#profileContent').innerHTML=`<div class="progress-visual"><div class="level-progress-ring" style="--level-progress:${progress*3.6}deg"><span>LEVEL</span><strong>${state.player.level}</strong><small>${progress}%</small></div><div class="progress-visual-copy"><span>${state.player.mastered?'SYSTEM MASTERY':'NEXT LEVEL REQUIREMENT'}</span><strong>${state.player.mastered?'LEVEL 50 ACHIEVED':`${state.player.levelClearDays} / ${required} CLEAR DAYS`}</strong><small>${state.player.mastered?'Progression complete.':`${remaining} more clear day${remaining===1?'':'s'} required.`}</small></div></div><div class="progress-metrics"><div><span>LIFETIME XP</span><strong>${state.player.totalXp}</strong></div><div><span>LIFETIME CLEAR</span><strong>${state.player.totalClearDays}</strong></div></div><div class="profile-detail"><span>NEXT RANK</span><strong>${state.player.pendingRank?`${state.player.pendingRank}-RANK TRIAL ACTIVE`:nextRank===state.player.rank?'MAXIMUM RANK':`${nextRank}-RANK`}</strong><small>${state.player.pendingRank?'A Perfect Clear is required.':'Rank progression remains based on level and discipline history.'}</small></div>`;
+      $('#profileContent').innerHTML=`<div class="progress-visual"><div class="level-progress-ring" style="--level-progress:${progress*3.6}deg"><span>LEVEL</span><strong>${state.player.level}</strong><small>${progress}%</small></div><div class="progress-visual-copy"><span>${state.player.mastered?'SYSTEM MASTERY':'NEXT LEVEL REQUIREMENT'}</span><strong>${state.player.mastered?'LEVEL 50 ACHIEVED':`${state.player.levelClearDays} / ${required} CLEAR DAYS`}</strong><small>${state.player.mastered?'Progression complete.':`${remaining} more clear day${remaining===1?'':'s'} required.`}</small></div></div><div class="progress-metrics"><div><span>LIFETIME XP</span><strong>${state.player.totalXp}</strong></div><div><span>LIFETIME CLEAR</span><strong>${state.player.totalClearDays}</strong></div></div><div class="profile-detail"><span>NEXT RANK</span><strong>${state.player.pendingRank?`${state.player.pendingRank}-RANK TRIAL ACTIVE`:nextRank===state.player.rank?'MAXIMUM RANK':`${nextRank}-RANK`}</strong><small>${state.player.pendingRank?`${state.player.pendingRank}-Rank requires ${rankTrialPlanFor(state.player.pendingRank)?.onTime||80}% on-time performance, attendance, streak, boss, and focus standards.`:'Rank progression remains based on level and discipline history.'}</small></div>`;
     }else if(controlUi.profilePage===2){
       const all=protocolBlueprints.map(config=>({config,stats:directiveStats(config.id)}));const selected=all[clamp(controlUi.directiveIndex,0,all.length-1)];
       const strongest=[...all].sort((a,b)=>b.stats.completionRate-a.stats.completionRate)[0],weakest=[...all].sort((a,b)=>a.stats.completionRate-b.stats.completionRate)[0];
@@ -1107,12 +1372,13 @@
     }
     state.logs.push({id:S.uid('log'),at:now.toISOString(),type:'attendance-correction',message:`${record.subjectName} corrected from ${before} to ${status}.`});save();controlUi.correction=false;renderAttendance();
   };
-  const backupRecordTotal=summary=>summary.days+summary.attendance+summary.tasks+summary.schedules+summary.trading;
+  const backupRecordTotal=summary=>summary.days+summary.attendance+summary.tasks+summary.schedules+(summary.exceptions||0)+summary.trading;
   const renderDataBackup=()=>{
     setControlView('dataBackupView');
     const summary=S.summarize(state);
     $('#backupUpdated').textContent=formatShortDate(summary.updatedAt);
     $('#backupRecordCount').textContent=backupRecordTotal(summary);
+    const snapshots=S.listSnapshots();$('#snapshotStripCount').textContent=`${snapshots.length} available`;$('#snapshotStripLatest').textContent=snapshots[0]?`Latest: ${formatShortDate(snapshots[0].createdAt)}`:'No recovery snapshot yet.';
     $('#backupPreview').hidden=!backupUi.pending;
     $('#backupActions').hidden=Boolean(backupUi.pending);
     if(backupUi.pending){
@@ -1193,7 +1459,7 @@
     save();scheduleUi.day=Number(entry.day);scheduleUi.page=0;scheduleUi.editId=null;scheduleUi.isNew=false;renderScheduleOverview();showBreachWarning('CLASS DELETED',`${entry.subject} was removed from future meetings. Existing records were preserved.`);
   };
 
-  const openEmergencyOverlay=source=>{if(!activeProtocolRecord()||!$('#emergencyOverlay').hidden)return;cancelHold();$('#emergencyOverlay').hidden=false;$('#emergencyExitFill').style.width='0%';$('#emergencyOverlay').dataset.source=source;systemFeedback('emergency','Emergency override opened.')};
+  const openEmergencyOverlay=source=>{if(!activeProtocolRecord()||!$('#emergencyOverlay').hidden)return;cancelHold();releaseWakeLock();$('#emergencyOverlay').hidden=false;$('#emergencyExitFill').style.width='0%';$('#emergencyOverlay').dataset.source=source;systemFeedback('emergency','Emergency override opened.')};
   const closeEmergencyOverlay=()=>{$('#emergencyOverlay').hidden=true;requestWakeLock()};
   const emergencyExit=()=>{
     const record=dayRecord(),protocol=activeProtocolRecord();if(!record||!protocol){closeEmergencyOverlay();return}
@@ -1262,10 +1528,17 @@
     $('#openPlayerProfile').addEventListener('click',()=>{controlUi.profilePage=0;renderProfile()});
     $('#openAcademicControl').addEventListener('click',renderAcademicHome);
     $('#openDataBackup').addEventListener('click',()=>{backupUi={pending:null,fileName:''};renderDataBackup()});
+    $('#openSystemIntegrity').addEventListener('click',renderSystemIntegrity);
     $('#academicBack').addEventListener('click',renderControlHome);
     $('#profileBack').addEventListener('click',renderControlHome);
     $('#attendanceBack').addEventListener('click',renderAcademicHome);
     $('#dataBackupBack').addEventListener('click',()=>{backupUi={pending:null,fileName:''};renderControlHome()});
+    $('#systemIntegrityBack').addEventListener('click',renderControlHome);
+    $('#verifyClock').addEventListener('click',verifyDeviceClock);
+    $('#toggleNotifications').addEventListener('click',toggleNotifications);
+    $('#toggleWakeLock').addEventListener('click',()=>{state.settings.keepAwake=!state.settings.keepAwake;if(!state.settings.keepAwake)releaseWakeLock();else if(activeProtocolRecord())requestWakeLock();save();renderSystemIntegrity()});
+    $('#createIntegritySnapshot').addEventListener('click',()=>{S.createDailySnapshot(state,true);state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'snapshot',message:'Manual recovery snapshot created.'});save({silent:true});showSystemNotice('snapshot','SNAPSHOT CREATED','A known-good recovery point was stored locally.',2600);renderSystemIntegrity()});
+    $('#restoreLatestSnapshot').addEventListener('click',restoreLatestSnapshot);
     $('#exportBackup').addEventListener('click',exportDataBackup);
     $('#chooseBackup').addEventListener('click',()=>$('#backupFileInput').click());
     $('#backupFileInput').addEventListener('change',event=>previewBackupFile(event.target.files?.[0]));
@@ -1273,6 +1546,13 @@
     $('#confirmBackupRestore').addEventListener('click',confirmBackupRestore);
     $('#scheduleConfigEdit').addEventListener('click',()=>{scheduleUi.day=defaultScheduleDay();scheduleUi.page=0;renderScheduleOverview()});
     $('#openAttendance').addEventListener('click',()=>{controlUi.attendanceTab='overall';controlUi.correction=false;renderAttendance()});
+    $('#openScheduleExceptions').addEventListener('click',()=>{exceptionUi.index=0;renderScheduleExceptions()});
+    $('#scheduleExceptionsBack').addEventListener('click',renderAcademicHome);
+    $('#exceptionType').addEventListener('change',syncExceptionFields);
+    $('#saveScheduleException').addEventListener('click',saveScheduleException);
+    $('#exceptionPrev').addEventListener('click',()=>{exceptionUi.index=Math.max(0,exceptionUi.index-1);renderScheduleExceptions()});
+    $('#exceptionNext').addEventListener('click',()=>{exceptionUi.index=Math.min(Math.max(0,sortedExceptions().length-1),exceptionUi.index+1);renderScheduleExceptions()});
+    $('#deleteScheduleException').addEventListener('click',deleteScheduleException);
 
     $('#profileTabs').addEventListener('click',event=>{const button=event.target.closest('[data-profile-page]');if(!button)return;controlUi.profilePage=Number(button.dataset.profilePage);renderProfile()});
     $('#profilePrev').addEventListener('click',()=>{controlUi.profilePage=(controlUi.profilePage-1+profilePages.length)%profilePages.length;renderProfile()});
@@ -1323,6 +1603,7 @@
     $('#clockPanel').addEventListener('click',()=>{clockTapCount+=1;clearTimeout(clockTapTimer);if(clockTapCount>=5){clockTapCount=0;armClockBackup();return}clockTapTimer=setTimeout(()=>{clockTapCount=0},1300)});
     $('#clockPanel').addEventListener('pointerdown',event=>{if(Date.now()>clockArmedUntil)return;event.preventDefault();beginHold('clock-backup',3000,()=>{},()=>{clockArmedUntil=0;$('#clockPanel').classList.remove('backup-armed');openEmergencyOverlay('clock-gesture')})});
     ['pointerup','pointercancel','pointerleave'].forEach(type=>$('#clockPanel').addEventListener(type,()=>cancelHold('clock-backup')));
+    $('#completeRecovery').addEventListener('click',completeRecoveryProtocol);
     $('#returnDirectiveButton').addEventListener('click',closeEmergencyOverlay);
     $('#confirmEmergencyButton').addEventListener('pointerdown',event=>{event.preventDefault();beginHold('emergency-exit',3000,progress=>{$('#emergencyExitFill').style.width=`${progress*100}%`},emergencyExit)});
     ['pointerup','pointercancel','pointerleave'].forEach(type=>$('#confirmEmergencyButton').addEventListener(type,()=>cancelHold('emergency-exit')));
@@ -1330,6 +1611,7 @@
     document.querySelectorAll('[data-mastery]').forEach(button=>button.addEventListener('click',()=>{const choice=button.dataset.mastery;state.player.masteryChoice=choice==='graduate'?'Graduated from the System':choice==='maintenance'?'Maintenance Mode':'New Mastery Path';state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'mastery',message:state.player.masteryChoice});save();renderApp()}));
     document.addEventListener('keydown',event=>{
       if(event.key!=='Escape'||event.repeat)return;
+      if(!$('#recoveryOverlay').hidden)return;
       if(!$('#emergencyOverlay').hidden){closeEmergencyOverlay();return}
       if(!$('#scheduleOverlay').hidden){closeScheduleOverlay();return}
       if(escapeTimer||!activeProtocolRecord())return;escapeTimer=setTimeout(()=>{escapeTimer=null;openEmergencyOverlay('escape-hold')},5000);
@@ -1348,8 +1630,13 @@
     window.addEventListener('pageshow',renderApp);window.addEventListener('focus',renderApp);
   };
 
-  const tick=()=>{updateClock();if(orientationBlocked||holdSession||transitionLocked||!$('#scheduleOverlay').hidden)return;renderApp()};
-  wireEvents();updateOrientationGuard();renderApp();dismissLaunchSplash();setupServiceWorker();
+  const tick=()=>{
+    updateClock();checkClockIntegrity();
+    if(state.initialized&&state.integrity?.clockStatus==='trusted'&&Date.now()-integrityHeartbeatAt>=60000){integrityHeartbeatAt=Date.now();state.integrity.lastWallTime=new Date().toISOString();S.save(state)}
+    if(orientationBlocked||holdSession||transitionLocked||!$('#scheduleOverlay').hidden)return;renderApp();
+  };
+  wireEvents();updateOrientationGuard();checkClockIntegrity();renderApp();dismissLaunchSplash();setupServiceWorker();
+  if(state.system?.recoveredFrom){const source=state.system.recoveredFrom;state.system.recoveredFrom=null;save({silent:true});setTimeout(()=>showSystemNotice('restore','DATA RECOVERED',`Known-good state restored from ${source}.`,3800),950)}
   if(!navigator.onLine)setTimeout(()=>showSystemNotice('offline','OFFLINE MODE','ASCEND is operating from device storage.',2600),900);
   setInterval(tick,1000);
 })();
