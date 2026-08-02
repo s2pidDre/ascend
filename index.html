@@ -93,6 +93,7 @@
       </div>
 
       <div class="free-core system-panel">
+        <img class="free-watermark" src="assets/inapp-logo.png" alt="" aria-hidden="true">
         <section class="state-zone state-zone-upper free-upper" aria-label="Next scheduled state">
           <p class="eyebrow" id="freeEyebrow">FREE WINDOW</p>
           <span class="directive-kicker" id="freeKicker">NEXT DIRECTIVE</span>
@@ -203,6 +204,7 @@
 
     <section class="screen result-screen" id="resultScreen" hidden>
       <div class="result-emblem" id="resultEmblem">✓</div>
+      <div class="result-xp-burst" id="dayXpBurst" aria-hidden="true"></div>
       <p class="eyebrow" id="resultEyebrow">DAY CLEARED</p>
       <h1 id="resultTitle">Discipline Maintained</h1>
       <p class="lead" id="resultMessage">Every required directive was completed.</p>
@@ -235,6 +237,7 @@
 
     <section class="screen protocol-result-screen" id="protocolResultScreen" hidden>
       <div class="result-emblem small" id="protocolResultEmblem">✓</div>
+      <div class="result-xp-burst compact" id="protocolXpBurst" aria-hidden="true"></div>
       <p class="eyebrow" id="protocolResultEyebrow">PROTOCOL CLEARED</p>
       <h1 id="protocolResultTitle">Wake Protocol Complete</h1>
       <p class="lead" id="protocolResultMessage">All required subtasks were completed.</p>
@@ -264,6 +267,7 @@
         <div class="control-actions">
           <button class="system-button compact-button" id="openPlayerProfile" type="button"><b>Player Profile</b></button>
           <button class="system-button compact-button secondary-system-button" id="openAcademicControl" type="button"><b>Academic Control Center</b></button>
+          <button class="ghost-button data-backup-entry" id="openDataBackup" type="button">Data Backup & Restore</button>
         </div>
         <button class="ghost-button" id="scheduleClose" type="button">Close</button>
       </section>
@@ -303,6 +307,35 @@
           <button type="button" id="attendancePrev">‹</button><span id="attendancePageLabel">1 / 1</span><button type="button" id="attendanceNext">›</button>
         </div>
         <button class="ghost-button" id="attendanceBack" type="button">Back</button>
+      </section>
+
+
+      <section class="data-backup-view" id="dataBackupView" hidden>
+        <div class="config-sigil data-sigil" aria-hidden="true">⇄</div>
+        <p class="eyebrow">LOCAL SYSTEM ARCHIVE</p>
+        <h2>Data Backup & Restore</h2>
+        <p class="schedule-hint">Export one offline file containing progress, attendance, schedules, tasks, settings, and milestones.</p>
+        <div class="backup-summary" id="backupSummary">
+          <div><span>LAST UPDATED</span><strong id="backupUpdated">—</strong></div>
+          <div><span>STORED RECORDS</span><strong id="backupRecordCount">0</strong></div>
+        </div>
+        <div class="backup-actions" id="backupActions">
+          <button class="system-button compact-button" id="exportBackup" type="button"><b>Export Backup</b></button>
+          <button class="system-button compact-button secondary-system-button" id="chooseBackup" type="button"><b>Choose Backup File</b></button>
+          <input id="backupFileInput" type="file" accept="application/json,.json" hidden>
+        </div>
+        <div class="backup-preview" id="backupPreview" hidden>
+          <span>RESTORE PREVIEW</span>
+          <strong id="backupPreviewPlayer">Player · Level 1 · E</strong>
+          <small id="backupPreviewDetails">0 days · 0 attendance records · 0 tasks</small>
+          <p>Confirming will replace the data currently stored on this device.</p>
+          <div class="backup-confirm-actions">
+            <button class="danger-button" id="confirmBackupRestore" type="button"><b>Confirm Restore</b></button>
+            <button class="ghost-button" id="cancelBackupRestore" type="button">Cancel</button>
+          </div>
+        </div>
+        <p class="backup-footnote">Routine activity logs are automatically limited. Milestones remain preserved.</p>
+        <button class="ghost-button" id="dataBackupBack" type="button">Back</button>
       </section>
 
       <section class="schedule-overview-view" id="scheduleOverviewView" hidden>

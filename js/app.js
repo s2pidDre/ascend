@@ -16,6 +16,11 @@
   let scheduleUi={view:'home',day:new Date().getDay(),page:0,editId:null,isNew:false};
   let controlUi={view:'home',profilePage:0,directiveIndex:0,achievementPage:0,attendanceTab:'overall',subjectIndex:0,historyIndex:0,correction:false};
   let currentClassContext=null;
+  let activeScreenId=null;
+  let brandFlashTimer=null;
+  let lastResultAnimationKey=null;
+  let achievementSeenTimer=null;
+  let backupUi={pending:null,fileName:''};
 
   const $=selector=>document.querySelector(selector);
   const screens=['setupScreen','earlyWakeScreen','sleepScreen','freeScreen','classScreen','protocolScreen','resultScreen','protocolResultScreen'];
@@ -25,12 +30,20 @@
   const todayMinutes=date=>date.getHours()*60+date.getMinutes()+date.getSeconds()/60;
   const formatClock=date=>new Intl.DateTimeFormat(undefined,{hour:'numeric',minute:'2-digit'}).format(date);
   const formatDate=date=>new Intl.DateTimeFormat(undefined,{weekday:'short',month:'short',day:'numeric'}).format(date);
+  const formatShortDate=value=>{const date=value instanceof Date?value:new Date(value);return Number.isNaN(date.getTime())?'Unknown':new Intl.DateTimeFormat(undefined,{month:'short',day:'numeric',year:'numeric'}).format(date)};
   const formatTime=time=>{const d=new Date();const[h,m]=time.split(':').map(Number);d.setHours(h,m,0,0);return formatClock(d)};
   const timeOnDate=(date,time)=>{const d=new Date(date);const[h,m]=time.split(':').map(Number);d.setHours(h,m,0,0);return d};
   const isSleepWindow=date=>{const minute=todayMinutes(date);return minute>=1320||minute<240};
   const isEarlyWakeWindow=date=>{const minute=todayMinutes(date);return minute>=240&&minute<300};
   const nextWakeMoment=date=>{const wake=timeOnDate(date,'05:00');if(todayMinutes(date)>=1320)wake.setDate(wake.getDate()+1);return wake};
-  const show=id=>screens.forEach(screen=>{document.getElementById(screen).hidden=screen!==id});
+  const show=id=>{
+    if(activeScreenId===id)return;
+    screens.forEach(screen=>{document.getElementById(screen).hidden=screen!==id});
+    const screen=document.getElementById(id);
+    screen?.classList.remove('screen-enter');
+    if(screen){void screen.offsetWidth;screen.classList.add('screen-enter')}
+    activeScreenId=id;
+  };
   const save=()=>S.save(state);
   const currentKey=()=>S.dateKey(new Date());
   const requiredProtocolCount=5;
@@ -208,6 +221,7 @@
     $('#protocolResultTime').textContent=formatClock(new Date(protocol.completedAt));
     $('#protocolResultStatus').textContent=protocolOnTime(record,protocol)?'ON TIME':'LATE CLEAR';
     $('#protocolResultXp').textContent=`+${protocol.earnedXp}`;
+    animateResultFeedback('protocolResultEmblem','protocolXpBurst',protocol.earnedXp,Boolean(protocol.boss),false);
     systemFeedback(protocol.boss?'boss':'protocol',protocol.boss?'Weekly Boss defeated.':'Protocol cleared.',`clear-${record.date}-${protocol.id}`);
     transitionLocked=true;
     clearTimeout(transitionTimer);
@@ -486,16 +500,36 @@
     }[kind]||[60];
     navigator.vibrate(pattern);
   };
-  const systemFeedback=(kind,text,key=`${kind}-${Date.now()}`)=>{void text;void key;tone(kind);haptic(kind)};
+  const flashBrand=kind=>{
+    const brand=$('#systemBrand');if(!brand)return;
+    clearTimeout(brandFlashTimer);
+    brand.dataset.event=kind;brand.classList.remove('brand-event');void brand.offsetWidth;brand.classList.add('brand-event');
+    brandFlashTimer=setTimeout(()=>{brand.classList.remove('brand-event');delete brand.dataset.event},720);
+  };
+  const systemFeedback=(kind,text,key=`${kind}-${Date.now()}`)=>{
+    void text;void key;tone(kind);haptic(kind);
+    if(['clear','protocol','level','boss','emergency'].includes(kind))flashBrand(kind);
+  };
+  const animateResultFeedback=(emblemId,burstId,xp=0,milestone=false,failed=false)=>{
+    const emblem=document.getElementById(emblemId),burst=document.getElementById(burstId);if(!emblem)return;
+    emblem.classList.remove('result-flash','milestone-flash','failure-flash');void emblem.offsetWidth;
+    emblem.classList.add(failed?'failure-flash':milestone?'milestone-flash':'result-flash');
+    if(!burst)return;
+    burst.hidden=!xp;burst.textContent=xp?`+${xp} XP`:'';burst.classList.remove('play','milestone');
+    if(xp){void burst.offsetWidth;burst.classList.toggle('milestone',milestone);burst.classList.add('play')}
+  };
+  const syncAmbientState=(record,protocol=null)=>{
+    document.body.classList.toggle('failure-scar',Boolean(state.player.failureScar));
+    document.body.classList.toggle('rank-trial',Boolean(record?.rankTrialActive||state.player.pendingRank));
+    document.body.classList.toggle('weekly-boss',Boolean(protocol?.boss));
+    document.body.dataset.rank=state.player.rank||'E';
+    document.body.style.setProperty('--aura-strength',String(clamp(.26+state.player.level*.006+state.player.streak*.012,.28,.9)));
+  };
   const requestWakeLock=async()=>{if(!state.settings.keepAwake||!('wakeLock' in navigator)||document.hidden||wakeLock)return;try{wakeLock=await navigator.wakeLock.request('screen');wakeLock.addEventListener('release',()=>{wakeLock=null})}catch(error){wakeLock=null}};
   const releaseWakeLock=()=>{try{wakeLock?.release()}catch(error){}wakeLock=null};
 
   const applyBodyState=(record,protocol,task,deadlineMs)=>{
-    document.body.classList.toggle('failure-scar',Boolean(state.player.failureScar));
-    document.body.classList.toggle('weekly-boss',Boolean(protocol?.boss));
-    document.body.classList.toggle('rank-trial',Boolean(record?.rankTrialActive));
-    document.body.dataset.rank=state.player.rank||'E';
-    document.body.style.setProperty('--aura-strength',String(clamp(.26+state.player.level*.006+state.player.streak*.012,.28,.9)));
+    syncAmbientState(record,protocol);
     const minutesLeft=deadlineMs/60000;
     let stateName=task?.type==='timer'||task?.type==='academic'||task?.type==='trading'?'timed':'active';
     if(minutesLeft<=5)stateName='critical';else if(minutesLeft<=10)stateName='warning';
@@ -709,12 +743,17 @@
     $('#resultSeal').hidden=!sealText;$('#resultSeal').textContent=sealText;$('#resultSeal').classList.toggle('failed',record.rankTrialFailed);
     $('#autoReward').hidden=!cleared;$('#rewardText').textContent=record.automaticReward||'';$('#masteryMessage').hidden=!state.player.mastered;
     $('#tomorrowNote').textContent='Tomorrow begins again at 5:00 AM.';
+    const animationKey=`${record.date}-${record.status}-${record.totalXp}-${record.rankAdvanced?'rank':''}-${record.levelAdvanced?'level':''}`;
+    if(lastResultAnimationKey!==animationKey){
+      lastResultAnimationKey=animationKey;
+      animateResultFeedback('resultEmblem','dayXpBurst',cleared?record.totalXp:0,Boolean(record.rankAdvanced||record.levelAdvanced||record.perfectClear||record.weeklyBossCleared),!cleared);
+    }
   };
 
   const renderApp=()=>{
     updateClock();
     const record=updateCheckInAndEvaluation();
-    document.body.classList.toggle('failure-scar',Boolean(state.player.failureScar));
+    syncAmbientState(record,activeProtocolRecord());
     if(!state.initialized){renderSetup();return}
     if(transitionLocked)return;
     const now=new Date();
@@ -764,8 +803,8 @@
     await showOverlay('WAKE TIME RECORDED',formatClock(now),'STATUS · EARLY');renderApp();
   };
 
-  const showBreachWarning=(title,copy)=>{
-    $('#breachTitle').textContent=title;$('#breachCopy').textContent=copy;$('#breachWarning').hidden=false;systemFeedback('warning',title,`warning-${title}-${Date.now()}`);
+  const showBreachWarning=(title,copy,kind='warning')=>{
+    $('#breachTitle').textContent=title;$('#breachCopy').textContent=copy;$('#breachWarning').hidden=false;systemFeedback(kind,title,`${kind}-${title}-${Date.now()}`);
     setTimeout(()=>{$('#breachWarning').hidden=true},3400);
   };
 
@@ -841,7 +880,7 @@
     const today=new Date().getDay();if(scheduleEntriesForDay(today).length)return today;
     return scheduleDays.find(item=>scheduleEntriesForDay(item.value).length)?.value??today;
   };
-  const controlViews=['controlHomeView','academicHomeView','profileView','attendanceView','scheduleOverviewView','scheduleEditView'];
+  const controlViews=['controlHomeView','academicHomeView','profileView','attendanceView','dataBackupView','scheduleOverviewView','scheduleEditView'];
   const setControlView=view=>{
     controlUi.view=view;
     controlViews.forEach(id=>{const node=document.getElementById(id);if(node)node.hidden=id!==view});
@@ -889,20 +928,44 @@
     const mostMissed=Object.entries(missed).sort((a,b)=>b[1]-a[1])[0]?.[0]||'None recorded';
     return{clears:clears.length,failures:failures.length,completionRate:records.length?Math.round(clears.length/records.length*100):0,onTimeRate:clears.length?Math.round(onTime/clears.length*100):0,mostMissed};
   };
+  const sortedDayRecords=()=>Object.values(state.dayRecords).sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+  const firstStreakUnlockDate=threshold=>{
+    let streak=0;
+    for(const day of sortedDayRecords()){
+      if(day.status==='cleared')streak+=1;else if(day.status==='failed')streak=0;
+      if(streak>=threshold)return `${day.date}T22:00:00`;
+    }
+    return null;
+  };
+  const nthAttendanceDate=(statuses,count)=>{
+    const matches=[...state.attendanceRecords].filter(record=>record.finalized&&statuses.includes(record.status)).sort((a,b)=>`${a.scheduledDate}T${a.scheduledStart}`.localeCompare(`${b.scheduledDate}T${b.scheduledStart}`));
+    const record=matches[count-1];return record?record.checkInAt||`${record.scheduledDate}T${record.scheduledStart}:00`:null;
+  };
+  const firstFocusUnlockDate=()=>{
+    const qualifying=sortedDayRecords().filter(day=>day.status==='cleared'&&Object.values(day.protocols||{}).every(protocol=>Number(protocol.focusBreaches||0)===0));
+    return qualifying[2]?`${qualifying[2].date}T22:00:00`:null;
+  };
   const achievementList=()=>{
     const academic=overallAcademicStats();const subjects=academic.subjects;
-    const totalBreaches=Object.values(state.dayRecords).reduce((sum,day)=>sum+Object.values(day.protocols||{}).reduce((inner,protocol)=>inner+Number(protocol.focusBreaches||0),0),0);
-    return[
-      {title:'Discipline Initiate',unlocked:true,detail:'System activated.'},
-      {title:'First Perfect Clear',unlocked:(state.player.perfectClears||0)>=1,detail:'Complete one Perfect Clear.'},
-      {title:'Seven-Day Streak',unlocked:(state.player.bestStreak||0)>=7,detail:'Maintain seven clear days.'},
-      {title:'Thirty-Day Streak',unlocked:(state.player.bestStreak||0)>=30,detail:'Maintain thirty clear days.'},
-      {title:'Perfect Attendance',unlocked:academic.required>=5&&academic.attendanceRate===100,detail:'Maintain perfect verified attendance.'},
-      {title:'Early Arrival Specialist',unlocked:academic.counts.early>=5,detail:'Record five early arrivals.'},
-      {title:'Weekly Boss Slayer',unlocked:Object.values(state.dayRecords).some(day=>day.weeklyBossCleared),detail:'Defeat a Weekly Boss.'},
-      {title:'Focus Unbroken',unlocked:state.player.totalClearDays>=3&&totalBreaches===0,detail:'Clear three days without a Focus Breach.'},
-      {title:'Subject Specialist',unlocked:subjects.some(subject=>subject.level>=5),detail:'Reach Subject Level 5.'}
+    const days=sortedDayRecords();
+    const firstPerfect=days.find(day=>day.perfectClear);
+    const firstBoss=days.find(day=>day.weeklyBossCleared);
+    const specialistDates=[...state.attendanceRecords.map(record=>record.updatedAt||record.checkInAt),...state.academicTasks.map(task=>task.completedAt||task.createdAt)].filter(Boolean).sort();const specialistSource=specialistDates[specialistDates.length-1]||null;
+    const items=[
+      {id:'discipline-initiate',title:'Discipline Initiate',unlocked:true,detail:'Activate the ASCEND System.',candidateAt:state.createdAt},
+      {id:'first-perfect-clear',title:'First Perfect Clear',unlocked:(state.player.perfectClears||0)>=1,detail:'Complete one Perfect Clear.',candidateAt:firstPerfect?`${firstPerfect.date}T22:00:00`:state.player.lastPerfectDate},
+      {id:'seven-day-streak',title:'Seven-Day Streak',unlocked:(state.player.bestStreak||0)>=7,detail:'Maintain seven consecutive clear days.',candidateAt:firstStreakUnlockDate(7)},
+      {id:'thirty-day-streak',title:'Thirty-Day Streak',unlocked:(state.player.bestStreak||0)>=30,detail:'Maintain thirty consecutive clear days.',candidateAt:firstStreakUnlockDate(30)},
+      {id:'perfect-attendance',title:'Perfect Attendance',unlocked:academic.required>=5&&academic.attendanceRate===100,detail:'Maintain perfect verified attendance across five classes.',candidateAt:nthAttendanceDate(['early','present','late'],5)},
+      {id:'early-arrival-specialist',title:'Early Arrival Specialist',unlocked:academic.counts.early>=5,detail:'Record five early class arrivals.',candidateAt:nthAttendanceDate(['early'],5)},
+      {id:'weekly-boss-slayer',title:'Weekly Boss Slayer',unlocked:Boolean(firstBoss),detail:'Defeat one Weekly Boss.',candidateAt:firstBoss?`${firstBoss.date}T22:00:00`:null},
+      {id:'focus-unbroken',title:'Focus Unbroken',unlocked:state.player.totalClearDays>=3&&firstFocusUnlockDate()!=null,detail:'Clear three days without a Focus Breach.',candidateAt:firstFocusUnlockDate()},
+      {id:'subject-specialist',title:'Subject Specialist',unlocked:subjects.some(subject=>subject.level>=5),detail:'Reach Subject Level 5.',candidateAt:specialistSource}
     ];
+    const unlocks=state.player.achievementUnlocks||(state.player.achievementUnlocks={}),newAchievements=[];
+    items.forEach(item=>{if(item.unlocked&&!unlocks[item.id]){unlocks[item.id]=item.candidateAt||new Date().toISOString();newAchievements.push(item)}item.unlockedAt=unlocks[item.id]||null});
+    if(newAchievements.length){newAchievements.forEach(item=>state.logs.push({id:S.uid('log'),at:item.unlockedAt||new Date().toISOString(),type:'achievement',message:`Achievement unlocked: ${item.title}.`}));save()}
+    return items;
   };
   const renderControlHome=()=>{setControlView('controlHomeView')};
   const renderAcademicHome=()=>{
@@ -914,12 +977,14 @@
     $('#profileTabs').innerHTML=profilePages.map((page,index)=>`<button type="button" data-profile-page="${index}" class="${index===controlUi.profilePage?'selected':''}">${page.slice(0,4)}</button>`).join('');
     $('#profilePageLabel').textContent=profilePages[controlUi.profilePage];
     const academic=overallAcademicStats(),achievements=achievementList(),unlockedTitles=achievements.filter(item=>item.unlocked).map(item=>item.title);
-    if(!unlockedTitles.includes(state.player.title))state.player.title=unlockedTitles[0]||'Discipline Initiate';
+    if(!unlockedTitles.includes(state.player.title)){state.player.title=unlockedTitles[0]||'Discipline Initiate';save()}
     if(controlUi.profilePage===0){
       $('#profileContent').innerHTML=`<div class="profile-identity"><div class="profile-emblem">${escapeHtml(state.player.emblem||'◇')}</div><div><span>PLAYER</span><strong>${escapeHtml(state.player.codename||state.player.name)}</strong><small>${escapeHtml(state.player.title)}</small></div></div><div class="profile-form"><label>Name<input id="profileNameEdit" type="text" maxlength="40" value="${escapeHtml(state.player.name)}"></label><label>Codename<input id="profileCodenameEdit" type="text" maxlength="24" value="${escapeHtml(state.player.codename||'')}"></label><label>Emblem<select id="profileEmblemEdit">${['◇','◆','✦','⌁','◈','A'].map(value=>`<option ${value===state.player.emblem?'selected':''}>${value}</option>`).join('')}</select></label><label>Title<select id="profileTitleEdit">${unlockedTitles.map(value=>`<option ${value===state.player.title?'selected':''}>${escapeHtml(value)}</option>`).join('')}</select></label></div><button class="custom-primary" type="button" data-profile-action="save-identity">Save Identity</button>`;
     }else if(controlUi.profilePage===1){
       const required=clearDaysRequired(state.player.level),nextRank=state.player.pendingRank||eligibleRank(state.player.level,state.player.rank)||'S';
-      $('#profileContent').innerHTML=`<div class="stat-grid"><div><span>LEVEL</span><strong>${state.player.level}</strong></div><div><span>RANK</span><strong>${state.player.rank}</strong></div><div><span>SYSTEM XP</span><strong>${state.player.totalXp}</strong></div><div><span>LIFETIME CLEAR</span><strong>${state.player.totalClearDays}</strong></div></div><div class="profile-detail"><span>LEVEL PROGRESS</span><strong>${state.player.mastered?'MASTERED':`${state.player.levelClearDays} / ${required} clear days`}</strong><small>${state.player.mastered?'Level 50 achieved.':`${50-state.player.level} level(s) remain to Level 50.`}</small></div><div class="profile-detail"><span>NEXT RANK</span><strong>${state.player.pendingRank?`${state.player.pendingRank}-RANK TRIAL ACTIVE`:nextRank===state.player.rank?'MAXIMUM RANK':`${nextRank}-RANK`}</strong><small>${state.player.pendingRank?'A Perfect Clear is required.':'Rank thresholds are based on level and recent discipline.'}</small></div>`;
+      const progress=state.player.mastered?100:required?Math.round(state.player.levelClearDays/required*100):100;
+      const remaining=state.player.mastered?0:Math.max(0,required-state.player.levelClearDays);
+      $('#profileContent').innerHTML=`<div class="progress-visual"><div class="level-progress-ring" style="--level-progress:${progress*3.6}deg"><span>LEVEL</span><strong>${state.player.level}</strong><small>${progress}%</small></div><div class="progress-visual-copy"><span>${state.player.mastered?'SYSTEM MASTERY':'NEXT LEVEL REQUIREMENT'}</span><strong>${state.player.mastered?'LEVEL 50 ACHIEVED':`${state.player.levelClearDays} / ${required} CLEAR DAYS`}</strong><small>${state.player.mastered?'Progression complete.':`${remaining} more clear day${remaining===1?'':'s'} required.`}</small></div></div><div class="progress-metrics"><div><span>LIFETIME XP</span><strong>${state.player.totalXp}</strong></div><div><span>LIFETIME CLEAR</span><strong>${state.player.totalClearDays}</strong></div></div><div class="profile-detail"><span>NEXT RANK</span><strong>${state.player.pendingRank?`${state.player.pendingRank}-RANK TRIAL ACTIVE`:nextRank===state.player.rank?'MAXIMUM RANK':`${nextRank}-RANK`}</strong><small>${state.player.pendingRank?'A Perfect Clear is required.':'Rank progression remains based on level and discipline history.'}</small></div>`;
     }else if(controlUi.profilePage===2){
       const all=protocolBlueprints.map(config=>({config,stats:directiveStats(config.id)}));const selected=all[clamp(controlUi.directiveIndex,0,all.length-1)];
       const strongest=[...all].sort((a,b)=>b.stats.completionRate-a.stats.completionRate)[0],weakest=[...all].sort((a,b)=>a.stats.completionRate-b.stats.completionRate)[0];
@@ -931,7 +996,12 @@
       const punctual=academic.punctualityRate>=85?'Punctuality is strong.':'Earlier arrival should be prioritized.';
       $('#profileContent').innerHTML=`<div class="stat-grid"><div><span>ACADEMIC XP</span><strong>${academic.xp}</strong></div><div><span>ATTENDANCE</span><strong>${academic.attendanceRate}%</strong></div><div><span>PUNCTUALITY</span><strong>${academic.punctualityRate}%</strong></div><div><span>CLASS STREAK</span><strong>${academic.streaks.current}</strong></div></div><div class="profile-detail"><span>HIGHEST SUBJECT</span><strong>${highest?`${escapeHtml(highest.subject.name)} · LV ${highest.level}`:'NO DATA'}</strong><small>${highest?`${highest.xp} XP · ${highest.completedTasks}/${highest.tasks.length} tasks completed`:'Schedule a class to create a subject record.'}</small></div><div class="profile-detail"><span>SYSTEM ANALYSIS</span><strong>${escapeHtml(analysis)}</strong><small>${escapeHtml(punctual)}</small></div><button class="custom-primary" type="button" data-profile-action="open-attendance">Open Attendance & Progress</button>`;
     }else{
-      $('#profileContent').innerHTML=`<div class="achievement-summary"><span>UNLOCKED TITLES</span><strong>${achievements.filter(item=>item.unlocked).length} / ${achievements.length}</strong></div><div class="achievement-grid">${achievements.map(item=>`<div class="achievement ${item.unlocked?'unlocked':'locked'}"><strong>${item.unlocked?'✓':'×'} ${escapeHtml(item.title)}</strong><small>${escapeHtml(item.detail)}</small></div>`).join('')}</div>`;
+      const pageSize=4,totalPages=Math.max(1,Math.ceil(achievements.length/pageSize));controlUi.achievementPage=clamp(controlUi.achievementPage,0,totalPages-1);
+      const pageItems=achievements.slice(controlUi.achievementPage*pageSize,(controlUi.achievementPage+1)*pageSize),seen=new Set(state.player.achievementSeen||[]);
+      const newIds=pageItems.filter(item=>item.unlocked&&!seen.has(item.id)).map(item=>item.id);
+      $('#profileContent').innerHTML=`<div class="achievement-summary"><span>UNLOCKED TITLES</span><strong>${achievements.filter(item=>item.unlocked).length} / ${achievements.length}</strong></div><div class="achievement-list">${pageItems.map(item=>`<div class="achievement-row ${item.unlocked?'unlocked':'locked'} ${item.unlocked&&!seen.has(item.id)?'new':''}"><div class="achievement-status">${item.unlocked?'✓':'◇'}</div><div><strong>${escapeHtml(item.title)}</strong><small>${item.unlocked?`Unlocked ${formatShortDate(item.unlockedAt)}`:'Locked'}</small><em class="achievement-requirement">${escapeHtml(item.detail)}</em></div>${item.unlocked&&!seen.has(item.id)?'<b>NEW</b>':''}</div>`).join('')}</div><div class="mini-nav achievement-nav"><button type="button" data-profile-action="achievement-prev">‹</button><b>${controlUi.achievementPage+1} / ${totalPages}</b><button type="button" data-profile-action="achievement-next">›</button></div>`;
+      clearTimeout(achievementSeenTimer);
+      if(newIds.length)achievementSeenTimer=setTimeout(()=>{state.player.achievementSeen=[...new Set([...(state.player.achievementSeen||[]),...newIds])];save();document.querySelectorAll('.achievement-row.new').forEach(row=>row.classList.remove('new'))},1500);
     }
   };
   const attendanceTabs=[{id:'overall',label:'Overall'},{id:'subjects',label:'Subjects'},{id:'history',label:'History'}];
@@ -968,11 +1038,51 @@
     }
     state.logs.push({id:S.uid('log'),at:now.toISOString(),type:'attendance-correction',message:`${record.subjectName} corrected from ${before} to ${status}.`});save();controlUi.correction=false;renderAttendance();
   };
+  const backupRecordTotal=summary=>summary.days+summary.attendance+summary.tasks+summary.schedules+summary.trading;
+  const renderDataBackup=()=>{
+    setControlView('dataBackupView');
+    const summary=S.summarize(state);
+    $('#backupUpdated').textContent=formatShortDate(summary.updatedAt);
+    $('#backupRecordCount').textContent=backupRecordTotal(summary);
+    $('#backupPreview').hidden=!backupUi.pending;
+    $('#backupActions').hidden=Boolean(backupUi.pending);
+    if(backupUi.pending){
+      const preview=S.summarize(backupUi.pending);
+      $('#backupPreviewPlayer').textContent=`${preview.playerName} · Level ${preview.level} · ${preview.rank}-Rank`;
+      $('#backupPreviewDetails').textContent=`${preview.days} days · ${preview.attendance} attendance records · ${preview.tasks} tasks`;
+    }
+  };
+  const backupFilename=()=>{
+    const now=new Date();const time=`${pad(now.getHours())}${pad(now.getMinutes())}`;
+    return `ascend-backup-${S.dateKey(now)}-${time}.json`;
+  };
+  const exportDataBackup=()=>{
+    state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'backup',message:'Local ASCEND backup exported.'});save();
+    const blob=new Blob([S.createBackup(state)],{type:'application/json'}),url=URL.createObjectURL(blob),link=document.createElement('a');
+    link.href=url;link.download=backupFilename();link.hidden=true;document.body.appendChild(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1500);
+    systemFeedback('clear','Backup exported.');renderDataBackup();
+  };
+  const clearBackupPreview=()=>{backupUi={pending:null,fileName:''};$('#backupFileInput').value='';renderDataBackup()};
+  const previewBackupFile=async file=>{
+    if(!file)return;
+    if(file.size>10*1024*1024){showBreachWarning('BACKUP TOO LARGE','Choose an ASCEND backup smaller than 10 MB.');return}
+    try{
+      const imported=S.parseBackup(await file.text());
+      backupUi={pending:imported,fileName:file.name};renderDataBackup();haptic('tap');
+    }catch(error){backupUi={pending:null,fileName:''};$('#backupFileInput').value='';showBreachWarning('BACKUP NOT ACCEPTED',error?.message||'The selected file could not be read.')}
+  };
+  const confirmBackupRestore=()=>{
+    if(!backupUi.pending)return;
+    state=backupUi.pending;
+    state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'restore',message:`Local ASCEND backup restored${backupUi.fileName?`: ${backupUi.fileName}`:''}.`});
+    save();backupUi={pending:null,fileName:''};controlUi.correction=false;scheduleUi.editId=null;activeScreenId=null;
+    closeScheduleOverlay();renderApp();showBreachWarning('BACKUP RESTORED','Progress, schedules, attendance, tasks, settings, and milestones were restored.','clear');
+  };
   const openControlOverlay=()=>{
     if(activeProtocolRecord()||classStateAt(new Date())||$('#freeScreen').hidden)return;
     cancelHold();$('#scheduleOverlay').hidden=false;renderControlHome();haptic('tap');
   };
-  const closeScheduleOverlay=()=>{$('#scheduleOverlay').hidden=true;cancelHold('schedule-delete');cancelHold('schedule-access');$('#compactStatus').style.setProperty('--config-progress','0deg');controlUi.correction=false};
+  const closeScheduleOverlay=()=>{$('#scheduleOverlay').hidden=true;cancelHold('schedule-delete');cancelHold('schedule-access');$('#compactStatus').style.setProperty('--config-progress','0deg');controlUi.correction=false;backupUi={pending:null,fileName:''};if($('#backupFileInput'))$('#backupFileInput').value=''};
   const renderScheduleOverview=()=>{
     setControlView('scheduleOverviewView');scheduleUi.day=Number(scheduleUi.day);const entries=scheduleEntriesForDay(scheduleUi.day);const totalPages=Math.max(1,Math.ceil(entries.length/schedulePageSize));scheduleUi.page=clamp(scheduleUi.page,0,totalPages-1);
     $('#scheduleWeekTabs').innerHTML=scheduleDays.map(day=>{const count=scheduleEntriesForDay(day.value).length;return`<button type="button" data-day="${day.value}" class="${day.value===scheduleUi.day?'selected':''}"><strong>${day.label}</strong><small>${count}</small></button>`}).join('');
@@ -1022,7 +1132,8 @@
     if(reason==='technical'){save();closeEmergencyOverlay();showBreachWarning('TECHNICAL OVERRIDE RECORDED','The directive remains active and the fixed deadline continues.');return}
     closeEmergencyOverlay();failProtocol(record,protocol,`Emergency override used: ${reason}.`);renderApp();
   };
-  const startBrandEmergencyHold=()=>{if(!activeProtocolRecord())return;beginHold('brand',6000,progress=>{$('#systemBrand').style.setProperty('--emergency-progress',`${progress*360}deg`);$('#systemBrand').classList.toggle('emergency-arming',progress>=.33)},()=>{$('#systemBrand').classList.remove('emergency-arming');$('#systemBrand').style.setProperty('--emergency-progress','0deg');openEmergencyOverlay('brand-hold')})};
+  const resetBrandEmergencyHold=()=>{const brand=$('#systemBrand');brand.classList.remove('emergency-arming');brand.style.setProperty('--emergency-progress','0deg');brand.style.setProperty('--emergency-glow','8px');brand.style.setProperty('--emergency-scale','1')};
+  const startBrandEmergencyHold=()=>{if(!activeProtocolRecord())return;beginHold('brand',6000,progress=>{const brand=$('#systemBrand');brand.style.setProperty('--emergency-progress',`${progress*360}deg`);brand.style.setProperty('--emergency-glow',`${8+progress*16}px`);brand.style.setProperty('--emergency-scale',String(1+progress*.045));brand.classList.toggle('emergency-arming',progress>.02)},()=>{resetBrandEmergencyHold();openEmergencyOverlay('brand-hold')})};
   const armClockBackup=()=>{clockArmedUntil=Date.now()+6000;$('#clockPanel').classList.add('backup-armed');showBreachWarning('OVERRIDE GESTURE ARMED','Hold the clock for 3 seconds to open Emergency Override.');setTimeout(()=>{if(Date.now()>=clockArmedUntil)$('#clockPanel').classList.remove('backup-armed')},6100)};
 
   const wireEvents=()=>{
@@ -1045,9 +1156,16 @@
     $('#scheduleClose').addEventListener('click',closeScheduleOverlay);
     $('#openPlayerProfile').addEventListener('click',()=>{controlUi.profilePage=0;renderProfile()});
     $('#openAcademicControl').addEventListener('click',renderAcademicHome);
+    $('#openDataBackup').addEventListener('click',()=>{backupUi={pending:null,fileName:''};renderDataBackup()});
     $('#academicBack').addEventListener('click',renderControlHome);
     $('#profileBack').addEventListener('click',renderControlHome);
     $('#attendanceBack').addEventListener('click',renderAcademicHome);
+    $('#dataBackupBack').addEventListener('click',()=>{backupUi={pending:null,fileName:''};renderControlHome()});
+    $('#exportBackup').addEventListener('click',exportDataBackup);
+    $('#chooseBackup').addEventListener('click',()=>$('#backupFileInput').click());
+    $('#backupFileInput').addEventListener('change',event=>previewBackupFile(event.target.files?.[0]));
+    $('#cancelBackupRestore').addEventListener('click',clearBackupPreview);
+    $('#confirmBackupRestore').addEventListener('click',confirmBackupRestore);
     $('#scheduleConfigEdit').addEventListener('click',()=>{scheduleUi.day=defaultScheduleDay();scheduleUi.page=0;renderScheduleOverview()});
     $('#openAttendance').addEventListener('click',()=>{controlUi.attendanceTab='overall';controlUi.correction=false;renderAttendance()});
 
@@ -1063,6 +1181,8 @@
       }
       if(action==='directive-prev'){controlUi.directiveIndex=(controlUi.directiveIndex-1+protocolBlueprints.length)%protocolBlueprints.length;renderProfile();return}
       if(action==='directive-next'){controlUi.directiveIndex=(controlUi.directiveIndex+1)%protocolBlueprints.length;renderProfile();return}
+      if(action==='achievement-prev'){controlUi.achievementPage=Math.max(0,controlUi.achievementPage-1);renderProfile();return}
+      if(action==='achievement-next'){const total=Math.max(1,Math.ceil(achievementList().length/4));controlUi.achievementPage=Math.min(total-1,controlUi.achievementPage+1);renderProfile();return}
       if(action==='open-attendance'){controlUi.attendanceTab='overall';renderAttendance()}
     });
 
@@ -1086,7 +1206,7 @@
     $('#scheduleOverlay').addEventListener('click',event=>{if(event.target===$('#scheduleOverlay'))closeScheduleOverlay()});
     $('#emergencyOverlay').addEventListener('click',event=>{if(event.target===$('#emergencyOverlay'))closeEmergencyOverlay()});
     $('#systemBrand').addEventListener('pointerdown',event=>{event.preventDefault();startBrandEmergencyHold()});
-    ['pointerup','pointercancel','pointerleave'].forEach(type=>$('#systemBrand').addEventListener(type,()=>{cancelHold('brand');$('#systemBrand').classList.remove('emergency-arming');$('#systemBrand').style.setProperty('--emergency-progress','0deg')}));
+    ['pointerup','pointercancel','pointerleave'].forEach(type=>$('#systemBrand').addEventListener(type,()=>{cancelHold('brand');resetBrandEmergencyHold()}));
     $('#clockPanel').addEventListener('click',()=>{clockTapCount+=1;clearTimeout(clockTapTimer);if(clockTapCount>=5){clockTapCount=0;armClockBackup();return}clockTapTimer=setTimeout(()=>{clockTapCount=0},1300)});
     $('#clockPanel').addEventListener('pointerdown',event=>{if(Date.now()>clockArmedUntil)return;event.preventDefault();beginHold('clock-backup',3000,()=>{},()=>{clockArmedUntil=0;$('#clockPanel').classList.remove('backup-armed');openEmergencyOverlay('clock-gesture')})});
     ['pointerup','pointercancel','pointerleave'].forEach(type=>$('#clockPanel').addEventListener(type,()=>cancelHold('clock-backup')));

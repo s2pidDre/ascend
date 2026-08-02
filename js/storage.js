@@ -3,7 +3,10 @@
   const A=window.ASCEND=window.ASCEND||{};
   const KEY='ascend_discipline_protocol_v7';
   const LEGACY_KEYS=['ascend_discipline_protocol_v6','ascend_discipline_protocol_v5','ascend_discipline_protocol_v4','ascend_strict_system_v3','ascend_automatic_year_system_v2','ascend_personal_growth_system_v1'];
-  const VERSION=10;
+  const VERSION=11;
+  const BACKUP_VERSION=1;
+  const ROUTINE_LOG_LIMIT=420;
+  const PERMANENT_LOG_TYPES=new Set(['system','level','rank','mastery','achievement','backup','restore','emergency','attendance-correction']);
   const nowIso=()=>new Date().toISOString();
   const dateKey=(date=new Date())=>`${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
   const uid=(prefix='id')=>window.crypto?.randomUUID?`${prefix}_${crypto.randomUUID()}`:`${prefix}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
@@ -25,7 +28,8 @@
     player:{
       name:'Player',codename:'',emblem:'◇',title:'Discipline Initiate',level:1,maxLevel:50,streak:0,bestStreak:0,totalClearDays:0,totalFailedDays:0,
       levelClearDays:0,mastered:false,masteredAt:null,totalXp:0,masteryChoice:null,
-      rank:'E',pendingRank:null,perfectClears:0,lastPerfectDate:null,failureScar:false,rankTrialAttempts:0
+      rank:'E',pendingRank:null,perfectClears:0,lastPerfectDate:null,failureScar:false,rankTrialAttempts:0,
+      achievementUnlocks:{},achievementSeen:[]
     },
     dayRecords:{},
     classSchedule:[],
@@ -62,9 +66,19 @@
     corrections:Array.isArray(record.corrections)?record.corrections:[]
   });
 
+  const pruneLogs=logs=>{
+    const source=Array.isArray(logs)?logs.filter(log=>log&&typeof log==='object'):[];
+    const permanent=source.filter(log=>PERMANENT_LOG_TYPES.has(log.type));
+    const routine=source.filter(log=>!PERMANENT_LOG_TYPES.has(log.type)).slice(-ROUTINE_LOG_LIMIT);
+    const seen=new Set();
+    return [...permanent,...routine]
+      .sort((a,b)=>String(a.at||'').localeCompare(String(b.at||'')))
+      .filter(log=>{const key=log.id||`${log.at}|${log.type}|${log.message}`;if(seen.has(key))return false;seen.add(key);return true});
+  };
+
   const normalizeCurrent=raw=>{
     const base=initialState();
-    if(!raw||typeof raw!=='object')return base;
+    if(!raw||typeof raw!=='object'||Array.isArray(raw))return base;
     const rawSettings=raw.settings&&typeof raw.settings==='object'?raw.settings:{};
     const state={
       ...base,
@@ -77,20 +91,22 @@
       }
     };
     state.version=VERSION;
-    state.dayRecords=raw.dayRecords&&typeof raw.dayRecords==='object'?raw.dayRecords:{};
+    state.dayRecords=raw.dayRecords&&typeof raw.dayRecords==='object'&&!Array.isArray(raw.dayRecords)?raw.dayRecords:{};
     state.classSchedule=Array.isArray(raw.classSchedule)?raw.classSchedule.map(entry=>({...entry,modality:entry.modality||((entry.room||'').toLowerCase().includes('online')?'Online':'Onsite')})):[];
     state.attendanceRecords=Array.isArray(raw.attendanceRecords)?raw.attendanceRecords.map(normalizeAttendance):[];
     state.academicTasks=Array.isArray(raw.academicTasks)?raw.academicTasks:[];
     state.tradingNotes=Array.isArray(raw.tradingNotes)?raw.tradingNotes:[];
-    state.logs=Array.isArray(raw.logs)?raw.logs:[];
+    state.logs=pruneLogs(raw.logs);
+    state.player.achievementUnlocks=state.player.achievementUnlocks&&typeof state.player.achievementUnlocks==='object'&&!Array.isArray(state.player.achievementUnlocks)?state.player.achievementUnlocks:{};
+    state.player.achievementSeen=Array.isArray(state.player.achievementSeen)?[...new Set(state.player.achievementSeen.map(String))]:[];
     if(!state.player.pendingRank)state.player.pendingRank=pendingRankFor(state.player.level,state.player.rank);
     return state;
   };
 
   const migrateLegacy=raw=>{
     const state=normalizeCurrent(raw||{});
-    state.logs=Array.isArray(state.logs)?state.logs.slice(-500):[];
-    state.logs.push({id:uid('log'),at:nowIso(),type:'system',message:'ASCEND upgraded with class attendance, academic progression, hidden Player Profile, stronger haptics, and voice-free feedback.'});
+    state.logs.push({id:uid('log'),at:nowIso(),type:'system',message:'ASCEND upgraded with compact progression, achievement records, local backup and restore, refined transitions, and managed activity logs.'});
+    state.logs=pruneLogs(state.logs);
     return state;
   };
 
@@ -109,6 +125,47 @@
     }catch(error){console.error('ASCEND load failed.',error);return initialState()}
   };
 
-  const save=state=>{state.updatedAt=nowIso();state.version=VERSION;store.setItem(KEY,JSON.stringify(state));return state};
-  A.storage={load,save,dateKey,uid};
+  const save=state=>{
+    state.updatedAt=nowIso();
+    state.version=VERSION;
+    state.logs=pruneLogs(state.logs);
+    state.player=state.player&&typeof state.player==='object'?state.player:initialState().player;
+    state.player.achievementUnlocks=state.player.achievementUnlocks&&typeof state.player.achievementUnlocks==='object'?state.player.achievementUnlocks:{};
+    state.player.achievementSeen=Array.isArray(state.player.achievementSeen)?[...new Set(state.player.achievementSeen.map(String))]:[];
+    store.setItem(KEY,JSON.stringify(state));
+    return state;
+  };
+
+  const createBackup=state=>JSON.stringify({
+    app:'ASCEND',
+    backupVersion:BACKUP_VERSION,
+    exportedAt:nowIso(),
+    state:normalizeCurrent(JSON.parse(JSON.stringify(state)))
+  },null,2);
+
+  const parseBackup=text=>{
+    let parsed;
+    try{parsed=JSON.parse(text)}catch(error){throw new Error('The selected file is not valid JSON.')}
+    const raw=parsed&&parsed.app==='ASCEND'&&parsed.state?parsed.state:parsed;
+    if(!raw||typeof raw!=='object'||Array.isArray(raw))throw new Error('The selected file does not contain ASCEND data.');
+    if(!raw.player||typeof raw.player!=='object')throw new Error('The backup is missing the Player record.');
+    if(!raw.dayRecords||typeof raw.dayRecords!=='object')raw.dayRecords={};
+    return normalizeCurrent(raw);
+  };
+
+  const summarize=state=>({
+    initialized:Boolean(state.initialized),
+    playerName:state.player?.codename||state.player?.name||'Player',
+    level:Number(state.player?.level||1),
+    rank:state.player?.rank||'E',
+    days:Object.keys(state.dayRecords||{}).length,
+    attendance:Array.isArray(state.attendanceRecords)?state.attendanceRecords.length:0,
+    tasks:Array.isArray(state.academicTasks)?state.academicTasks.length:0,
+    schedules:Array.isArray(state.classSchedule)?state.classSchedule.length:0,
+    trading:Array.isArray(state.tradingNotes)?state.tradingNotes.length:0,
+    logs:Array.isArray(state.logs)?state.logs.length:0,
+    updatedAt:state.updatedAt||state.createdAt||nowIso()
+  });
+
+  A.storage={load,save,dateKey,uid,createBackup,parseBackup,summarize,pruneLogs};
 })();
