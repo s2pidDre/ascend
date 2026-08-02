@@ -1417,8 +1417,8 @@ body.failure-scar .app-shell::after{opacity:.18}
   gap:10px;
 }
 .brand-mark{
-  width:42px;
-  height:42px;
+  width:50px;
+  height:50px;
   display:grid;
   place-items:center;
   position:relative;
@@ -1454,7 +1454,7 @@ body.failure-scar .app-shell::after{opacity:.18}
   display:none;
 }
 .system-emblem-image{
-  width:min(124px,42vw);
+  width:min(144px,46vw);
   height:auto;
   display:block;
   filter:drop-shadow(0 0 18px rgba(75,199,255,.24));
@@ -1462,25 +1462,25 @@ body.failure-scar .app-shell::after{opacity:.18}
 }
 @media (max-height:720px){
   .brand-mark{
-    width:36px;
-    height:36px;
+    width:42px;
+    height:42px;
   }
   .system-emblem{
     min-height:58px;
   }
   .system-emblem-image{
-    width:min(102px,38vw);
+    width:min(116px,42vw);
   }
 }
 @media (max-height:540px){
   .brand-mark{
-    width:30px;
-    height:30px;
+    width:34px;
+    height:34px;
   }
   .system-emblem{
     min-height:48px;
   }
   .system-emblem-image{
-    width:min(88px,34vw);
+    width:min(96px,38vw);
   }
 }
