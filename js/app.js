@@ -1205,6 +1205,14 @@
 
     $('#scheduleOverlay').addEventListener('click',event=>{if(event.target===$('#scheduleOverlay'))closeScheduleOverlay()});
     $('#emergencyOverlay').addEventListener('click',event=>{if(event.target===$('#emergencyOverlay'))closeEmergencyOverlay()});
+    document.querySelectorAll('.brand-mark-image,.system-emblem-image,.free-watermark').forEach(image=>{
+      image.draggable=false;
+      image.addEventListener('dragstart',event=>event.preventDefault());
+      image.addEventListener('contextmenu',event=>event.preventDefault());
+    });
+    document.addEventListener('contextmenu',event=>{
+      if(event.target.closest('.brand,.system-emblem,.free-watermark'))event.preventDefault();
+    });
     $('#systemBrand').addEventListener('pointerdown',event=>{event.preventDefault();startBrandEmergencyHold()});
     ['pointerup','pointercancel','pointerleave'].forEach(type=>$('#systemBrand').addEventListener(type,()=>{cancelHold('brand');resetBrandEmergencyHold()}));
     $('#clockPanel').addEventListener('click',()=>{clockTapCount+=1;clearTimeout(clockTapTimer);if(clockTapCount>=5){clockTapCount=0;armClockBackup();return}clockTapTimer=setTimeout(()=>{clockTapCount=0},1300)});

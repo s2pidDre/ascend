@@ -1,4 +1,4 @@
-const CACHE='ascend-discipline-v24-system-polish';
+const CACHE='ascend-discipline-v25-logo-hold-fix';
 const ASSETS=['./','./index.html','./css/style.css','./js/storage.js','./js/app.js','./manifest.webmanifest','./assets/icon-192.png?v=20260803','./assets/icon-512.png?v=20260803','./assets/inapp-logo.png'];
 self.addEventListener('install',event=>event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(ASSETS)).then(()=>self.skipWaiting())));
 self.addEventListener('activate',event=>event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(key=>key!==CACHE).map(key=>caches.delete(key)))).then(()=>self.clients.claim())));

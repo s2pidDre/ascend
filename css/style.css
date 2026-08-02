@@ -1854,3 +1854,22 @@ body[data-state="critical"] .brand{
 @keyframes brandIdleGlow{
   50%{filter:drop-shadow(0 0 11px var(--brand-glow-peak));transform:scale(1.018)}
 }
+
+
+/* Prevent Android/iOS image menus while preserving logo hold gestures. */
+.brand,
+.brand *,
+.system-emblem,
+.system-emblem *,
+.free-watermark{
+  -webkit-touch-callout:none!important;
+  -webkit-user-select:none!important;
+  user-select:none!important;
+}
+.brand-mark-image,
+.system-emblem-image,
+.free-watermark{
+  pointer-events:none;
+  -webkit-user-drag:none;
+  user-drag:none;
+}
