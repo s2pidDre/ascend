@@ -1411,3 +1411,76 @@ body.failure-scar .app-shell::after{opacity:.18}
     margin-bottom:5px;
   }
 }
+
+/* In-app ASCEND logo refresh */
+.brand{
+  gap:10px;
+}
+.brand-mark{
+  width:42px;
+  height:42px;
+  display:grid;
+  place-items:center;
+  position:relative;
+  transform:none;
+  border:none;
+  background:none;
+  box-shadow:none;
+  overflow:visible;
+}
+.brand-mark::before,
+.brand-mark::after,
+.brand-mark b{
+  display:none;
+  content:none;
+}
+.brand-mark-image{
+  width:100%;
+  height:auto;
+  display:block;
+  filter:drop-shadow(0 0 10px rgba(75,199,255,.22));
+}
+.brand-copy{
+  gap:1px;
+}
+.system-emblem{
+  height:auto;
+  min-height:74px;
+  display:grid;
+  place-items:center;
+  padding-top:2px;
+}
+.system-emblem span{
+  display:none;
+}
+.system-emblem-image{
+  width:min(124px,42vw);
+  height:auto;
+  display:block;
+  filter:drop-shadow(0 0 18px rgba(75,199,255,.24));
+  animation:emblemPulse 2.5s ease-in-out infinite;
+}
+@media (max-height:720px){
+  .brand-mark{
+    width:36px;
+    height:36px;
+  }
+  .system-emblem{
+    min-height:58px;
+  }
+  .system-emblem-image{
+    width:min(102px,38vw);
+  }
+}
+@media (max-height:540px){
+  .brand-mark{
+    width:30px;
+    height:30px;
+  }
+  .system-emblem{
+    min-height:48px;
+  }
+  .system-emblem-image{
+    width:min(88px,34vw);
+  }
+}
