@@ -1,4 +1,4 @@
-const CACHE='ascend-discipline-v30-fullscreen-developer-tests';
+const CACHE='ascend-discipline-v31-sandbox-integrity-engine';
 const ASSETS=[
   './',
   './index.html',

@@ -2316,7 +2316,7 @@ body.orientation-blocked .recovery-overlay{display:none!important}
 
 /* Hidden progression, task automation, safe updates, and recovery controls. */
 .schedule-panel{position:relative}
-.control-home-view,.academic-home-view,.profile-view,.attendance-view,.system-integrity-view,.schedule-exceptions-view,.data-backup-view,.academic-tasks-view,.advanced-system-home-view,.updates-rollback-view,.diagnostics-view,.developer-test-view,.recovery-system-view,.schedule-overview-view,.schedule-edit-view{
+.control-home-view,.academic-home-view,.profile-view,.attendance-view,.system-integrity-view,.schedule-exceptions-view,.data-backup-view,.academic-tasks-view,.conflict-scan-view,.advanced-system-home-view,.updates-rollback-view,.diagnostics-view,.developer-test-view,.recovery-system-view,.schedule-overview-view,.schedule-edit-view{
   display:flex;min-height:0;flex:1;flex-direction:column;gap:8px;overflow:hidden;
 }
 .section-tabs.six{grid-template-columns:repeat(6,1fr)}
@@ -2388,7 +2388,7 @@ body.safe-mode::before,body.safe-mode .energy-field,body.safe-mode .system-grid{
 body.orientation-blocked .modal-overlay{display:none!important}
 
 @media(max-height:760px){
-  .control-home-view,.academic-home-view,.profile-view,.attendance-view,.system-integrity-view,.schedule-exceptions-view,.data-backup-view,.academic-tasks-view,.advanced-system-home-view,.updates-rollback-view,.diagnostics-view,.developer-test-view,.recovery-system-view,.schedule-overview-view,.schedule-edit-view{gap:5px}
+  .control-home-view,.academic-home-view,.profile-view,.attendance-view,.system-integrity-view,.schedule-exceptions-view,.data-backup-view,.academic-tasks-view,.conflict-scan-view,.advanced-system-home-view,.updates-rollback-view,.diagnostics-view,.developer-test-view,.recovery-system-view,.schedule-overview-view,.schedule-edit-view{gap:5px}
   .advanced-shield-button{top:8px;right:8px;width:30px;height:30px;padding:6px}.advanced-action-grid>button{min-height:52px;padding:6px 8px}.advanced-action-grid>button:last-child{min-height:40px}
   .manager-form{padding:5px;gap:4px}.manager-form input,.manager-form select,.dependency-form select,.test-form select{height:28px}.weekday-field select{height:38px}.manager-record{padding:7px}.manager-record-actions button{min-height:28px}
   .attribute-row{padding:5px}.attribute-row>small,.skill-row small{display:none}.skill-row{padding:5px}.skill-row button{height:25px}.daily-quest-card{padding:8px;gap:5px}.quest-history{margin-top:3px}.weekly-debrief{padding:7px;gap:5px}
@@ -2917,3 +2917,53 @@ body.developer-test-running .system-notice,body.developer-test-running .system-u
   .developer-run-footer strong{font-size:.45rem}
 }
 body.orientation-blocked .developer-run-overlay{display:none!important}
+
+
+/* Developer sandbox, academic risk, conflict scan, and consistency watchdog */
+.conflict-scan-view{display:flex;min-height:0;flex:1;flex-direction:column;gap:8px;overflow:hidden}
+.conflict-summary{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.conflict-summary>div{display:grid;gap:2px;padding:8px;border:1px solid rgba(75,199,255,.18);background:rgba(3,13,30,.7)}
+.conflict-summary span{font-size:.43rem;color:#6c85a3;letter-spacing:.1em}.conflict-summary strong{font-size:.67rem;color:#e5f7ff}
+.conflict-record{display:flex;min-height:0;flex:1;flex-direction:column;justify-content:center;gap:6px;padding:12px;border:1px solid rgba(75,199,255,.24);background:linear-gradient(180deg,rgba(5,21,45,.8),rgba(3,10,25,.9));text-align:left;clip-path:polygon(8px 0,100% 0,100% calc(100% - 8px),calc(100% - 8px) 100%,0 100%,0 8px)}
+.conflict-record>span{font-size:.44rem;color:var(--amber);letter-spacing:.12em}.conflict-record>strong{font-size:.78rem;color:#eff9ff;text-transform:uppercase}.conflict-record>small{font-size:.55rem;color:#8198b3;line-height:1.35}
+.watchdog-summary{display:grid;gap:3px;padding:8px 10px;border:1px solid rgba(136,103,255,.3);background:rgba(15,11,43,.58);text-align:left}
+.watchdog-summary span{font-size:.42rem;color:#a293e2;letter-spacing:.11em}.watchdog-summary strong{font-size:.62rem;color:#eeeaff}.watchdog-summary small{font-size:.46rem;color:#788aa8}
+.developer-test-options{grid-template-columns:repeat(3,minmax(0,1fr))}
+.manager-form.task-create-form{grid-template-columns:repeat(2,minmax(0,1fr))}
+.manager-form.task-create-form>button{grid-column:1/-1}
+.recommendation small br{display:block}
+.developer-run-active{grid-template-rows:auto auto auto minmax(0,1fr) auto}
+.developer-time-controls{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;min-height:31px}
+.developer-time-controls button{min-width:0;padding:0 3px;border:1px solid rgba(136,103,255,.28);background:rgba(15,11,43,.64);color:#cfc4ff;font-size:.43rem;font-weight:900;letter-spacing:.05em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.developer-run-detail small{display:block;max-width:100%;font-size:.45rem;color:#667f9e;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.developer-lab-panel{width:min(100%,440px);display:grid;gap:7px;padding:8px;border:1px solid rgba(136,103,255,.3);background:rgba(14,10,40,.62)}
+.developer-lab-panel label{display:grid;gap:3px;text-align:left;color:#8f82c9;font-size:.43rem;letter-spacing:.1em;text-transform:uppercase}
+.developer-lab-panel select{width:100%;height:31px;padding:0 8px;border:1px solid rgba(75,199,255,.28);background:#030a19;color:#e9f8ff}
+.developer-lab-actions{display:grid;grid-template-columns:1fr 1fr;gap:5px}
+.developer-lab-actions button{min-height:34px;border:1px solid rgba(75,199,255,.34);background:rgba(10,35,66,.74);color:#def5ff;font-size:.45rem;font-weight:900;text-transform:uppercase}
+.developer-report-card{width:min(100%,480px);display:grid;grid-template-columns:1fr 1fr;gap:5px}
+.developer-report-card>div{min-width:0;display:grid;gap:2px;padding:7px;border:1px solid rgba(136,103,255,.2);background:rgba(12,10,36,.56);text-align:left}
+.developer-report-card span{font-size:.4rem;color:#8c7fca;letter-spacing:.08em;text-transform:uppercase}.developer-report-card strong{font-size:.52rem;color:#e9e5ff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.developer-report-nav{width:min(100%,250px);margin:0}
+.developer-run-result{justify-content:center;gap:clamp(5px,.8vh,8px);padding-top:10px;padding-bottom:10px}
+.developer-run-result-emblem{width:clamp(54px,min(15vw,8vh),72px);height:clamp(54px,min(15vw,8vh),72px)}
+.developer-run-result h1{font-size:clamp(1.25rem,min(6vw,4vh),2rem)}
+.developer-run-result>p{font-size:.66rem;line-height:1.3}
+@media(max-height:760px){
+  .conflict-scan-view{gap:5px}.conflict-record{padding:8px}.watchdog-summary{padding:6px 8px}
+  .developer-time-controls{min-height:27px}.developer-time-controls button{font-size:.39rem}
+  .developer-run-active{gap:4px}.developer-run-card{grid-template-rows:minmax(0,1fr) minmax(44px,.3fr) auto}
+  .developer-report-card>div{padding:5px}.developer-run-result-grid div{padding:5px}.developer-run-result{gap:4px}
+  .developer-lab-panel{padding:5px;gap:4px}.developer-lab-actions button{min-height:29px}
+}
+@media(max-height:620px){
+  .conflict-scan-view>h2{font-size:.88rem}.conflict-record>small,.watchdog-summary small,.developer-run-detail small{display:none}
+  .developer-test-options{grid-template-columns:1fr 1fr}.developer-test-options label:last-child{grid-column:1/-1}
+  .developer-time-controls{min-height:24px}.developer-time-controls button{font-size:.35rem}
+  .developer-report-card>div:nth-child(n+3){display:none}.developer-report-card{grid-template-columns:1fr 1fr}
+  .developer-run-result-grid{display:none}.developer-run-result>p{display:none}.developer-report-nav{display:none!important}
+}
+@media(max-width:390px){
+  .developer-test-options{grid-template-columns:1fr 1fr}.developer-test-options label:last-child{grid-column:1/-1}
+  .developer-time-controls{gap:3px}.developer-time-controls button{font-size:.36rem}
+}

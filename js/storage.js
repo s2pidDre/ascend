@@ -6,12 +6,12 @@
   const SNAPSHOT_KEY='ascend_discipline_protocol_snapshots_v1';
   const ROLLBACK_KEY='ascend_discipline_protocol_rollbacks_v1';
   const LEGACY_KEYS=['ascend_discipline_protocol_v6','ascend_discipline_protocol_v5','ascend_discipline_protocol_v4','ascend_strict_system_v3','ascend_automatic_year_system_v2','ascend_personal_growth_system_v1'];
-  const VERSION=14;
-  const BACKUP_VERSION=3;
+  const VERSION=15;
+  const BACKUP_VERSION=4;
   const ROUTINE_LOG_LIMIT=420;
   const SNAPSHOT_LIMIT=7;
   const ROLLBACK_LIMIT=4;
-  const PERMANENT_LOG_TYPES=new Set(['system','level','rank','mastery','achievement','backup','restore','emergency','attendance-correction','integrity','recovery','snapshot','boss','migration','quest','skill','weekly']);
+  const PERMANENT_LOG_TYPES=new Set(['system','level','rank','mastery','achievement','backup','restore','emergency','attendance-correction','integrity','recovery','snapshot','boss','migration','quest','skill','weekly','test','watchdog']);
   const nowIso=()=>new Date().toISOString();
   const dateKey=(date=new Date())=>`${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
   const timezoneName=()=>{try{return Intl.DateTimeFormat().resolvedOptions().timeZone||'Local Time'}catch(error){return'Local Time'}};
@@ -53,7 +53,7 @@
     integrity:{clockStatus:'trusted',rewardHold:false,lastWallTime:null,lastVerifiedAt:null,lastFlag:null,lastSessionDelta:0},
     timezone:{name:timezoneName(),offset:timezoneOffset(),confirmedAt:nowIso(),pending:null,history:[]},
     recovery:{active:false,status:'idle',sourceDate:null,reason:null,action:null,protectedDate:null,protectedProtocolId:null,completedAt:null},
-    system:{recoveredFrom:null,lastStorageWarningAt:null,notificationLedger:{},safeMode:false,lastSuccessfulBoot:null,migrationHistory:[],developerTest:{enabled:false,unlocked:false,scenario:'free',simulatedDate:null,runs:0,lastResult:null}},
+    system:{recoveredFrom:null,lastStorageWarningAt:null,notificationLedger:{},safeMode:false,lastSuccessfulBoot:null,migrationHistory:[],auditTrail:[],watchdog:{lastRun:null,issues:0,repairs:0,summary:'Not run'},developerTest:{enabled:false,unlocked:false,scenario:'free',simulatedDate:null,runs:0,lastResult:null,sandboxMode:'profile',reports:[],labHistory:[]}},
     logs:[]
   });
 
@@ -71,6 +71,7 @@
     id:task.id||uid('task'),subjectKey:String(task.subjectKey||task.subjectName||'general').trim().toLowerCase(),subjectName:task.subjectName||'General',
     title:String(task.title||'Untitled Task').slice(0,80),deadline:task.deadline||'',difficulty:['Low','Medium','High'].includes(task.difficulty)?task.difficulty:'Medium',note:String(task.note||'').slice(0,240),
     status:task.status==='completed'?'completed':'pending',createdAt:task.createdAt||nowIso(),completedAt:task.completedAt||null,workMinutes:Math.max(0,Number(task.workMinutes||0)),
+    workloadMinutes:[15,30,60,120,180].includes(Number(task.workloadMinutes))?Number(task.workloadMinutes):30,postponements:Math.max(0,Number(task.postponements||0)),lastPostponedAt:task.lastPostponedAt||null,
     dependencyIds:Array.isArray(task.dependencyIds)?[...new Set(task.dependencyIds.map(String))]:[],sourceRuleId:task.sourceRuleId||null,occurrenceDate:task.occurrenceDate||null
   });
 
@@ -165,6 +166,11 @@
     state.integrity.rewardHold=Boolean(state.integrity.rewardHold||state.integrity.clockStatus==='flagged');
     state.system.notificationLedger=state.system.notificationLedger&&typeof state.system.notificationLedger==='object'&&!Array.isArray(state.system.notificationLedger)?state.system.notificationLedger:{};
     state.system.migrationHistory=Array.isArray(state.system.migrationHistory)?state.system.migrationHistory:[];
+    state.system.auditTrail=Array.isArray(state.system.auditTrail)?state.system.auditTrail.slice(-240):[];
+    state.system.watchdog={...base.system.watchdog,...(state.system.watchdog&&typeof state.system.watchdog==='object'?state.system.watchdog:{})};
+    state.system.developerTest.reports=Array.isArray(state.system.developerTest.reports)?state.system.developerTest.reports.slice(-30):[];
+    state.system.developerTest.labHistory=Array.isArray(state.system.developerTest.labHistory)?state.system.developerTest.labHistory.slice(-40):[];
+    state.system.developerTest.sandboxMode=['profile','sample'].includes(state.system.developerTest.sandboxMode)?state.system.developerTest.sandboxMode:'profile';
     state.system.safeMode=Boolean(state.system.safeMode);
     state.quests.daily=state.quests.daily&&typeof state.quests.daily==='object'?state.quests.daily:null;
     state.quests.history=Array.isArray(state.quests.history)?state.quests.history.slice(-60):[];
@@ -207,7 +213,7 @@
   const migrateLegacy=raw=>{
     const fromVersion=Number(raw?.version||0);createPreUpdateRollback(raw,fromVersion,'Automatic pre-migration rollback');
     const state=normalizeCurrent(raw||{});
-    const migration={id:uid('migration'),at:nowIso(),fromVersion,toVersion:VERSION,label:'Advanced hidden systems'};
+    const migration={id:uid('migration'),at:nowIso(),fromVersion,toVersion:VERSION,label:'Developer sandbox and academic integrity systems'};
     state.system.migrationHistory.push(migration);
     state.logs.push({id:uid('log'),at:migration.at,type:'migration',message:`ASCEND data migrated from schema ${fromVersion||'legacy'} to ${VERSION}. A rollback point was retained.`});
     state.logs=pruneLogs(state.logs);return state;

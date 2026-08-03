@@ -19,6 +19,9 @@
   let scheduleUi={view:'home',day:new Date().getDay(),page:0,editId:null,isNew:false};
   let controlUi={view:'home',profilePage:0,progressPage:0,directiveIndex:0,achievementPage:0,attendanceTab:'overall',subjectIndex:0,historyIndex:0,correction:false,taskTab:'tasks',taskIndex:0,ruleIndex:0,dependencyIndex:0,rollbackIndex:0,directDeveloper:false};
   let developerRunSession=null;
+  let developerReportPage=0;
+  let conflictUi={index:0,issues:[]};
+  const processedConfirmationTokens=new Set();
   let currentClassContext=null;
   let activeScreenId=null;
   let brandFlashTimer=null;
@@ -63,6 +66,7 @@
   const screens=['setupScreen','earlyWakeScreen','sleepScreen','freeScreen','classScreen','protocolScreen','resultScreen','protocolResultScreen'];
   const pad=n=>String(Math.max(0,Math.floor(n))).padStart(2,'0');
   const clamp=(value,min,max)=>Math.min(max,Math.max(min,value));
+  const clone=value=>JSON.parse(JSON.stringify(value));
   const minutes=time=>{const[h,m]=time.split(':').map(Number);return h*60+m};
   const todayMinutes=date=>date.getHours()*60+date.getMinutes()+date.getSeconds()/60;
   const formatClock=date=>new Intl.DateTimeFormat(undefined,{hour:'numeric',minute:'2-digit'}).format(date);
@@ -882,7 +886,27 @@
     if(startId===targetId)return true;if(seen.has(startId))return false;seen.add(startId);
     const task=taskById(startId);return (task?.dependencyIds||[]).some(id=>dependencyPathExists(id,targetId,seen));
   };
+  const taskRiskInfo=task=>{
+    const now=new Date(),deadline=task?.deadline?new Date(`${task.deadline}T23:59:59`):null;
+    const days=deadline?Math.ceil((deadline-now)/86400000):999;
+    const blockers=taskBlockers(task),workload=Math.max(15,Number(task.workloadMinutes||30)),difficulty=String(task.difficulty||'Medium').toLowerCase();
+    const sameDay=task?.deadline?state.academicTasks.filter(item=>item.status!=='completed'&&item.id!==task.id&&item.deadline===task.deadline).length:0;
+    const subjectDays=activeSchedule().filter(entry=>subjectKey(entry.subject)===task.subjectKey).map(entry=>Number(entry.day));
+    const upcomingClass=subjectDays.some(day=>{const delta=(day-now.getDay()+7)%7;return delta<=2});
+    let score=0;const reasons=[];
+    if(days<0){score+=100;reasons.push('overdue')}else if(days===0){score+=75;reasons.push('due today')}else if(days===1){score+=60;reasons.push('due tomorrow')}else if(days<=3){score+=42;reasons.push(`due in ${days} days`)}else if(days<=7){score+=24;reasons.push(`due in ${days} days`)}
+    if(blockers.length){score+=Math.min(30,blockers.length*12);reasons.push(`${blockers.length} prerequisite${blockers.length===1?'':'s'} incomplete`)}
+    if(workload>=120){score+=24;reasons.push('multi-session workload')}else if(workload>=60){score+=14;reasons.push(`${workload}-minute workload`)}
+    if(difficulty.includes('high')||difficulty.includes('difficult')){score+=14;reasons.push('high difficulty')}else if(difficulty.includes('medium')||difficulty.includes('moderate'))score+=7;
+    if(Number(task.postponements||0)>0){score+=Math.min(24,Number(task.postponements||0)*8);reasons.push(`postponed ${task.postponements} time${task.postponements===1?'':'s'}`)}
+    if(sameDay){score+=Math.min(18,sameDay*6);reasons.push(`${sameDay+1} tasks share the deadline`)}
+    if(upcomingClass){score+=8;reasons.push('subject meets soon')}
+    const level=score>=80?'CRITICAL':score>=55?'HIGH':score>=30?'ELEVATED':'NORMAL';
+    return{score,level,reasons,days,blockers,workload,fit:workload<=25?'FITS TONIGHT':workload<=60?'SPLIT RECOMMENDED':'MULTI-SESSION REQUIRED'};
+  };
   const sortedPendingTasks=()=>state.academicTasks.filter(task=>task.status!=='completed').sort((a,b)=>{
+    const riskDifference=taskRiskInfo(b).score-taskRiskInfo(a).score;
+    if(riskDifference)return riskDifference;
     const ad=a.deadline?new Date(`${a.deadline}T23:59:59`).getTime():Infinity;
     const bd=b.deadline?new Date(`${b.deadline}T23:59:59`).getTime():Infinity;
     return ad-bd||String(a.subjectName).localeCompare(String(b.subjectName));
@@ -910,7 +934,8 @@
       <div class="compact-form audit-form">
         <label>Task<input id="auditTaskTitle" type="text" maxlength="80" placeholder="Required output"></label>
         <label>Deadline<span class="time-shell"><input id="auditTaskDeadline" type="date"></span></label>
-        <label>Difficulty<select id="auditTaskDifficulty"><option value="Easy">Easy</option><option value="Moderate" selected>Moderate</option><option value="Difficult">Difficult</option></select></label>
+        <label>Difficulty<select id="auditTaskDifficulty"><option value="Low">Low</option><option value="Medium" selected>Medium</option><option value="High">High</option></select></label>
+        <label>Workload<select id="auditTaskWorkload"><option value="15">15 minutes</option><option value="30" selected>30 minutes</option><option value="60">1 hour</option><option value="120">2 hours</option><option value="180">Multi-session</option></select></label>
         <label>Note<input id="auditTaskNote" type="text" maxlength="70" placeholder="Optional"></label>
       </div>
       <div class="custom-actions two"><button type="button" data-custom="save-task">Save Task</button><button type="button" data-custom="next-subject">${step.auditState.index===subjects.length-1?'Finish Subject':'Next Subject'}</button></div>`;
@@ -925,7 +950,7 @@
     if(plan.phase==='mode'){
       const recommended=recommendedTask();
       $('#customTaskArea').innerHTML=`
-        <div class="recommendation"><span>SYSTEM RECOMMENDATION</span><strong>${recommended?escapeHtml(recommended.title):'Academic Maintenance'}</strong><small>${recommended?`${escapeHtml(recommended.subjectName)} · ${recommended.deadline||'No deadline'}`:'No pending academic tasks were found.'}</small></div>
+        <div class="recommendation"><span>SYSTEM RECOMMENDATION${recommended?` · ${taskRiskInfo(recommended).level}`:''}</span><strong>${recommended?escapeHtml(recommended.title):'Academic Maintenance'}</strong><small>${recommended?`${escapeHtml(recommended.subjectName)} · ${recommended.deadline||'No deadline'} · ${taskRiskInfo(recommended).fit}<br>${escapeHtml(taskRiskInfo(recommended).reasons.slice(0,2).join(' · ')||'Highest current priority')}`:'No pending academic tasks were found.'}</small></div>
         <div class="mode-grid"><button type="button" data-custom="plan-single" ${tasks.length?'':'disabled'}>Single Priority</button><button type="button" data-custom="plan-multi" ${tasks.length>1?'':'disabled'}>Multiple Subjects</button><button type="button" data-custom="plan-maintenance" ${tasks.length?'disabled':''}>No Pending Tasks</button></div>`;
       return;
     }
@@ -933,7 +958,7 @@
     if(!task){plan.phase='mode';renderPlanner(protocol,step);return}
     const selected=plan.selectedIds.includes(task.id);
     $('#customTaskArea').innerHTML=`
-      <div class="task-picker"><span>${plan.index+1} / ${tasks.length}</span><strong>${escapeHtml(task.title)}</strong><small>${escapeHtml(task.subjectName)} · ${task.deadline||'No deadline'} · ${task.difficulty}</small></div>
+      <div class="task-picker"><span>${plan.index+1} / ${tasks.length}</span><strong>${escapeHtml(task.title)}</strong><small>${escapeHtml(task.subjectName)} · ${task.deadline||'No deadline'} · ${taskRiskInfo(task).level} · ${taskRiskInfo(task).workload} min</small></div>
       <div class="picker-nav"><button type="button" data-custom="task-prev" aria-label="Previous task">${glyphMarkup('chevron-left')}</button><button class="${selected?'selected':''}" type="button" data-custom="task-toggle">${plan.mode==='single'?'Select This Task':selected?'Selected':'Add to Sprint'}</button><button type="button" data-custom="task-next" aria-label="Next task">${glyphMarkup('chevron-right')}</button></div>
       <button class="confirm-plan" type="button" data-custom="confirm-plan" ${plan.selectedIds.length?'':'disabled'}>Confirm ${plan.mode==='single'?'Priority':`${plan.selectedIds.length} Task Sprint`}</button>`;
   };
@@ -1066,23 +1091,47 @@
     }
   };
 
+  const criticalConfirmationOwners=new Set(['action','class-confirm','early-wake']);
+  const confirmationContext=owner=>{
+    if(owner==='action'){const protocol=activeProtocolRecord(),task=currentStep(protocol),record=dayRecord();return protocol&&task&&record?{token:`${record.date}|${protocol.id}|${protocol.status}|${task.id}|${task.status}`,deadline:recordMoment(record,protocol.end).getTime()}:null}
+    if(owner==='class-confirm'){const context=currentClassContext,entry=context?.entry;return context&&entry?{token:`${S.dateKey()}|${entry.id}|${context.mode}|${context.record?.status||'none'}`,deadline:context.end?.getTime?.()||Infinity}:null}
+    if(owner==='early-wake'){const record=dayRecord();return{token:`${S.dateKey()}|early-wake|${record?.wakeCheckInAt||'pending'}`,deadline:timeOnDate(new Date(),'05:00').getTime()}}
+    return{token:`${owner}|${Date.now()}`,deadline:Infinity};
+  };
+  const recordConfirmationAudit=(owner,result,reason,context)=>{
+    state.system.auditTrail=state.system.auditTrail||[];const entry={id:S.uid('audit'),at:new Date().toISOString(),type:'confirmation',owner,result,reason,token:context?.token||null,source:'live'};state.system.auditTrail.push(entry);state.system.auditTrail=state.system.auditTrail.slice(-240);
+    if(result!=='accepted')state.logs.push({id:S.uid('log'),at:entry.at,type:'integrity',message:`${owner} confirmation ${result}: ${reason}.`});S.save(state);
+  };
+  const validateConfirmation=(owner,startContext)=>{
+    if(!criticalConfirmationOwners.has(owner))return{ok:true};
+    if(document.visibilityState!=='visible')return{ok:false,reason:'ASCEND was not visible through the full confirmation'};
+    const current=confirmationContext(owner);if(!startContext||!current||current.token!==startContext.token)return{ok:false,reason:'The active state changed during confirmation'};
+    if(owner==='action'&&Date.now()>=Number(startContext.deadline||Infinity))return{ok:false,reason:'The protocol deadline passed before confirmation completed'};
+    if(owner==='class-confirm'&&!['approaching','checkin'].includes(currentClassContext?.mode))return{ok:false,reason:'The class check-in window changed'};
+    if(processedConfirmationTokens.has(startContext.token))return{ok:false,reason:'This confirmation was already processed'};
+    return{ok:true,current};
+  };
   const cancelHold=(owner=null)=>{
     if(!holdSession)return;if(owner&&holdSession.owner!==owner)return;
-    cancelAnimationFrame(holdSession.raf);holdSession.onProgress?.(0);
+    const cancelled=holdSession;cancelAnimationFrame(cancelled.raf);cancelled.onProgress?.(0);
     if(navigator.vibrate)navigator.vibrate(0);
     document.body.classList.remove('hold-active');delete document.body.dataset.holdOwner;holdSession=null;
+    if(criticalConfirmationOwners.has(cancelled.owner)&&Number(cancelled.progress||0)>=.25)recordConfirmationAudit(cancelled.owner,'interrupted','Hold released or visibility changed before completion',cancelled.context);
   };
   const beginHold=(owner,duration,onProgress,onComplete)=>{
-    cancelHold();const started=performance.now(),checkpoints=[.25,.5,.75],checkpointOwners=new Set(['brand','schedule-access','emergency-exit','clock-backup']);let checkpointIndex=0;
+    cancelHold();const started=performance.now(),checkpoints=[.25,.5,.75],checkpointOwners=new Set(['brand','schedule-access','emergency-exit','clock-backup']),context=confirmationContext(owner);let checkpointIndex=0;
     document.body.classList.add('hold-active');document.body.dataset.holdOwner=owner;
     const frame=now=>{
-      const progress=clamp((now-started)/duration,0,1);onProgress?.(progress);
+      const progress=clamp((now-started)/duration,0,1);if(holdSession)holdSession.progress=progress;onProgress?.(progress);
       if(checkpointOwners.has(owner)&&checkpointIndex<checkpoints.length&&progress>=checkpoints[checkpointIndex]){haptic(checkpointIndex===1?'hold-mid':'hold');checkpointIndex+=1}
       if(progress>=1){
-        holdSession=null;onProgress?.(0);document.body.classList.remove('hold-active');delete document.body.dataset.holdOwner;haptic('hold-final');onComplete();
+        holdSession=null;onProgress?.(0);document.body.classList.remove('hold-active');delete document.body.dataset.holdOwner;
+        const validation=validateConfirmation(owner,context);if(!validation.ok){recordConfirmationAudit(owner,'rejected',validation.reason,context);haptic('failed');showBreachWarning('CONFIRMATION REJECTED',validation.reason);return}
+        if(criticalConfirmationOwners.has(owner)){processedConfirmationTokens.add(context.token);recordConfirmationAudit(owner,'accepted','State, visibility, and deadline checks passed',context)}
+        haptic('hold-final');onComplete();
       }else holdSession.raf=requestAnimationFrame(frame);
     };
-    holdSession={owner,raf:requestAnimationFrame(frame),onProgress};
+    holdSession={owner,raf:requestAnimationFrame(frame),onProgress,progress:0,context};
   };
 
   const confirmEarlyWake=async()=>{
@@ -1100,8 +1149,8 @@
 
   const completeCustomStep=()=>completeSubtask();
 
-  const addAcademicTask=(subject,title,deadline,difficulty,note)=>{
-    state.academicTasks.push({id:S.uid('task'),subjectKey:subject.key,subjectName:subject.name,title,deadline,difficulty,note,status:'pending',createdAt:new Date().toISOString(),workMinutes:0,completedAt:null,dependencyIds:[],sourceRuleId:null,occurrenceDate:null});save();
+  const addAcademicTask=(subject,title,deadline,difficulty,note,workloadMinutes=30)=>{
+    state.academicTasks.push({id:S.uid('task'),subjectKey:subject.key,subjectName:subject.name,title,deadline,difficulty,note,status:'pending',createdAt:new Date().toISOString(),workMinutes:0,workloadMinutes:Number(workloadMinutes||30),postponements:0,lastPostponedAt:null,completedAt:null,dependencyIds:[],sourceRuleId:null,occurrenceDate:null});save();
   };
 
   const installAcademicPlan=(protocol,planner,mode,selectedIds=[])=>{
@@ -1123,9 +1172,9 @@
       const task=state.academicTasks.find(item=>item.id===button.dataset.taskId);if(task){const blockers=taskBlockers(task);if(blockers.length){showBreachWarning('TASK LOCKED',`Complete ${blockers[0].title} first.`);return}task.status='completed';task.completedAt=new Date().toISOString();save();showBreachWarning('TASK COMPLETED',task.title);renderApp()}return;
     }
     if(action==='save-task'){
-      const subject=currentAuditSubject(step);const title=$('#auditTaskTitle')?.value.trim();const deadline=$('#auditTaskDeadline')?.value;const difficulty=$('#auditTaskDifficulty')?.value||'Moderate';const note=$('#auditTaskNote')?.value.trim()||'';
+      const subject=currentAuditSubject(step);const title=$('#auditTaskTitle')?.value.trim();const deadline=$('#auditTaskDeadline')?.value;const difficulty=$('#auditTaskDifficulty')?.value||'Medium';const workload=Number($('#auditTaskWorkload')?.value||30);const note=$('#auditTaskNote')?.value.trim()||'';
       if(!subject||!title||!deadline){showBreachWarning('TASK DATA INCOMPLETE','Task name and deadline are required.');return}
-      addAcademicTask(subject,title,deadline,difficulty,note);showBreachWarning('TASK SAVED',`${subject.name}: ${title}`);renderApp();return;
+      addAcademicTask(subject,title,deadline,difficulty,note,workload);showBreachWarning('TASK SAVED',`${subject.name}: ${title}`);renderApp();return;
     }
     if(action==='next-subject'){step.auditState.index+=1;save();renderApp();return}
     if(action==='plan-single'||action==='plan-multi'){
@@ -1146,7 +1195,7 @@
     if(action==='start-academic'){transitionStep(step,'active',new Date().toISOString());save();systemFeedback(protocol.boss?'boss':'start',protocol.boss?'Weekly Boss focus started.':'Academic focus started.',`academic-${step.id}`);renderApp();return}
     if(action==='finish-maintenance'){completeCustomStep();return}
     if(action==='task-completed'||action==='task-progress'){
-      const task=state.academicTasks.find(item=>item.id===step.taskId);if(task){task.workMinutes=(task.workMinutes||0)+step.duration;if(action==='task-completed'){task.status='completed';task.completedAt=new Date().toISOString()}}
+      const task=state.academicTasks.find(item=>item.id===step.taskId);if(task){task.workMinutes=(task.workMinutes||0)+step.duration;if(action==='task-completed'){task.status='completed';task.completedAt=new Date().toISOString()}else{task.postponements=Number(task.postponements||0)+1;task.lastPostponedAt=new Date().toISOString()}}
       save();completeCustomStep();return;
     }
     if(action==='start-trading'){transitionStep(step,'active',new Date().toISOString());save();systemFeedback('start','Trading review started.',`trading-${step.id}`);renderApp();return}
@@ -1359,6 +1408,36 @@
   const completeBootGuard=()=>{clearTimeout(bootCompletionTimer);state.system.lastSuccessfulBoot=new Date().toISOString();safeSession.set(BOOT_GUARD_KEY,JSON.stringify({pending:false,startedAt:Date.now(),failures:0}));S.save(state)};
   const applySafeMode=()=>{document.body.classList.toggle('safe-mode',Boolean(state.system?.safeMode));if(state.system?.safeMode){releaseWakeLock();const splash=$('#launchSplash');if(splash)splash.hidden=true;launchDismissed=true}};
 
+  const scanAcademicConflicts=()=>{
+    const issues=[];
+    const add=(severity,type,title,copy)=>issues.push({id:`${type}-${issues.length}`,severity,type,title,copy});
+    const byDay=new Map();activeSchedule().forEach(entry=>{const day=Number(entry.day);if(!byDay.has(day))byDay.set(day,[]);byDay.get(day).push(entry);const start=minutes(entry.start),end=minutes(entry.end);if(start>=end)add('critical','schedule','Invalid class window',`${entry.subject} ends before or at its start time.`);if(start<450||end>1170)add('warning','schedule','Class outside daytime window',`${entry.subject} is outside 7:30 AM–7:30 PM.`)});
+    byDay.forEach((entries,day)=>{const sorted=[...entries].sort((a,b)=>minutes(a.start)-minutes(b.start));for(let i=0;i<sorted.length;i+=1)for(let j=i+1;j<sorted.length;j+=1){if(minutes(sorted[j].start)<minutes(sorted[i].end))add('critical','schedule','Overlapping classes',`${scheduleDayName(day)}: ${sorted[i].subject} overlaps ${sorted[j].subject}.`)}});
+    const byDate=new Map();(state.scheduleExceptions||[]).filter(item=>item.active!==false).forEach(item=>{if(!byDate.has(item.date))byDate.set(item.date,[]);byDate.get(item.date).push(item)});
+    byDate.forEach((items,date)=>{if(items.some(item=>item.type==='no-classes')&&items.length>1)add('critical','exception','Conflicting date exceptions',`${date} has No Classes plus another exception.`);const seen=new Set();items.forEach(item=>{const key=`${item.classId||'all'}|${item.type}`;if(seen.has(key))add('warning','exception','Duplicate schedule exception',`${date} contains repeated ${item.type} rules for the same class.`);seen.add(key);if(['reschedule','special'].includes(item.type)){const start=minutes(item.start||'00:00'),end=minutes(item.end||'00:00');if(start>=end)add('critical','exception','Invalid exception time',`${date}: ${item.note||item.type} has an invalid time window.`)}});const timed=items.filter(item=>['reschedule','special'].includes(item.type)&&item.start&&item.end);for(let i=0;i<timed.length;i+=1)for(let j=i+1;j<timed.length;j+=1){if(minutes(timed[j].start)<minutes(timed[i].end)&&minutes(timed[j].end)>minutes(timed[i].start))add('warning','exception','Overlapping exception events',`${date}: two rescheduled or special events overlap.`)}});
+    state.academicTasks.filter(task=>task.status!=='completed').forEach(task=>(task.dependencyIds||[]).map(taskById).filter(Boolean).forEach(required=>{if(task.deadline&&required.deadline&&task.deadline<required.deadline)add('critical','dependency','Dependency deadline conflict',`${task.title} is due before prerequisite ${required.title}.`)}));
+    const ruleKeys=new Map();(state.recurringTaskRules||[]).filter(rule=>rule.active).forEach(rule=>{const key=[rule.subjectKey,String(rule.title).toLowerCase(),rule.cadence,rule.startDate,(rule.weekdays||[]).join(','),rule.dayOfMonth].join('|');if(ruleKeys.has(key))add('warning','recurring','Duplicate recurring rule',`${rule.title} duplicates another active rule.`);else ruleKeys.set(key,rule.id)});
+    const occurrenceKeys=new Set();state.academicTasks.filter(task=>task.sourceRuleId&&task.occurrenceDate).forEach(task=>{const key=`${task.sourceRuleId}|${task.occurrenceDate}`;if(occurrenceKeys.has(key))add('critical','recurring','Duplicate generated occurrence',`${task.title} was generated more than once for ${task.occurrenceDate}.`);occurrenceKeys.add(key)});
+    return issues.sort((a,b)=>(a.severity==='critical'?0:1)-(b.severity==='critical'?0:1)||a.type.localeCompare(b.type));
+  };
+  const renderConflictRecord=()=>{
+    const issues=conflictUi.issues||[];conflictUi.index=clamp(conflictUi.index,0,Math.max(0,issues.length-1));const issue=issues[conflictUi.index];
+    $('#conflictSummary').innerHTML=`<div><span>STATUS</span><strong class="${issues.length?'critical-text':''}">${issues.length?'REVIEW':'CLEAR'}</strong></div><div><span>ISSUES</span><strong>${issues.length}</strong></div>`;
+    $('#conflictRecord').innerHTML=issue?`<span>${escapeHtml(issue.severity.toUpperCase())} · ${escapeHtml(issue.type.toUpperCase())}</span><strong>${escapeHtml(issue.title)}</strong><small>${escapeHtml(issue.copy)}</small>`:'<span>SCAN COMPLETE</span><strong>No academic conflicts detected</strong><small>Schedule, exceptions, dependencies, and recurring rules are consistent.</small>';
+    $('#conflictNav').hidden=issues.length<=1;$('#conflictPageLabel').textContent=issues.length?`${conflictUi.index+1} / ${issues.length}`:'0 / 0';$('#conflictPrev').disabled=conflictUi.index===0;$('#conflictNext').disabled=conflictUi.index>=issues.length-1;
+  };
+  const renderConflictScan=(run=true)=>{setControlView('conflictScanView');if(run){conflictUi.issues=scanAcademicConflicts();conflictUi.index=0;state.system.lastConflictScan={at:new Date().toISOString(),issues:conflictUi.issues.length};state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'integrity',message:`Academic conflict scan completed with ${conflictUi.issues.length} issue(s).`});save({silent:true})}renderConflictRecord()};
+
+  const runDataConsistencyWatchdog=(notify=true)=>{
+    let issues=0,repairs=0;const repairNotes=[];
+    Object.values(state.dayRecords||{}).forEach(day=>{const protocols=Object.values(day.protocols||{}),completed=protocols.filter(item=>item.status==='cleared').length,failed=protocols.filter(item=>item.status==='failed').length;if(day.completedProtocols!==completed){issues+=1;repairs+=1;day.completedProtocols=completed;repairNotes.push(`Corrected ${day.date} completed count`)}if(day.failedProtocols!==failed){issues+=1;repairs+=1;day.failedProtocols=failed;repairNotes.push(`Corrected ${day.date} failure count`)}});
+    const validTaskIds=new Set(state.academicTasks.map(task=>task.id));state.academicTasks.forEach(task=>{const before=(task.dependencyIds||[]).length;task.dependencyIds=[...new Set((task.dependencyIds||[]).filter(id=>id!==task.id&&validTaskIds.has(id)))];if(task.dependencyIds.length!==before){issues+=1;repairs+=1;repairNotes.push(`Repaired dependencies for ${task.title}`)}});
+    const occurrenceSeen=new Set(),duplicateTaskIds=new Set();state.academicTasks.forEach(task=>{if(!task.sourceRuleId||!task.occurrenceDate)return;const key=`${task.sourceRuleId}|${task.occurrenceDate}`;if(occurrenceSeen.has(key)){issues+=1;repairs+=1;duplicateTaskIds.add(task.id)}else occurrenceSeen.add(key)});if(duplicateTaskIds.size)state.academicTasks=state.academicTasks.filter(task=>!duplicateTaskIds.has(task.id));
+    const attendanceByMeeting=new Map();state.attendanceRecords.forEach(record=>{if(!record.meetingKey)return;const existing=attendanceByMeeting.get(record.meetingKey);if(!existing)attendanceByMeeting.set(record.meetingKey,record);else{issues+=1;const keep=(record.finalized&&!existing.finalized)||(String(record.updatedAt)>String(existing.updatedAt))?record:existing;attendanceByMeeting.set(record.meetingKey,keep)}});if(attendanceByMeeting.size&&attendanceByMeeting.size<state.attendanceRecords.filter(record=>record.meetingKey).length){const noKey=state.attendanceRecords.filter(record=>!record.meetingKey);state.attendanceRecords=[...noKey,...attendanceByMeeting.values()];repairs+=1;repairNotes.push('Removed duplicate attendance records')}
+    ['totalXp','streak','bestStreak','totalClearDays','totalFailedDays','levelClearDays'].forEach(key=>{if(Number(state.player[key]||0)<0){issues+=1;repairs+=1;state.player[key]=0;repairNotes.push(`Corrected negative ${key}`)}});
+    state.system.watchdog={lastRun:new Date().toISOString(),issues,repairs,summary:issues?`${repairs} repair(s) from ${issues} issue(s)`:'All consistency checks passed'};state.system.auditTrail=state.system.auditTrail||[];state.system.auditTrail.push({id:S.uid('audit'),at:state.system.watchdog.lastRun,type:'watchdog',before:null,after:{issues,repairs},reason:repairNotes.slice(0,8).join('; ')||'No repair required',source:'automatic'});state.system.auditTrail=state.system.auditTrail.slice(-240);state.logs.push({id:S.uid('log'),at:state.system.watchdog.lastRun,type:'watchdog',message:`Data watchdog completed: ${issues} issue(s), ${repairs} repair(s).`});save({silent:true});if(notify)showSystemNotice(issues?'integrity':'save',issues?'CONSISTENCY REPAIRS COMPLETE':'DATA CONSISTENCY CLEAR',state.system.watchdog.summary,3200);return state.system.watchdog;
+  };
+
   const renderAcademicTasks=()=>{setControlView('academicTasksView');renderTaskManager()};
   const taskSubjectsOptions=()=>{const subjects=subjectCatalog();return subjects.length?subjects.map(item=>`<option value="${escapeHtml(item.key)}" data-name="${escapeHtml(item.name)}">${escapeHtml(item.name)}</option>`).join(''):'<option value="general" data-name="General">General</option>'};
   const renderTaskManager=()=>{
@@ -1366,7 +1445,7 @@
     const content=$('#taskManagerContent');
     if(controlUi.taskTab==='tasks'){
       const tasks=[...state.academicTasks].sort((a,b)=>String(a.status).localeCompare(String(b.status))||String(a.deadline||'9999').localeCompare(String(b.deadline||'9999')));controlUi.taskIndex=clamp(controlUi.taskIndex,0,Math.max(0,tasks.length-1));const task=tasks[controlUi.taskIndex],blockers=task?taskBlockers(task):[];
-      content.innerHTML=`<div class="manager-form task-create-form"><label>Subject<select id="managerTaskSubject">${taskSubjectsOptions()}</select></label><label>Task<input id="managerTaskTitle" maxlength="80" placeholder="Task title"></label><label>Deadline<input id="managerTaskDeadline" type="date" value="${S.dateKey()}"></label><label>Difficulty<select id="managerTaskDifficulty"><option>Low</option><option selected>Medium</option><option>High</option></select></label><button type="button" data-task-action="create-task">Add Task</button></div>${task?`<div class="manager-record ${blockers.length?'locked':''}"><span>${escapeHtml(task.subjectName)} · ${task.deadline||'NO DEADLINE'}</span><strong>${escapeHtml(task.title)}</strong><small>${task.status==='completed'?'COMPLETED':blockers.length?`LOCKED BY ${escapeHtml(blockers.map(item=>item.title).join(', '))}`:'READY'}</small><div class="mini-nav"><button type="button" data-task-action="task-prev">${glyphMarkup('chevron-left')}</button><b>${controlUi.taskIndex+1} / ${tasks.length}</b><button type="button" data-task-action="task-next">${glyphMarkup('chevron-right')}</button></div><div class="manager-record-actions"><button type="button" data-task-action="complete-task" ${task.status==='completed'||blockers.length?'disabled':''}>Complete</button><button type="button" data-task-action="delete-task">Delete</button></div></div>`:'<div class="schedule-empty"><strong>No Academic Tasks</strong><span>Create a task without adding anything to the main screen.</span></div>'}`;
+      content.innerHTML=`<div class="manager-form task-create-form"><label>Subject<select id="managerTaskSubject">${taskSubjectsOptions()}</select></label><label>Task<input id="managerTaskTitle" maxlength="80" placeholder="Task title"></label><label>Deadline<input id="managerTaskDeadline" type="date" value="${S.dateKey()}"></label><label>Difficulty<select id="managerTaskDifficulty"><option>Low</option><option selected>Medium</option><option>High</option></select></label><label>Workload<select id="managerTaskWorkload"><option value="15">15 min</option><option value="30" selected>30 min</option><option value="60">1 hour</option><option value="120">2 hours</option><option value="180">Multi-session</option></select></label><button type="button" data-task-action="create-task">Add Task</button></div>${task?`<div class="manager-record ${blockers.length?'locked':''}"><span>${escapeHtml(task.subjectName)} · ${task.deadline||'NO DEADLINE'}</span><strong>${escapeHtml(task.title)}</strong><small>${task.status==='completed'?'COMPLETED':blockers.length?`LOCKED BY ${escapeHtml(blockers.map(item=>item.title).join(', '))}`:`${taskRiskInfo(task).level} RISK · ${taskRiskInfo(task).workload} MIN · ${taskRiskInfo(task).fit}`}</small><div class="mini-nav"><button type="button" data-task-action="task-prev">${glyphMarkup('chevron-left')}</button><b>${controlUi.taskIndex+1} / ${tasks.length}</b><button type="button" data-task-action="task-next">${glyphMarkup('chevron-right')}</button></div><div class="manager-record-actions"><button type="button" data-task-action="complete-task" ${task.status==='completed'||blockers.length?'disabled':''}>Complete</button><button type="button" data-task-action="delete-task">Delete</button></div></div>`:'<div class="schedule-empty"><strong>No Academic Tasks</strong><span>Create a task without adding anything to the main screen.</span></div>'}`;
     }else if(controlUi.taskTab==='recurring'){
       const rules=state.recurringTaskRules||[];controlUi.ruleIndex=clamp(controlUi.ruleIndex,0,Math.max(0,rules.length-1));const rule=rules[controlUi.ruleIndex];
       content.innerHTML=`<div class="manager-form recurring-form"><label>Subject<select id="ruleSubject">${taskSubjectsOptions()}</select></label><label>Task<input id="ruleTitle" maxlength="80" placeholder="Recurring task"></label><label>Repeat<select id="ruleCadence"><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="weekdays">Selected Weekdays</option><option value="monthly">Monthly</option></select></label><label>Start<input id="ruleStart" type="date" value="${S.dateKey()}"></label><label class="weekday-field">Days<select id="ruleWeekdays" multiple><option value="1">Mon</option><option value="2">Tue</option><option value="3">Wed</option><option value="4">Thu</option><option value="5">Fri</option><option value="6">Sat</option><option value="0">Sun</option></select></label><button type="button" data-task-action="create-rule">Create Rule</button></div>${rule?`<div class="manager-record"><span>${rule.active?'ACTIVE':'PAUSED'} · ${escapeHtml(rule.cadence.toUpperCase())}</span><strong>${escapeHtml(rule.title)}</strong><small>${escapeHtml(rule.subjectName)} · Last generated ${rule.lastGeneratedDate||'never'}</small><div class="mini-nav"><button type="button" data-task-action="rule-prev">${glyphMarkup('chevron-left')}</button><b>${controlUi.ruleIndex+1} / ${rules.length}</b><button type="button" data-task-action="rule-next">${glyphMarkup('chevron-right')}</button></div><div class="manager-record-actions"><button type="button" data-task-action="toggle-rule">${rule.active?'Pause':'Resume'}</button><button type="button" data-task-action="delete-rule">Delete</button></div></div>`:'<div class="schedule-empty"><strong>No Recurring Rules</strong><span>Rules automatically create dated task occurrences.</span></div>'}`;
@@ -1379,8 +1458,8 @@
   const handleTaskManagerAction=event=>{
     const button=event.target.closest('[data-task-action]');if(!button)return;const action=button.dataset.taskAction;
     if(action==='create-task'){
-      const select=$('#managerTaskSubject'),title=$('#managerTaskTitle')?.value.trim(),deadline=$('#managerTaskDeadline')?.value,difficulty=$('#managerTaskDifficulty')?.value||'Medium';if(!title){showBreachWarning('TASK REQUIRED','Enter a task title.');return}
-      const option=select?.selectedOptions?.[0],subject={key:select?.value||'general',name:option?.dataset.name||option?.textContent||'General'};addAcademicTask(subject,title,deadline,difficulty,'');controlUi.taskIndex=state.academicTasks.length-1;renderTaskManager();return;
+      const select=$('#managerTaskSubject'),title=$('#managerTaskTitle')?.value.trim(),deadline=$('#managerTaskDeadline')?.value,difficulty=$('#managerTaskDifficulty')?.value||'Medium',workload=Number($('#managerTaskWorkload')?.value||30);if(!title){showBreachWarning('TASK REQUIRED','Enter a task title.');return}
+      const option=select?.selectedOptions?.[0],subject={key:select?.value||'general',name:option?.dataset.name||option?.textContent||'General'};addAcademicTask(subject,title,deadline,difficulty,'',workload);controlUi.taskIndex=state.academicTasks.length-1;renderTaskManager();return;
     }
     const tasks=[...state.academicTasks].sort((a,b)=>String(a.status).localeCompare(String(b.status))||String(a.deadline||'9999').localeCompare(String(b.deadline||'9999'))),task=tasks[controlUi.taskIndex];
     if(action==='task-prev'){controlUi.taskIndex=Math.max(0,controlUi.taskIndex-1);renderTaskManager();return}if(action==='task-next'){controlUi.taskIndex=Math.min(Math.max(0,tasks.length-1),controlUi.taskIndex+1);renderTaskManager();return}
@@ -1422,49 +1501,107 @@
       ['Safe Mode',state.system.safeMode?'ACTIVE':'STANDBY']
     ];
   };
-  const renderDiagnostics=async()=>{setControlView('diagnosticsView');$('#diagnosticGrid').innerHTML='<div class="diagnostic-loading">RUNNING CHECKS…</div>';const entries=await collectDiagnostics();$('#diagnosticGrid').innerHTML=entries.map(([label,value])=>`<div class="diagnostic-row ${['UNSUPPORTED','BLOCKED'].includes(value)?'failed':''}"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join('')};
+  const renderDiagnostics=async()=>{setControlView('diagnosticsView');$('#diagnosticGrid').innerHTML='<div class="diagnostic-loading">RUNNING CHECKS…</div>';const entries=await collectDiagnostics();$('#diagnosticGrid').innerHTML=entries.map(([label,value])=>`<div class="diagnostic-row ${['UNSUPPORTED','BLOCKED'].includes(value)?'failed':''}"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join('');const watchdog=state.system.watchdog||{};$('#watchdogSummary').innerHTML=`<span>DATA WATCHDOG${watchdog.lastRun?` · ${formatShortDate(watchdog.lastRun)}`:''}</span><strong>${escapeHtml(watchdog.summary||'Not run')}</strong><small>${Number(watchdog.issues||0)} issue(s) · ${Number(watchdog.repairs||0)} repair(s)</small>`};
   const developerScenarioDefinitions={
-    protocol:{protocol:'WAKE PROTOCOL',window:'5:00 AM – 6:00 AM',type:'CURRENT DIRECTIVE',title:'Leave Your Bed',copy:'Stand up and place both feet on the floor.',icon:'wake',detail:'STEP 1 OF 7',action:'Hold to Confirm',note:'Complete this action before continuing.'},
-    class:{protocol:'ATTENDANCE CHECK',window:'RESEARCH 2 · ONSITE',type:'CLASS CHECK-IN',title:'Are You in Class?',copy:'Confirm your attendance inside the active check-in window.',icon:'academic',detail:'CHECK-IN WINDOW · 15 MINUTES',action:'Hold to Confirm Attendance',note:'The simulated attendance record stays inside Test Mode.'},
+    protocol:{protocol:'WAKE PROTOCOL',window:'5:00 AM – 6:00 AM',type:'CURRENT DIRECTIVE',title:'Leave Your Bed',copy:'Stand up and place both feet on the floor.',icon:'wake',detail:'STEP 1 / 7 · 100 XP',action:'Hold to Confirm',note:'The cloned sandbox receives the simulated result.'},
+    class:{protocol:'CLASS CHECK-IN',window:'9:30 AM – 11:00 AM',type:'ATTENDANCE CHECK',title:'Confirm Your Attendance',copy:'Simulate an early, present, late, or failed check-in window.',icon:'academic',detail:'CHECK-IN WINDOW · 15 MINUTES',action:'Hold to Confirm Attendance',note:'The simulated attendance record stays inside Test Mode.'},
     boss:{protocol:'WEEKLY BOSS',window:'PERFORMANCE TRIAL',type:'BOSS OBJECTIVE',title:'Morning Sequence Dominion',copy:'Clear every morning protocol without a late confirmation.',icon:'quest',detail:'OBJECTIVE · 5 SUCCESSFUL DAYS',action:'Hold to Resolve Boss',note:'Boss rewards and penalties are isolated from live progression.'},
     rank:{protocol:'RANK TRIAL',window:'ASCENSION EVALUATION',type:'TRIAL REQUIREMENT',title:'Advance to the Next Rank',copy:'Meet the attendance, discipline, and integrity requirements.',icon:'apex',detail:'REQUIRED · 90% ATTENDANCE',action:'Hold to Resolve Trial',note:'The live player rank cannot change during this simulation.'},
     recovery:{protocol:'RECOVERY PROTOCOL',window:'RE-ENTER THE SEQUENCE',type:'RECOVERY ACTION',title:'Prepare the Next Protocol',copy:'Acknowledge the failure and arm one practical recovery action.',icon:'recovery',detail:'RECOVERY XP · 0',action:'Hold to Arm Recovery',note:'Recovery remains strict and grants no free XP.'},
-    timezone:{protocol:'TIME INTEGRITY',window:'TIMEZONE CHANGE DETECTED',type:'TIMELINE CONFIRMATION',title:'Confirm Travel or Clock Change',copy:'Existing records keep their original timezone while future schedules await confirmation.',icon:'timezone',detail:'UTC +08:00 → UTC +09:00',action:'Hold to Confirm Timeline',note:'No live timezone or schedule data will be modified.'}
+    timezone:{protocol:'TIME INTEGRITY',window:'TIMEZONE CHANGE DETECTED',type:'TIMELINE CONFIRMATION',title:'Confirm Travel or Clock Change',copy:'Existing records keep their original timezone while future schedules await confirmation.',icon:'timezone',detail:'UTC +08:00 → UTC +09:00',action:'Hold to Confirm Timeline',note:'No live timezone or schedule data will be modified.'},
+    lab:{protocol:'SYSTEM LAB',window:'NOTIFICATION & HAPTIC TEST',type:'DEVICE FEEDBACK',title:'Preview System Feedback',copy:'Trigger individual haptic patterns and safe local test alerts.',icon:'lab',detail:'LIVE PROGRESS · PROTECTED',action:'Hold to Close Lab Session',note:'Only device feedback is triggered. No progression data changes.'}
   };
+  const developerChainEvents=[
+    {scenario:'protocol',protocol:'WAKE PROTOCOL',window:'5:00 AM – 6:00 AM',title:'Wake Confirmation',copy:'Simulate the first required morning confirmation.',icon:'wake',detail:'CHAIN 1 / 5'},
+    {scenario:'protocol',protocol:'BREAKFAST PROTOCOL',window:'6:00 AM – 7:00 AM',title:'Complete Proper Breakfast',copy:'Simulate nutrition and hydration confirmation.',icon:'meal',detail:'CHAIN 2 / 5'},
+    {scenario:'class',protocol:'CLASS CHECK-IN',window:'9:30 AM – 11:00 AM',title:'Confirm Attendance',copy:'Simulate a scheduled class check-in and dismissal.',icon:'academic',detail:'CHAIN 3 / 5'},
+    {scenario:'protocol',protocol:'PRODUCTIVITY PROTOCOL',window:'8:00 PM – 9:00 PM',title:'Execute Priority Task',copy:'Simulate a risk-ranked academic focus block.',icon:'work',detail:'CHAIN 4 / 5'},
+    {scenario:'protocol',protocol:'SHUTDOWN PROTOCOL',window:'9:00 PM – 10:00 PM',title:'Enter Bed and Close the Day',copy:'Simulate the final required shutdown action.',icon:'sleep',detail:'CHAIN 5 / 5'}
+  ];
   const developerResultDefinitions={
     success:{status:'ON TIME',countdown:'00:42:18 LEFT',className:'success',glyph:'success',label:'TEST CLEAR',title:'Simulation Cleared',copy:'The success path completed inside isolated test data.',summary:'SUCCESS PATH'},
     failure:{status:'FAILED',countdown:'00:00:00',className:'failure',glyph:'failure',label:'TEST FAILURE',title:'Failure Path Resolved',copy:'The failure and consequence path completed without changing live records.',summary:'FAILURE PATH'},
     late:{status:'WARNING',countdown:'00:04:58 LEFT',className:'late',glyph:'clock',label:'WARNING PATH',title:'Late State Simulated',copy:'The warning and deadline path completed without applying a live penalty.',summary:'LATE / WARNING'}
   };
-  const renderDeveloperTest=()=>{setControlView('developerTestView');const test=state.system.developerTest||{};$('#testResultCard').innerHTML=test.lastResult?`<span>${escapeHtml(String(test.scenario||'test').toUpperCase())} · RUN ${test.runs||0}</span><strong>${escapeHtml(test.lastResult.title)}</strong><small>${escapeHtml(test.lastResult.copy)}</small>`:'<span>FULL-SCREEN SANDBOX</span><strong>Choose a scenario</strong><small>Launch an isolated simulation that fills the ASCEND app screen.</small>'};
+  const createDeveloperSandbox=mode=>{
+    const sandbox=clone(state);
+    if(mode==='sample'){
+      sandbox.player={...sandbox.player,name:'Test Player',codename:'Sandbox',level:12,rank:'C',streak:4,totalXp:1850};sandbox.dayRecords={};sandbox.attendanceRecords=[];sandbox.academicTasks=[];sandbox.classSchedule=[];sandbox.scheduleExceptions=[];
+    }
+    sandbox.system={...sandbox.system,developerSandbox:true};return sandbox;
+  };
+  const addDeveloperEvent=(type,detail,data={})=>{if(!developerRunSession)return;developerRunSession.events.push({at:new Date(developerRunSession.simulatedAt).toISOString(),type,detail,...data})};
+  const currentDeveloperScenario=()=>{
+    if(!developerRunSession)return developerScenarioDefinitions.protocol;
+    if(developerRunSession.scenario==='chain')return developerChainEvents[developerRunSession.chainIndex]||developerChainEvents[0];
+    return developerScenarioDefinitions[developerRunSession.scenario]||developerScenarioDefinitions.protocol;
+  };
+  const developerSandboxSummary=sandbox=>`${sandbox.player?.codename||sandbox.player?.name||'Player'} · Level ${sandbox.player?.level||1} · ${sandbox.classSchedule?.length||0} classes · ${sandbox.academicTasks?.filter(task=>task.status!=='completed').length||0} pending tasks`;
+  const renderDeveloperTest=()=>{setControlView('developerTestView');const test=state.system.developerTest||{};$('#testSandboxMode').value=test.sandboxMode||'profile';$('#testResultCard').innerHTML=test.lastResult?`<span>${escapeHtml(String(test.scenario||'test').toUpperCase())} · RUN ${test.runs||0}</span><strong>${escapeHtml(test.lastResult.title)}</strong><small>${escapeHtml(test.lastResult.copy)}</small>`:'<span>FULL-SCREEN SANDBOX</span><strong>Choose a scenario</strong><small>Each run uses an isolated clone and destroys it when Test Mode closes.</small>'};
+  const updateDeveloperTimeDisplay=()=>{
+    if(!developerRunSession)return;const simulated=new Date(developerRunSession.simulatedAt);$('#developerRunWindow').dataset.simulated=formatClock(simulated);$('#developerRunFooterLeft').textContent=`SIMULATED ${formatClock(simulated)} · ${developerRunSession.scenario==='chain'?`EVENT ${developerRunSession.chainIndex+1}/${developerChainEvents.length}`:'ISOLATED TEST'}`;
+  };
   const renderDeveloperRun=()=>{
-    if(!developerRunSession)return;const scenario=developerScenarioDefinitions[developerRunSession.scenario]||developerScenarioDefinitions.protocol,result=developerResultDefinitions[developerRunSession.result]||developerResultDefinitions.success;
+    if(!developerRunSession)return;const scenario=currentDeveloperScenario(),result=developerResultDefinitions[developerRunSession.result]||developerResultDefinitions.success,isLab=developerRunSession.scenario==='lab';
     const overlay=$('#developerRunOverlay');overlay.dataset.result=result.className;$('#developerRunActive').hidden=false;$('#developerRunResult').hidden=true;
-    $('#developerRunProtocol').textContent=scenario.protocol;$('#developerRunWindow').textContent=scenario.window;$('#developerRunStatus').textContent=result.status;$('#developerRunCountdown').textContent=result.countdown;$('#developerRunType').textContent=scenario.type;$('#developerRunTitle').textContent=scenario.title;$('#developerRunCopy').textContent=scenario.copy;$('#developerRunDetail').innerHTML=`<span>${escapeHtml(result.summary)}</span><strong>${escapeHtml(scenario.detail)}</strong>`;$('#developerRunActionLabel').textContent=scenario.action;$('#developerRunNote').textContent=scenario.note;$('#developerRunFooterLeft').textContent=`${scenario.protocol} · ${result.summary}`;$('#developerRunFill').style.width='0%';setGlyph('developerRunGlyph',scenario.icon);
+    $('#developerRunProtocol').textContent=scenario.protocol;$('#developerRunWindow').textContent=scenario.window;$('#developerRunStatus').textContent=result.status;$('#developerRunCountdown').textContent=result.countdown;$('#developerRunType').textContent=scenario.type||'CURRENT DIRECTIVE';$('#developerRunTitle').textContent=scenario.title;$('#developerRunCopy').textContent=scenario.copy;$('#developerRunDetail').innerHTML=`<span>${escapeHtml(result.summary)}</span><strong>${escapeHtml(scenario.detail)}</strong><small>${escapeHtml(developerSandboxSummary(developerRunSession.sandbox))}</small>`;$('#developerRunActionLabel').textContent=scenario.action||'Hold to Resolve Test';$('#developerRunNote').textContent=scenario.note||'Test data only. Live records remain protected.';$('#developerRunFill').style.width='0%';setGlyph('developerRunGlyph',scenario.icon);
+    $('#developerLabPanel').hidden=!isLab;$('#developerTimeControls').hidden=isLab;updateDeveloperTimeDisplay();
   };
   const launchDeveloperRun=()=>{
-    const scenario=$('#testScenario').value,result=$('#testResult').value;state.system=state.system||{};state.system.developerTest=state.system.developerTest||{enabled:false,unlocked:true,scenario:'free',simulatedDate:null,runs:0,lastResult:null};developerRunSession={scenario,result,completed:false,startedAt:new Date().toISOString(),returnDirect:Boolean(controlUi.directDeveloper)};
-    cancelHold();$('#scheduleOverlay').hidden=true;$('#developerRunOverlay').hidden=false;document.body.classList.add('developer-test-running');releaseWakeLock();renderDeveloperRun();void $('#developerRunOverlay').offsetWidth;$('#developerRunOverlay').classList.add('developer-run-visible');haptic('tap');
+    const scenario=$('#testScenario').value,result=$('#testResult').value,sandboxMode=$('#testSandboxMode').value||'profile';state.system=state.system||{};state.system.developerTest=state.system.developerTest||{};state.system.developerTest.sandboxMode=sandboxMode;
+    developerRunSession={scenario,result,sandboxMode,sandbox:createDeveloperSandbox(sandboxMode),simulatedAt:Date.now(),chainIndex:0,hiddenMinutes:0,completed:false,startedAt:new Date().toISOString(),returnDirect:Boolean(controlUi.directDeveloper),events:[],reportPages:[]};
+    addDeveloperEvent('sandbox',`Created ${sandboxMode==='profile'?'real-profile clone':'clean sample'} sandbox`,{summary:developerSandboxSummary(developerRunSession.sandbox)});addDeveloperEvent('state','Entered full-screen Developer Test Mode');
+    cancelHold();$('#scheduleOverlay').hidden=true;$('#developerRunOverlay').hidden=false;document.body.classList.add('developer-test-running');releaseWakeLock();renderDeveloperRun();requestAnimationFrame(()=>$('#developerRunOverlay').classList.add('developer-run-visible'));haptic('tap');
+  };
+  const advanceDeveloperTime=(minutesToAdd,reason)=>{if(!developerRunSession)return;developerRunSession.simulatedAt+=minutesToAdd*60000;addDeveloperEvent('time',`${reason}: +${minutesToAdd} minute(s)`);updateDeveloperTimeDisplay();showSystemNotice('integrity','SIMULATED TIME UPDATED',`${reason} · ${formatClock(new Date(developerRunSession.simulatedAt))}`,1700)};
+  const jumpDeveloperDeadline=()=>{if(!developerRunSession)return;developerRunSession.simulatedAt+=45*60000;addDeveloperEvent('deadline','Jumped directly to the scenario deadline',{decision:developerRunSession.result});$('#developerRunCountdown').textContent='00:00:00';$('#developerRunStatus').textContent=developerRunSession.result==='success'?'DEADLINE':'FAILED';updateDeveloperTimeDisplay()};
+  const hideDeveloperTwenty=()=>{if(!developerRunSession)return;developerRunSession.hiddenMinutes+=20;developerRunSession.simulatedAt+=20*60000;addDeveloperEvent('visibility','Simulated app hidden for 20 minutes',{recalculated:true});$('#developerRunCountdown').textContent='00:22:18 LEFT';updateDeveloperTimeDisplay();showSystemNotice('integrity','BACKGROUND RETURN SIMULATED','Timers recalculated from absolute timestamps.',2000)};
+  const nextDeveloperEvent=()=>{if(!developerRunSession)return;if(developerRunSession.scenario!=='chain'){advanceDeveloperTime(15,'Advanced to next scheduled event');return}if(developerRunSession.chainIndex<developerChainEvents.length-1){addDeveloperEvent('chain',`Resolved ${currentDeveloperScenario().protocol}`);developerRunSession.chainIndex+=1;developerRunSession.simulatedAt+=60*60000;renderDeveloperRun()}else completeDeveloperRun()};
+  const buildDeveloperReport=()=>{
+    const result=developerResultDefinitions[developerRunSession.result]||developerResultDefinitions.success,scenario=currentDeveloperScenario(),events=developerRunSession.events;
+    const checks=[
+      ['Sandbox',developerRunSession.sandboxMode==='profile'?'Current profile clone':'Clean sample data'],
+      ['States',`${events.filter(item=>item.type==='state'||item.type==='chain').length+1} entered`],
+      ['Simulated time',formatClock(new Date(developerRunSession.simulatedAt))],
+      ['Hidden return',`${developerRunSession.hiddenMinutes} minute(s)`],
+      ['Reward decision',developerRunSession.result==='success'?'Would award simulated XP':'Would award 0 simulated XP'],
+      ['Penalty decision',developerRunSession.result==='failure'?'Would apply simulated failure':'No live penalty'],
+      ['Haptic events',`${events.filter(item=>item.type==='haptic').length}`],
+      ['Notifications',`${events.filter(item=>item.type==='notification').length}`],
+      ['Deadline state',result.summary],
+      ['Duplicate guard','Passed · one resolution token'],
+      ['Live XP','Unchanged'],
+      ['Live records','Protected'],
+      ['Errors','0 detected'],
+      ['Scenario',scenario.protocol]
+    ];
+    const pages=[];for(let i=0;i<checks.length;i+=4)pages.push(checks.slice(i,i+4));return pages;
+  };
+  const renderDeveloperReportPage=()=>{
+    const pages=developerRunSession?.reportPages||[];developerReportPage=clamp(developerReportPage,0,Math.max(0,pages.length-1));const page=pages[developerReportPage]||[];$('#developerReportCard').innerHTML=page.map(([label,value])=>`<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(String(value))}</strong></div>`).join('');$('#developerReportNav').hidden=pages.length<=1;$('#developerReportPageLabel').textContent=pages.length?`${developerReportPage+1} / ${pages.length}`:'0 / 0';$('#developerReportPrev').disabled=developerReportPage===0;$('#developerReportNext').disabled=developerReportPage>=pages.length-1;
   };
   const completeDeveloperRun=()=>{
-    if(!developerRunSession||developerRunSession.completed)return;developerRunSession.completed=true;state.system=state.system||{};state.system.developerTest=state.system.developerTest||{enabled:false,unlocked:true,scenario:'free',simulatedDate:null,runs:0,lastResult:null};const scenario=developerScenarioDefinitions[developerRunSession.scenario]||developerScenarioDefinitions.protocol,result=developerResultDefinitions[developerRunSession.result]||developerResultDefinitions.success,test=state.system.developerTest;
-    test.enabled=true;test.scenario=developerRunSession.scenario;test.runs=Number(test.runs||0)+1;test.lastResult={at:new Date().toISOString(),title:`${scenario.protocol} · ${result.summary}`,copy:result.copy};save({silent:true});
-    $('#developerRunActive').hidden=true;$('#developerRunResult').hidden=false;$('#developerRunResultLabel').textContent=result.label;$('#developerRunResultTitle').textContent=result.title;$('#developerRunResultCopy').textContent=result.copy;$('#developerRunResultGrid').innerHTML=`<div><span>SCENARIO</span><strong>${escapeHtml(scenario.protocol)}</strong></div><div><span>RESULT</span><strong>${escapeHtml(result.summary)}</strong></div><div><span>LIVE XP</span><strong>UNCHANGED</strong></div><div><span>LIVE RECORDS</span><strong>PROTECTED</strong></div>`;setGlyph('developerRunResultGlyph',result.glyph);$('#developerRunResultGlyph').className=`developer-run-result-emblem glyph-frame ${result.className}`;haptic(developerRunSession.result==='failure'?'failed':developerRunSession.result==='late'?'warning':'clear');
+    if(!developerRunSession||developerRunSession.completed)return;if(developerRunSession.scenario==='chain'&&developerRunSession.chainIndex<developerChainEvents.length-1){nextDeveloperEvent();return}developerRunSession.completed=true;const scenario=currentDeveloperScenario(),result=developerResultDefinitions[developerRunSession.result]||developerResultDefinitions.success,test=state.system.developerTest;
+    addDeveloperEvent('resolution',`${scenario.protocol} resolved as ${result.summary}`);developerRunSession.reportPages=buildDeveloperReport();developerReportPage=0;
+    test.enabled=true;test.scenario=developerRunSession.scenario;test.runs=Number(test.runs||0)+1;const report={id:S.uid('test'),at:new Date().toISOString(),scenario:developerRunSession.scenario,result:developerRunSession.result,sandboxMode:developerRunSession.sandboxMode,events:clone(developerRunSession.events),summary:developerRunSession.reportPages.flat()};test.reports=[...(test.reports||[]),report].slice(-30);test.lastResult={at:report.at,title:`${scenario.protocol} · ${result.summary}`,copy:`${result.copy} ${developerSandboxSummary(developerRunSession.sandbox)}`};state.logs.push({id:S.uid('log'),at:report.at,type:'test',message:`Developer test completed: ${developerRunSession.scenario} · ${developerRunSession.result}.`});save({silent:true});
+    $('#developerRunActive').hidden=true;$('#developerRunResult').hidden=false;$('#developerRunResultLabel').textContent=result.label;$('#developerRunResultTitle').textContent=result.title;$('#developerRunResultCopy').textContent=result.copy;$('#developerRunResultGrid').innerHTML=`<div><span>SCENARIO</span><strong>${escapeHtml(scenario.protocol)}</strong></div><div><span>RESULT</span><strong>${escapeHtml(result.summary)}</strong></div><div><span>SANDBOX</span><strong>${escapeHtml(developerRunSession.sandboxMode.toUpperCase())}</strong></div><div><span>LIVE DATA</span><strong>PROTECTED</strong></div>`;setGlyph('developerRunResultGlyph',result.glyph);$('#developerRunResultGlyph').className=`developer-run-result-emblem glyph-frame ${result.className}`;renderDeveloperReportPage();haptic(developerRunSession.result==='failure'?'failed':developerRunSession.result==='late'?'warning':'clear');
   };
+  const previewDeveloperHaptic=()=>{if(!developerRunSession)return;const kind=$('#developerLabEvent').value;haptic(kind);addDeveloperEvent('haptic',`Previewed ${kind} vibration pattern`);showSystemNotice('integrity','HAPTIC PREVIEW',`${kind.toUpperCase()} pattern triggered.`,1600)};
+  const sendDeveloperTestNotification=async()=>{if(!developerRunSession)return;const kind=$('#developerLabEvent').value;if(!('Notification' in window)){showBreachWarning('NOTIFICATIONS UNSUPPORTED','This browser cannot send a local test alert.');return}let permission=Notification.permission;if(permission==='default')permission=await Notification.requestPermission();if(permission!=='granted'){showBreachWarning('ALERT PERMISSION REQUIRED','Allow notifications before running the alert laboratory.');return}try{new Notification(`ASCEND TEST · ${kind.toUpperCase()}`,{body:'Developer Test Mode notification. Live schedule records are unchanged.',tag:`ascend-test-${Date.now()}`,icon:'assets/icon-192.png'});addDeveloperEvent('notification',`Sent ${kind} test notification`);showSystemNotice('alert','TEST ALERT SENT','The notification laboratory completed successfully.',1800)}catch(error){showBreachWarning('TEST ALERT FAILED',error.message||'Notification could not be created.')}};
   const exitDeveloperRun=(returnToPanel=false)=>{
-    cancelHold('developer-run');$('#developerRunFill').style.width='0%';const returnDirect=developerRunSession?.returnDirect??true,overlay=$('#developerRunOverlay');overlay.classList.remove('developer-run-visible');overlay.hidden=true;document.body.classList.remove('developer-test-running');developerRunSession=null;
+    cancelHold('developer-run');$('#developerRunFill').style.width='0%';const returnDirect=developerRunSession?.returnDirect??true,overlay=$('#developerRunOverlay');overlay.classList.remove('developer-run-visible');overlay.hidden=true;document.body.classList.remove('developer-test-running');developerRunSession=null;developerReportPage=0;
     if(returnToPanel){controlUi.directDeveloper=returnDirect;$('#scheduleOverlay').hidden=false;renderDeveloperTest();releaseWakeLock()}else{controlUi.directDeveloper=false;renderApp();if(activeProtocolRecord())requestWakeLock()}
   };
   const startDeveloperRunAction=event=>{if(!developerRunSession||developerRunSession.completed)return;event?.preventDefault();beginHold('developer-run',1300,progress=>{$('#developerRunFill').style.width=`${progress*100}%`},completeDeveloperRun)};
   const runDeveloperTest=()=>launchDeveloperRun();
-  const resetDeveloperTest=()=>{state.system.developerTest={enabled:false,unlocked:true,scenario:'free',simulatedDate:null,runs:0,lastResult:null};save({silent:true});renderDeveloperTest()};
+  const resetDeveloperTest=()=>{state.system.developerTest={enabled:false,unlocked:true,scenario:'free',simulatedDate:null,runs:0,lastResult:null,sandboxMode:'profile',reports:[],labHistory:[]};save({silent:true});renderDeveloperTest()};
   const renderRecoverySystem=()=>{setControlView('recoverySystemView');const snapshots=S.listSnapshots(),rollbacks=S.listRollbackPoints();$('#recoverySystemSummary').innerHTML=`<div><span>SAFE MODE</span><strong>${state.system.safeMode?'ACTIVE':'STANDBY'}</strong></div><div><span>SNAPSHOTS</span><strong>${snapshots.length}</strong></div><div><span>ROLLBACKS</span><strong>${rollbacks.length}</strong></div><div><span>LAST BOOT</span><strong>${state.system.lastSuccessfulBoot?formatShortDate(state.system.lastSuccessfulBoot):'PENDING'}</strong></div>`;$('#toggleSafeMode').textContent=state.system.safeMode?'Exit Emergency Safe Mode':'Emergency Safe Mode'};
   const toggleSafeMode=()=>{state.system.safeMode=!state.system.safeMode;state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'integrity',message:`Emergency Safe Mode ${state.system.safeMode?'enabled':'disabled'}.`});save({silent:true});applySafeMode();renderRecoverySystem()};
   const openEmergencyRecovery=()=>{$('#emergencyRecoveryOverlay').hidden=false;$('#emergencyRestoreSnapshot').disabled=!S.listSnapshots().length};
   const closeEmergencyRecovery=()=>{$('#emergencyRecoveryOverlay').hidden=true};
-  const synchronizeAdvancedSystems=()=>{const before=JSON.stringify({quest:state.quests?.daily?.date,rules:state.academicTasks.length,debriefs:state.weeklyDebriefs?.length,pending:state.timezone?.pending});ensureDailyQuest();const generated=generateRecurringTasks();ensureWeeklyDebrief();const changedTimezone=detectTimezoneChange();if(generated||changedTimezone||before!==JSON.stringify({quest:state.quests?.daily?.date,rules:state.academicTasks.length,debriefs:state.weeklyDebriefs?.length,pending:state.timezone?.pending}))save({silent:true})};
+  const synchronizeAdvancedSystems=()=>{const before=JSON.stringify({quest:state.quests?.daily?.date,rules:state.academicTasks.length,debriefs:state.weeklyDebriefs?.length,pending:state.timezone?.pending});ensureDailyQuest();const generated=generateRecurringTasks();ensureWeeklyDebrief();const changedTimezone=detectTimezoneChange();const watchdogDate=state.system.watchdog?.lastRun?S.dateKey(new Date(state.system.watchdog.lastRun)):'';if(watchdogDate!==S.dateKey())runDataConsistencyWatchdog(false);if(generated||changedTimezone||before!==JSON.stringify({quest:state.quests?.daily?.date,rules:state.academicTasks.length,debriefs:state.weeklyDebriefs?.length,pending:state.timezone?.pending}))save({silent:true})};
 
-  const controlViews=['controlHomeView','academicHomeView','profileView','attendanceView','systemIntegrityView','scheduleExceptionsView','dataBackupView','academicTasksView','advancedSystemHomeView','updatesRollbackView','diagnosticsView','developerTestView','recoverySystemView','scheduleOverviewView','scheduleEditView'];
+  const controlViews=['controlHomeView','academicHomeView','profileView','attendanceView','systemIntegrityView','scheduleExceptionsView','dataBackupView','academicTasksView','conflictScanView','advancedSystemHomeView','updatesRollbackView','diagnosticsView','developerTestView','recoverySystemView','scheduleOverviewView','scheduleEditView'];
   const setControlView=view=>{
     controlUi.view=view;
     controlViews.forEach(id=>{const node=document.getElementById(id);if(node)node.hidden=id!==view});
@@ -1868,6 +2005,7 @@
     $('#restoreRollback').addEventListener('click',restoreSelectedRollback);
     $('#diagnosticsBack').addEventListener('click',renderAdvancedSystemHome);
     $('#rerunDiagnostics').addEventListener('click',renderDiagnostics);
+    $('#runConsistencyWatchdog').addEventListener('click',()=>{runDataConsistencyWatchdog(true);renderDiagnostics()});
     $('#developerTestBack').addEventListener('click',()=>{if(controlUi.directDeveloper)closeScheduleOverlay();else renderAdvancedSystemHome()});
     $('#runDeveloperTest').addEventListener('click',runDeveloperTest);
     $('#resetDeveloperTest').addEventListener('click',resetDeveloperTest);
@@ -1876,6 +2014,14 @@
     $('#developerRunExitResult').addEventListener('click',()=>exitDeveloperRun(false));
     $('#developerRunAction').addEventListener('pointerdown',startDeveloperRunAction);
     ['pointerup','pointercancel','pointerleave'].forEach(type=>$('#developerRunAction').addEventListener(type,()=>{cancelHold('developer-run');$('#developerRunFill').style.width='0%'}));
+    $('#developerAdvanceFive').addEventListener('click',()=>advanceDeveloperTime(5,'Manual time acceleration'));
+    $('#developerJumpDeadline').addEventListener('click',jumpDeveloperDeadline);
+    $('#developerHideTwenty').addEventListener('click',hideDeveloperTwenty);
+    $('#developerNextEvent').addEventListener('click',nextDeveloperEvent);
+    $('#previewDeveloperHaptic').addEventListener('click',previewDeveloperHaptic);
+    $('#sendDeveloperNotification').addEventListener('click',sendDeveloperTestNotification);
+    $('#developerReportPrev').addEventListener('click',()=>{developerReportPage=Math.max(0,developerReportPage-1);renderDeveloperReportPage()});
+    $('#developerReportNext').addEventListener('click',()=>{developerReportPage=Math.min(Math.max(0,(developerRunSession?.reportPages?.length||1)-1),developerReportPage+1);renderDeveloperReportPage()});
     $('#recoverySystemBack').addEventListener('click',renderAdvancedSystemHome);
     $('#toggleSafeMode').addEventListener('click',toggleSafeMode);
     $('#openEmergencyRecovery').addEventListener('click',openEmergencyRecovery);
@@ -1901,6 +2047,11 @@
     $('#scheduleConfigEdit').addEventListener('click',()=>{scheduleUi.day=defaultScheduleDay();scheduleUi.page=0;renderScheduleOverview()});
     $('#openAttendance').addEventListener('click',()=>{controlUi.attendanceTab='overall';controlUi.correction=false;renderAttendance()});
     $('#openScheduleExceptions').addEventListener('click',()=>{exceptionUi.index=0;renderScheduleExceptions()});
+    $('#openConflictScan').addEventListener('click',()=>renderConflictScan(true));
+    $('#conflictScanBack').addEventListener('click',renderAcademicHome);
+    $('#rerunConflictScan').addEventListener('click',()=>renderConflictScan(true));
+    $('#conflictPrev').addEventListener('click',()=>{conflictUi.index=Math.max(0,conflictUi.index-1);renderConflictRecord()});
+    $('#conflictNext').addEventListener('click',()=>{conflictUi.index=Math.min(Math.max(0,conflictUi.issues.length-1),conflictUi.index+1);renderConflictRecord()});
     $('#scheduleExceptionsBack').addEventListener('click',renderAcademicHome);
     $('#exceptionType').addEventListener('change',syncExceptionFields);
     $('#saveScheduleException').addEventListener('click',saveScheduleException);
