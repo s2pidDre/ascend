@@ -2967,3 +2967,173 @@ body.orientation-blocked .developer-run-overlay{display:none!important}
   .developer-test-options{grid-template-columns:1fr 1fr}.developer-test-options label:last-child{grid-column:1/-1}
   .developer-time-controls{gap:3px}.developer-time-controls button{font-size:.36rem}
 }
+
+/* Dedicated full-screen layout for the Notification & Haptic Laboratory. */
+.developer-run-overlay[data-scenario="lab"] .developer-run-deadline{
+  border-color:rgba(136,103,255,.44);
+  background:linear-gradient(90deg,rgba(13,20,48,.84),rgba(24,14,60,.76));
+}
+.developer-run-overlay[data-scenario="lab"] .developer-run-deadline span,
+.developer-run-overlay[data-scenario="lab"] .developer-run-deadline strong{
+  color:#d9d0ff;
+}
+.developer-run-card-lab{
+  grid-template-rows:minmax(148px,.9fr) minmax(170px,1fr) auto;
+  padding-top:clamp(14px,2.2vh,22px);
+  padding-bottom:clamp(14px,2.2vh,22px);
+}
+.developer-run-card-lab .developer-run-upper{
+  justify-content:center;
+  gap:clamp(5px,.75vh,8px);
+  padding:0;
+}
+.developer-run-card-lab .developer-run-glyph{
+  margin-bottom:clamp(5px,.7vh,8px);
+}
+.developer-run-card-lab .developer-run-copy{
+  max-width:470px;
+}
+.developer-run-card-lab .developer-run-middle{
+  justify-content:center;
+  padding:clamp(8px,1.25vh,13px) 0;
+  overflow:hidden;
+}
+.developer-run-card-lab .developer-run-lower{
+  justify-content:flex-end;
+  gap:clamp(7px,1vh,10px);
+  padding-top:clamp(9px,1.25vh,13px);
+}
+.developer-run-card-lab .developer-run-action{
+  position:relative;
+  z-index:2;
+  width:min(100%,440px);
+  flex:0 0 auto;
+}
+.developer-run-card-lab .developer-run-note{
+  max-width:470px;
+}
+.developer-run-card-lab .developer-lab-panel{
+  width:min(100%,460px);
+  max-height:100%;
+  min-height:0;
+  display:grid;
+  grid-template-rows:auto auto auto;
+  align-content:center;
+  gap:clamp(8px,1.15vh,12px);
+  padding:clamp(10px,1.5vh,14px);
+  overflow:hidden;
+  border-color:rgba(136,103,255,.4);
+  background:linear-gradient(180deg,rgba(17,13,48,.84),rgba(5,17,39,.82));
+  box-shadow:inset 0 0 24px rgba(136,103,255,.05);
+}
+.developer-lab-intro{
+  min-width:0;
+  display:grid;
+  gap:3px;
+  text-align:left;
+}
+.developer-lab-intro span{
+  color:#a797e8;
+  font-size:.43rem;
+  font-weight:900;
+  letter-spacing:.13em;
+}
+.developer-lab-intro strong{
+  color:#e7e3ff;
+  font-size:clamp(.58rem,1.9vw,.7rem);
+  line-height:1.25;
+  text-wrap:balance;
+}
+.developer-run-card-lab .developer-lab-panel label{
+  gap:5px;
+}
+.developer-run-card-lab .developer-lab-panel select{
+  height:clamp(34px,4.7vh,40px);
+  min-height:34px;
+}
+.developer-run-card-lab .developer-lab-actions{
+  position:relative;
+  z-index:3;
+  grid-template-columns:1fr 1fr;
+  gap:7px;
+}
+.developer-run-card-lab .developer-lab-actions button{
+  min-width:0;
+  min-height:clamp(38px,5.2vh,44px);
+  padding:6px 8px;
+  line-height:1.15;
+  white-space:normal;
+  clip-path:polygon(6px 0,100% 0,100% calc(100% - 6px),calc(100% - 6px) 100%,0 100%,0 6px);
+}
+@media (max-height:760px){
+  .developer-run-card-lab{
+    grid-template-rows:minmax(118px,.75fr) minmax(148px,.9fr) auto;
+    padding-top:9px;
+    padding-bottom:10px;
+  }
+  .developer-run-card-lab .developer-run-middle{
+    padding:5px 0;
+  }
+  .developer-run-card-lab .developer-lab-panel{
+    gap:6px;
+    padding:8px;
+  }
+  .developer-run-card-lab .developer-lab-actions button{
+    min-height:34px;
+  }
+  .developer-run-card-lab .developer-run-lower{
+    padding-top:7px;
+  }
+}
+@media (max-height:620px){
+  .developer-run-card-lab{
+    grid-template-rows:minmax(92px,.62fr) minmax(126px,.86fr) auto;
+  }
+  .developer-run-card-lab .developer-run-glyph{
+    width:38px;
+    height:38px;
+    margin-bottom:2px;
+  }
+  .developer-run-card-lab .developer-run-upper h1{
+    font-size:1.08rem;
+  }
+  .developer-run-card-lab .developer-run-copy{
+    font-size:.56rem;
+    line-height:1.22;
+  }
+  .developer-lab-intro strong{
+    font-size:.56rem;
+  }
+  .developer-run-card-lab .developer-lab-panel select{
+    height:31px;
+    min-height:31px;
+  }
+  .developer-run-card-lab .developer-lab-actions button{
+    min-height:30px;
+    font-size:.4rem;
+  }
+  .developer-run-card-lab .developer-run-note{
+    font-size:.46rem;
+  }
+}
+@media (max-width:390px){
+  .developer-run-card-lab .developer-lab-actions{
+    grid-template-columns:1fr 1fr;
+  }
+}
+
+/* Keep the full-screen test footer compact so the active card receives the
+   remaining viewport height instead of leaving an oversized empty footer row. */
+.developer-run-active{
+  grid-template-rows:auto auto auto minmax(0,1fr) 19px;
+}
+@media (max-height:540px){
+  .developer-run-active{
+    grid-template-rows:auto auto auto minmax(0,1fr) 17px;
+  }
+}
+.developer-run-head{grid-row:1}
+.developer-run-deadline{grid-row:2}
+.developer-time-controls{grid-row:3}
+.developer-run-card{grid-row:4}
+.developer-run-footer{grid-row:5}
