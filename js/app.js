@@ -9,12 +9,15 @@
   let lastVisibilityLoss=null;
   let earlyWakeDismissedSession=false;
   let holdSession=null;
+  let brandHoldStartedAt=0;
+  let brandHoldProtocolActive=false;
+  let brandHoldDeveloperReady=false;
   let clockTapCount=0;
   let clockTapTimer=null;
   let clockArmedUntil=0;
   let escapeTimer=null;
   let scheduleUi={view:'home',day:new Date().getDay(),page:0,editId:null,isNew:false};
-  let controlUi={view:'home',profilePage:0,progressPage:0,directiveIndex:0,achievementPage:0,attendanceTab:'overall',subjectIndex:0,historyIndex:0,correction:false,taskTab:'tasks',taskIndex:0,ruleIndex:0,dependencyIndex:0,rollbackIndex:0};
+  let controlUi={view:'home',profilePage:0,progressPage:0,directiveIndex:0,achievementPage:0,attendanceTab:'overall',subjectIndex:0,historyIndex:0,correction:false,taskTab:'tasks',taskIndex:0,ruleIndex:0,dependencyIndex:0,rollbackIndex:0,directDeveloper:false};
   let currentClassContext=null;
   let activeScreenId=null;
   let brandFlashTimer=null;
@@ -1397,7 +1400,7 @@
     if(action==='remove-dependency'&&selected){selected.dependencyIds=(selected.dependencyIds||[]).filter(id=>id!==button.dataset.dependencyId);save();renderTaskManager()}
   };
 
-  const renderAdvancedSystemHome=()=>{setControlView('advancedSystemHomeView')};
+  const renderAdvancedSystemHome=()=>{controlUi.directDeveloper=false;setControlView('advancedSystemHomeView')};
   const renderUpdatesRollback=()=>{
     setControlView('updatesRollbackView');const info=S.schemaInfo(),points=S.listRollbackPoints();controlUi.rollbackIndex=clamp(controlUi.rollbackIndex,0,Math.max(0,points.length-1));const point=points[controlUi.rollbackIndex];
     $('#updateSchemaSummary').innerHTML=`<div><span>SCHEMA</span><strong>V${info.version}</strong></div><div><span>ROLLBACKS</span><strong>${points.length}</strong></div><div><span>SNAPSHOTS</span><strong>${info.snapshotCount}</strong></div>`;
@@ -1658,9 +1661,9 @@
   };
   const openControlOverlay=()=>{
     if(activeProtocolRecord()||classStateAt(new Date())||$('#freeScreen').hidden)return;
-    cancelHold();$('#scheduleOverlay').hidden=false;renderControlHome();haptic('tap');
+    cancelHold();controlUi.directDeveloper=false;$('#scheduleOverlay').hidden=false;renderControlHome();haptic('tap');
   };
-  const closeScheduleOverlay=()=>{$('#scheduleOverlay').hidden=true;cancelHold('schedule-delete');cancelHold('schedule-access');$('#compactStatus').style.setProperty('--config-progress','0deg');controlUi.correction=false;backupUi={pending:null,fileName:''};if($('#backupFileInput'))$('#backupFileInput').value=''};
+  const closeScheduleOverlay=()=>{$('#scheduleOverlay').hidden=true;cancelHold('schedule-delete');cancelHold('schedule-access');$('#compactStatus').style.setProperty('--config-progress','0deg');controlUi.correction=false;controlUi.directDeveloper=false;backupUi={pending:null,fileName:''};if($('#backupFileInput'))$('#backupFileInput').value='';if(activeProtocolRecord())requestWakeLock()};
   const renderScheduleOverview=()=>{
     setControlView('scheduleOverviewView');scheduleUi.day=Number(scheduleUi.day);const entries=scheduleEntriesForDay(scheduleUi.day);const totalPages=Math.max(1,Math.ceil(entries.length/schedulePageSize));scheduleUi.page=clamp(scheduleUi.page,0,totalPages-1);
     $('#scheduleWeekTabs').innerHTML=scheduleDays.map(day=>{const count=scheduleEntriesForDay(day.value).length;return`<button type="button" data-day="${day.value}" class="${day.value===scheduleUi.day?'selected':''}"><strong>${day.label}</strong><small>${count}</small></button>`}).join('');
@@ -1710,8 +1713,51 @@
     if(reason==='technical'){save();closeEmergencyOverlay();showBreachWarning('TECHNICAL OVERRIDE RECORDED','The directive remains active and the fixed deadline continues.');return}
     closeEmergencyOverlay();failProtocol(record,protocol,`Emergency override used: ${reason}.`);renderApp();
   };
-  const resetBrandEmergencyHold=()=>{const brand=$('#systemBrand');brand.classList.remove('emergency-arming');brand.style.setProperty('--emergency-progress','0deg');brand.style.setProperty('--emergency-glow','8px');brand.style.setProperty('--emergency-scale','1')};
-  const startBrandEmergencyHold=()=>{if(!activeProtocolRecord())return;beginHold('brand',6000,progress=>{const brand=$('#systemBrand');brand.style.setProperty('--emergency-progress',`${progress*360}deg`);brand.style.setProperty('--emergency-glow',`${8+progress*16}px`);brand.style.setProperty('--emergency-scale',String(1+progress*.045));brand.classList.toggle('emergency-arming',progress>.02)},()=>{resetBrandEmergencyHold();openEmergencyOverlay('brand-hold')})};
+  const resetBrandAccessVisual=()=>{
+    const brand=$('#systemBrand');if(!brand)return;
+    brand.classList.remove('developer-arming','developer-ready','emergency-arming');
+    brand.style.setProperty('--brand-access-progress','0deg');
+    brand.style.setProperty('--brand-access-glow','8px');
+    brand.style.setProperty('--brand-access-scale','1');
+  };
+  const openDeveloperFromBrand=()=>{
+    if(!$('#emergencyOverlay').hidden)return;
+    cancelHold();resetBrandAccessVisual();brandHoldStartedAt=0;brandHoldProtocolActive=false;brandHoldDeveloperReady=false;
+    state.system=state.system||{};state.system.developerTest=state.system.developerTest||{};state.system.developerTest.unlocked=true;
+    save({silent:true});controlUi.directDeveloper=true;$('#scheduleOverlay').hidden=false;releaseWakeLock();renderDeveloperTest();haptic('tap');
+    showSystemNotice('integrity','DEVELOPER MODE OPEN','Isolated test data only. Live progress remains protected.',2100);
+  };
+  const startBrandAccessHold=()=>{
+    if(!$('#scheduleOverlay').hidden||!$('#emergencyOverlay').hidden)return;
+    brandHoldStartedAt=performance.now();brandHoldProtocolActive=Boolean(activeProtocolRecord());brandHoldDeveloperReady=false;
+    const duration=brandHoldProtocolActive?6000:3000;
+    beginHold('brand-access',duration,progress=>{
+      const brand=$('#systemBrand');if(!brand)return;
+      const elapsed=progress*duration;
+      brand.style.setProperty('--brand-access-glow',`${8+Math.min(1,elapsed/3000)*13}px`);
+      brand.style.setProperty('--brand-access-scale',String(1+Math.min(1,elapsed/3000)*.04));
+      if(brandHoldProtocolActive&&elapsed>=3000){
+        if(!brandHoldDeveloperReady){brandHoldDeveloperReady=true;haptic('hold-final');showSystemNotice('integrity','DEVELOPER ACCESS READY','Release now for Developer Mode, or keep holding for Emergency Override.',2200)}
+        brand.classList.remove('developer-arming','developer-ready');brand.classList.add('emergency-arming');
+        brand.style.setProperty('--brand-access-progress',`${clamp((elapsed-3000)/3000,0,1)*360}deg`);
+      }else{
+        brand.classList.remove('emergency-arming','developer-ready');brand.classList.add('developer-arming');
+        brand.style.setProperty('--brand-access-progress',`${clamp(elapsed/3000,0,1)*360}deg`);
+      }
+    },()=>{
+      const emergency=brandHoldProtocolActive;
+      brandHoldStartedAt=0;brandHoldProtocolActive=false;brandHoldDeveloperReady=false;resetBrandAccessVisual();
+      if(emergency)openEmergencyOverlay('brand-hold');else openDeveloperFromBrand();
+    });
+  };
+  const finishBrandAccessHold=()=>{
+    if(!brandHoldStartedAt)return;
+    const elapsed=performance.now()-brandHoldStartedAt;
+    const openDeveloper=brandHoldProtocolActive&&elapsed>=3000&&elapsed<6000;
+    cancelHold('brand-access');brandHoldStartedAt=0;brandHoldProtocolActive=false;brandHoldDeveloperReady=false;resetBrandAccessVisual();
+    if(openDeveloper)openDeveloperFromBrand();
+  };
+  const cancelBrandAccessHold=()=>{cancelHold('brand-access');brandHoldStartedAt=0;brandHoldProtocolActive=false;brandHoldDeveloperReady=false;resetBrandAccessVisual()};
   const armClockBackup=()=>{clockArmedUntil=Date.now()+6000;$('#clockPanel').classList.add('backup-armed');showBreachWarning('OVERRIDE GESTURE ARMED','Hold the clock for 3 seconds to open Emergency Override.');setTimeout(()=>{if(Date.now()>=clockArmedUntil)$('#clockPanel').classList.remove('backup-armed')},6100)};
 
   const revealUpdatePrompt=worker=>{
@@ -1785,15 +1831,14 @@
     $('#taskManagerContent').addEventListener('click',handleTaskManagerAction);
     $('#advancedSystemHomeView').addEventListener('click',event=>{const button=event.target.closest('[data-advanced-view]');if(!button||button.classList.contains('developer-entry'))return;const view=button.dataset.advancedView;if(view==='updatesRollbackView')renderUpdatesRollback();else if(view==='systemIntegrityView')renderSystemIntegrity();else if(view==='diagnosticsView')renderDiagnostics();else if(view==='recoverySystemView')renderRecoverySystem()});
     const developerEntry=$('#advancedSystemHomeView .developer-entry');
-    developerEntry.addEventListener('pointerdown',event=>{event.preventDefault();beginHold('developer-access',3000,progress=>{$('#developerEntryFill').style.width=`${progress*100}%`},()=>{state.system.developerTest.unlocked=true;save({silent:true});renderDeveloperTest()})});
-    ['pointerup','pointercancel','pointerleave'].forEach(type=>developerEntry.addEventListener(type,()=>{cancelHold('developer-access');$('#developerEntryFill').style.width='0%'}));
+    developerEntry.addEventListener('click',()=>{state.system.developerTest.unlocked=true;save({silent:true});controlUi.directDeveloper=false;renderDeveloperTest()});
     $('#updatesRollbackBack').addEventListener('click',renderAdvancedSystemHome);
     $('#rollbackPrev').addEventListener('click',()=>{controlUi.rollbackIndex=Math.max(0,controlUi.rollbackIndex-1);renderUpdatesRollback()});
     $('#rollbackNext').addEventListener('click',()=>{controlUi.rollbackIndex=Math.min(Math.max(0,S.listRollbackPoints().length-1),controlUi.rollbackIndex+1);renderUpdatesRollback()});
     $('#restoreRollback').addEventListener('click',restoreSelectedRollback);
     $('#diagnosticsBack').addEventListener('click',renderAdvancedSystemHome);
     $('#rerunDiagnostics').addEventListener('click',renderDiagnostics);
-    $('#developerTestBack').addEventListener('click',renderAdvancedSystemHome);
+    $('#developerTestBack').addEventListener('click',()=>{if(controlUi.directDeveloper)closeScheduleOverlay();else renderAdvancedSystemHome()});
     $('#runDeveloperTest').addEventListener('click',runDeveloperTest);
     $('#resetDeveloperTest').addEventListener('click',resetDeveloperTest);
     $('#recoverySystemBack').addEventListener('click',renderAdvancedSystemHome);
@@ -1877,8 +1922,9 @@
     document.addEventListener('contextmenu',event=>{
       if(event.target.closest('.brand,.system-emblem,.free-watermark,.state-watermark,.hold-button,.compact-status,.glyph-frame'))event.preventDefault();
     });
-    $('#systemBrand').addEventListener('pointerdown',event=>{event.preventDefault();startBrandEmergencyHold()});
-    ['pointerup','pointercancel','pointerleave'].forEach(type=>$('#systemBrand').addEventListener(type,()=>{cancelHold('brand');resetBrandEmergencyHold()}));
+    $('#systemBrand').addEventListener('pointerdown',event=>{if(event.button!==undefined&&event.button!==0)return;event.preventDefault();$('#systemBrand').setPointerCapture?.(event.pointerId);startBrandAccessHold()});
+    $('#systemBrand').addEventListener('pointerup',event=>{event.preventDefault();try{$('#systemBrand').releasePointerCapture?.(event.pointerId)}catch(error){}finishBrandAccessHold()});
+    ['pointercancel','lostpointercapture'].forEach(type=>$('#systemBrand').addEventListener(type,cancelBrandAccessHold));
     $('#clockPanel').addEventListener('click',()=>{clockTapCount+=1;clearTimeout(clockTapTimer);if(clockTapCount>=5){clockTapCount=0;armClockBackup();return}clockTapTimer=setTimeout(()=>{clockTapCount=0},1300)});
     $('#clockPanel').addEventListener('pointerdown',event=>{if(Date.now()>clockArmedUntil)return;event.preventDefault();beginHold('clock-backup',3000,()=>{},()=>{clockArmedUntil=0;$('#clockPanel').classList.remove('backup-armed');openEmergencyOverlay('clock-gesture')})});
     ['pointerup','pointercancel','pointerleave'].forEach(type=>$('#clockPanel').addEventListener(type,()=>cancelHold('clock-backup')));

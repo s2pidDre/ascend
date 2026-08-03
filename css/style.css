@@ -1501,8 +1501,10 @@ body.failure-scar .app-shell::after{opacity:.18}
 .brand{
   gap:7px;
   overflow:visible;
-  --emergency-glow:8px;
-  --emergency-scale:1;
+  --brand-access-progress:0deg;
+  --brand-access-glow:8px;
+  --brand-access-scale:1;
+  --brand-access-color:var(--violet);
 }
 .brand::after{display:none!important}
 .brand-mark{
@@ -1532,15 +1534,18 @@ body.failure-scar .app-shell::after{opacity:.18}
   padding:1.5px;
   pointer-events:none;
   opacity:0;
-  background:conic-gradient(from -90deg,var(--red) var(--emergency-progress),rgba(255,83,108,.06) 0);
+  background:conic-gradient(from -90deg,var(--brand-access-color) var(--brand-access-progress),rgba(75,199,255,.06) 0);
   -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
   mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
   -webkit-mask-composite:xor;
   mask-composite:exclude;
-  filter:drop-shadow(0 0 5px rgba(255,83,108,.75));
+  filter:drop-shadow(0 0 5px var(--brand-access-color));
   transition:opacity .1s linear;
 }
-.brand.emergency-arming .brand-mark::after{opacity:.96}
+.brand.developer-arming{--brand-access-color:var(--violet)}
+.brand.developer-ready{--brand-access-color:var(--green)}
+.brand.emergency-arming{--brand-access-color:var(--red)}
+.brand.developer-arming .brand-mark::after,.brand.developer-ready .brand-mark::after,.brand.emergency-arming .brand-mark::after{opacity:.96}
 .brand-mark-image{
   width:100%;
   height:100%;
@@ -1567,11 +1572,15 @@ body.weekly-boss:not([data-state="critical"]) .brand-mark-image{
 body[data-state="critical"] .brand-mark-image{
   filter:drop-shadow(0 0 11px rgba(255,83,108,.44));
 }
+.brand.developer-arming .brand-mark-image,
+.brand.developer-ready .brand-mark-image,
 .brand.emergency-arming .brand-mark-image{
   animation:none;
-  filter:drop-shadow(0 0 var(--emergency-glow) rgba(255,83,108,.9));
-  transform:scale(var(--emergency-scale));
+  transform:scale(var(--brand-access-scale));
 }
+.brand.developer-arming .brand-mark-image{filter:drop-shadow(0 0 var(--brand-access-glow) rgba(136,103,255,.9))}
+.brand.developer-ready .brand-mark-image{filter:drop-shadow(0 0 var(--brand-access-glow) rgba(112,243,193,.9))}
+.brand.emergency-arming .brand-mark-image{filter:drop-shadow(0 0 var(--brand-access-glow) rgba(255,83,108,.9))}
 .brand.brand-event .brand-mark-image{animation:brandEventPulse .7s cubic-bezier(.2,.75,.2,1)}
 .brand.brand-event[data-event="level"] .brand-mark-image,
 .brand.brand-event[data-event="boss"] .brand-mark-image{--event-glow:rgba(255,211,108,.82)}
@@ -2657,3 +2666,6 @@ body.orientation-blocked .modal-overlay{display:none!important}
 .early-core{
   grid-template-columns:minmax(0,1fr)!important;
 }
+
+/* ASCEND logo is a protected dual-stage hold target. */
+#systemBrand{touch-action:none;-webkit-touch-callout:none;user-select:none;-webkit-user-select:none}

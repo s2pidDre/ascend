@@ -1,4 +1,4 @@
-const CACHE='ascend-discipline-v29-uniform-directive-layouts';
+const CACHE='ascend-discipline-v30-developer-logo-access';
 const ASSETS=[
   './',
   './index.html',
