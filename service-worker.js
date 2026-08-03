@@ -1,4 +1,4 @@
-const CACHE='ascend-discipline-v30-developer-logo-access';
+const CACHE='ascend-discipline-v30-fullscreen-developer-tests';
 const ASSETS=[
   './',
   './index.html',

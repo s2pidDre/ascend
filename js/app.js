@@ -18,6 +18,7 @@
   let escapeTimer=null;
   let scheduleUi={view:'home',day:new Date().getDay(),page:0,editId:null,isNew:false};
   let controlUi={view:'home',profilePage:0,progressPage:0,directiveIndex:0,achievementPage:0,attendanceTab:'overall',subjectIndex:0,historyIndex:0,correction:false,taskTab:'tasks',taskIndex:0,ruleIndex:0,dependencyIndex:0,rollbackIndex:0,directDeveloper:false};
+  let developerRunSession=null;
   let currentClassContext=null;
   let activeScreenId=null;
   let brandFlashTimer=null;
@@ -1422,11 +1423,40 @@
     ];
   };
   const renderDiagnostics=async()=>{setControlView('diagnosticsView');$('#diagnosticGrid').innerHTML='<div class="diagnostic-loading">RUNNING CHECKS…</div>';const entries=await collectDiagnostics();$('#diagnosticGrid').innerHTML=entries.map(([label,value])=>`<div class="diagnostic-row ${['UNSUPPORTED','BLOCKED'].includes(value)?'failed':''}"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join('')};
-  const renderDeveloperTest=()=>{setControlView('developerTestView');const test=state.system.developerTest||{};$('#testResultCard').innerHTML=test.lastResult?`<span>${escapeHtml(String(test.scenario||'test').toUpperCase())} · RUN ${test.runs||0}</span><strong>${escapeHtml(test.lastResult.title)}</strong><small>${escapeHtml(test.lastResult.copy)}</small>`:'<span>NO TEST RUN</span><strong>Choose a scenario</strong><small>Simulation results stay inside this panel.</small>'};
-  const runDeveloperTest=()=>{
-    const scenario=$('#testScenario').value,result=$('#testResult').value,labels={protocol:'Protocol transition',class:'Attendance state',boss:'Weekly Boss',rank:'Rank Trial',recovery:'Recovery Protocol',timezone:'Timezone change'},resultCopy={success:'Completed without changing live XP, schedules, or records.',failure:'Failure path resolved inside isolated test data.',late:'Warning and deadline path simulated without a live penalty.'};
-    state.system.developerTest.enabled=true;state.system.developerTest.scenario=scenario;state.system.developerTest.runs=Number(state.system.developerTest.runs||0)+1;state.system.developerTest.lastResult={at:new Date().toISOString(),title:`${labels[scenario]} · ${result.toUpperCase()}`,copy:resultCopy[result]};save({silent:true});haptic(result==='failure'?'failed':'clear');renderDeveloperTest();
+  const developerScenarioDefinitions={
+    protocol:{protocol:'WAKE PROTOCOL',window:'5:00 AM – 6:00 AM',type:'CURRENT DIRECTIVE',title:'Leave Your Bed',copy:'Stand up and place both feet on the floor.',icon:'wake',detail:'STEP 1 OF 7',action:'Hold to Confirm',note:'Complete this action before continuing.'},
+    class:{protocol:'ATTENDANCE CHECK',window:'RESEARCH 2 · ONSITE',type:'CLASS CHECK-IN',title:'Are You in Class?',copy:'Confirm your attendance inside the active check-in window.',icon:'academic',detail:'CHECK-IN WINDOW · 15 MINUTES',action:'Hold to Confirm Attendance',note:'The simulated attendance record stays inside Test Mode.'},
+    boss:{protocol:'WEEKLY BOSS',window:'PERFORMANCE TRIAL',type:'BOSS OBJECTIVE',title:'Morning Sequence Dominion',copy:'Clear every morning protocol without a late confirmation.',icon:'quest',detail:'OBJECTIVE · 5 SUCCESSFUL DAYS',action:'Hold to Resolve Boss',note:'Boss rewards and penalties are isolated from live progression.'},
+    rank:{protocol:'RANK TRIAL',window:'ASCENSION EVALUATION',type:'TRIAL REQUIREMENT',title:'Advance to the Next Rank',copy:'Meet the attendance, discipline, and integrity requirements.',icon:'apex',detail:'REQUIRED · 90% ATTENDANCE',action:'Hold to Resolve Trial',note:'The live player rank cannot change during this simulation.'},
+    recovery:{protocol:'RECOVERY PROTOCOL',window:'RE-ENTER THE SEQUENCE',type:'RECOVERY ACTION',title:'Prepare the Next Protocol',copy:'Acknowledge the failure and arm one practical recovery action.',icon:'recovery',detail:'RECOVERY XP · 0',action:'Hold to Arm Recovery',note:'Recovery remains strict and grants no free XP.'},
+    timezone:{protocol:'TIME INTEGRITY',window:'TIMEZONE CHANGE DETECTED',type:'TIMELINE CONFIRMATION',title:'Confirm Travel or Clock Change',copy:'Existing records keep their original timezone while future schedules await confirmation.',icon:'timezone',detail:'UTC +08:00 → UTC +09:00',action:'Hold to Confirm Timeline',note:'No live timezone or schedule data will be modified.'}
   };
+  const developerResultDefinitions={
+    success:{status:'ON TIME',countdown:'00:42:18 LEFT',className:'success',glyph:'success',label:'TEST CLEAR',title:'Simulation Cleared',copy:'The success path completed inside isolated test data.',summary:'SUCCESS PATH'},
+    failure:{status:'FAILED',countdown:'00:00:00',className:'failure',glyph:'failure',label:'TEST FAILURE',title:'Failure Path Resolved',copy:'The failure and consequence path completed without changing live records.',summary:'FAILURE PATH'},
+    late:{status:'WARNING',countdown:'00:04:58 LEFT',className:'late',glyph:'clock',label:'WARNING PATH',title:'Late State Simulated',copy:'The warning and deadline path completed without applying a live penalty.',summary:'LATE / WARNING'}
+  };
+  const renderDeveloperTest=()=>{setControlView('developerTestView');const test=state.system.developerTest||{};$('#testResultCard').innerHTML=test.lastResult?`<span>${escapeHtml(String(test.scenario||'test').toUpperCase())} · RUN ${test.runs||0}</span><strong>${escapeHtml(test.lastResult.title)}</strong><small>${escapeHtml(test.lastResult.copy)}</small>`:'<span>FULL-SCREEN SANDBOX</span><strong>Choose a scenario</strong><small>Launch an isolated simulation that fills the ASCEND app screen.</small>'};
+  const renderDeveloperRun=()=>{
+    if(!developerRunSession)return;const scenario=developerScenarioDefinitions[developerRunSession.scenario]||developerScenarioDefinitions.protocol,result=developerResultDefinitions[developerRunSession.result]||developerResultDefinitions.success;
+    const overlay=$('#developerRunOverlay');overlay.dataset.result=result.className;$('#developerRunActive').hidden=false;$('#developerRunResult').hidden=true;
+    $('#developerRunProtocol').textContent=scenario.protocol;$('#developerRunWindow').textContent=scenario.window;$('#developerRunStatus').textContent=result.status;$('#developerRunCountdown').textContent=result.countdown;$('#developerRunType').textContent=scenario.type;$('#developerRunTitle').textContent=scenario.title;$('#developerRunCopy').textContent=scenario.copy;$('#developerRunDetail').innerHTML=`<span>${escapeHtml(result.summary)}</span><strong>${escapeHtml(scenario.detail)}</strong>`;$('#developerRunActionLabel').textContent=scenario.action;$('#developerRunNote').textContent=scenario.note;$('#developerRunFooterLeft').textContent=`${scenario.protocol} · ${result.summary}`;$('#developerRunFill').style.width='0%';setGlyph('developerRunGlyph',scenario.icon);
+  };
+  const launchDeveloperRun=()=>{
+    const scenario=$('#testScenario').value,result=$('#testResult').value;state.system=state.system||{};state.system.developerTest=state.system.developerTest||{enabled:false,unlocked:true,scenario:'free',simulatedDate:null,runs:0,lastResult:null};developerRunSession={scenario,result,completed:false,startedAt:new Date().toISOString(),returnDirect:Boolean(controlUi.directDeveloper)};
+    cancelHold();$('#scheduleOverlay').hidden=true;$('#developerRunOverlay').hidden=false;document.body.classList.add('developer-test-running');releaseWakeLock();renderDeveloperRun();void $('#developerRunOverlay').offsetWidth;$('#developerRunOverlay').classList.add('developer-run-visible');haptic('tap');
+  };
+  const completeDeveloperRun=()=>{
+    if(!developerRunSession||developerRunSession.completed)return;developerRunSession.completed=true;state.system=state.system||{};state.system.developerTest=state.system.developerTest||{enabled:false,unlocked:true,scenario:'free',simulatedDate:null,runs:0,lastResult:null};const scenario=developerScenarioDefinitions[developerRunSession.scenario]||developerScenarioDefinitions.protocol,result=developerResultDefinitions[developerRunSession.result]||developerResultDefinitions.success,test=state.system.developerTest;
+    test.enabled=true;test.scenario=developerRunSession.scenario;test.runs=Number(test.runs||0)+1;test.lastResult={at:new Date().toISOString(),title:`${scenario.protocol} · ${result.summary}`,copy:result.copy};save({silent:true});
+    $('#developerRunActive').hidden=true;$('#developerRunResult').hidden=false;$('#developerRunResultLabel').textContent=result.label;$('#developerRunResultTitle').textContent=result.title;$('#developerRunResultCopy').textContent=result.copy;$('#developerRunResultGrid').innerHTML=`<div><span>SCENARIO</span><strong>${escapeHtml(scenario.protocol)}</strong></div><div><span>RESULT</span><strong>${escapeHtml(result.summary)}</strong></div><div><span>LIVE XP</span><strong>UNCHANGED</strong></div><div><span>LIVE RECORDS</span><strong>PROTECTED</strong></div>`;setGlyph('developerRunResultGlyph',result.glyph);$('#developerRunResultGlyph').className=`developer-run-result-emblem glyph-frame ${result.className}`;haptic(developerRunSession.result==='failure'?'failed':developerRunSession.result==='late'?'warning':'clear');
+  };
+  const exitDeveloperRun=(returnToPanel=false)=>{
+    cancelHold('developer-run');$('#developerRunFill').style.width='0%';const returnDirect=developerRunSession?.returnDirect??true,overlay=$('#developerRunOverlay');overlay.classList.remove('developer-run-visible');overlay.hidden=true;document.body.classList.remove('developer-test-running');developerRunSession=null;
+    if(returnToPanel){controlUi.directDeveloper=returnDirect;$('#scheduleOverlay').hidden=false;renderDeveloperTest();releaseWakeLock()}else{controlUi.directDeveloper=false;renderApp();if(activeProtocolRecord())requestWakeLock()}
+  };
+  const startDeveloperRunAction=event=>{if(!developerRunSession||developerRunSession.completed)return;event?.preventDefault();beginHold('developer-run',1300,progress=>{$('#developerRunFill').style.width=`${progress*100}%`},completeDeveloperRun)};
+  const runDeveloperTest=()=>launchDeveloperRun();
   const resetDeveloperTest=()=>{state.system.developerTest={enabled:false,unlocked:true,scenario:'free',simulatedDate:null,runs:0,lastResult:null};save({silent:true});renderDeveloperTest()};
   const renderRecoverySystem=()=>{setControlView('recoverySystemView');const snapshots=S.listSnapshots(),rollbacks=S.listRollbackPoints();$('#recoverySystemSummary').innerHTML=`<div><span>SAFE MODE</span><strong>${state.system.safeMode?'ACTIVE':'STANDBY'}</strong></div><div><span>SNAPSHOTS</span><strong>${snapshots.length}</strong></div><div><span>ROLLBACKS</span><strong>${rollbacks.length}</strong></div><div><span>LAST BOOT</span><strong>${state.system.lastSuccessfulBoot?formatShortDate(state.system.lastSuccessfulBoot):'PENDING'}</strong></div>`;$('#toggleSafeMode').textContent=state.system.safeMode?'Exit Emergency Safe Mode':'Emergency Safe Mode'};
   const toggleSafeMode=()=>{state.system.safeMode=!state.system.safeMode;state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'integrity',message:`Emergency Safe Mode ${state.system.safeMode?'enabled':'disabled'}.`});save({silent:true});applySafeMode();renderRecoverySystem()};
@@ -1841,6 +1871,11 @@
     $('#developerTestBack').addEventListener('click',()=>{if(controlUi.directDeveloper)closeScheduleOverlay();else renderAdvancedSystemHome()});
     $('#runDeveloperTest').addEventListener('click',runDeveloperTest);
     $('#resetDeveloperTest').addEventListener('click',resetDeveloperTest);
+    $('#exitDeveloperRun').addEventListener('click',()=>exitDeveloperRun(false));
+    $('#developerRunAgain').addEventListener('click',()=>exitDeveloperRun(true));
+    $('#developerRunExitResult').addEventListener('click',()=>exitDeveloperRun(false));
+    $('#developerRunAction').addEventListener('pointerdown',startDeveloperRunAction);
+    ['pointerup','pointercancel','pointerleave'].forEach(type=>$('#developerRunAction').addEventListener(type,()=>{cancelHold('developer-run');$('#developerRunFill').style.width='0%'}));
     $('#recoverySystemBack').addEventListener('click',renderAdvancedSystemHome);
     $('#toggleSafeMode').addEventListener('click',toggleSafeMode);
     $('#openEmergencyRecovery').addEventListener('click',openEmergencyRecovery);
@@ -1936,6 +1971,7 @@
     document.querySelectorAll('[data-mastery]').forEach(button=>button.addEventListener('click',()=>{const choice=button.dataset.mastery;state.player.masteryChoice=choice==='graduate'?'Graduated from the System':choice==='maintenance'?'Maintenance Mode':'New Mastery Path';state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'mastery',message:state.player.masteryChoice});save();renderApp()}));
     document.addEventListener('keydown',event=>{
       if(event.key!=='Escape'||event.repeat)return;
+      if(!$('#developerRunOverlay').hidden){exitDeveloperRun(false);return;}
       if(!$('#recoveryOverlay').hidden)return;
       if(!$('#emergencyRecoveryOverlay').hidden){closeEmergencyRecovery();return}
       if(!$('#timezoneOverlay').hidden){$('#timezoneOverlay').hidden=true;return}
@@ -1945,7 +1981,7 @@
     });
     document.addEventListener('keyup',event=>{if(event.key==='Escape'&&escapeTimer){clearTimeout(escapeTimer);escapeTimer=null}});
     document.addEventListener('visibilitychange',()=>{
-      if(document.hidden){if(activeProtocolRecord()&&$('#emergencyOverlay').hidden&&$('#scheduleOverlay').hidden)lastVisibilityLoss=new Date();releaseWakeLock()}
+      if(document.hidden){if(activeProtocolRecord()&&$('#emergencyOverlay').hidden&&$('#scheduleOverlay').hidden&&$('#developerRunOverlay').hidden)lastVisibilityLoss=new Date();releaseWakeLock()}
       else{
         if(lastVisibilityLoss&&activeProtocolRecord()){
           const returned=new Date(),duration=Math.max(0,returned-lastVisibilityLoss),protocol=activeProtocolRecord();protocol.focusBreaches=(protocol.focusBreaches||0)+1;protocol.hiddenMilliseconds=(protocol.hiddenMilliseconds||0)+duration;
@@ -1961,7 +1997,7 @@
     updateClock();checkClockIntegrity();
     const currentDate=S.dateKey();if(currentDate!==advancedSyncDate){advancedSyncDate=currentDate;synchronizeAdvancedSystems();if(state.timezone?.pending&&!timezonePromptShown)setTimeout(showTimezoneOverlay,120)}
     if(state.initialized&&state.integrity?.clockStatus==='trusted'&&Date.now()-integrityHeartbeatAt>=60000){integrityHeartbeatAt=Date.now();state.integrity.lastWallTime=new Date().toISOString();S.save(state)}
-    if(orientationBlocked||holdSession||transitionLocked||!$('#scheduleOverlay').hidden||state.system.safeMode)return;renderApp();
+    if(orientationBlocked||holdSession||transitionLocked||!$('#scheduleOverlay').hidden||!$('#developerRunOverlay').hidden||state.system.safeMode)return;renderApp();
   };
   const emergencyBoot=beginBootGuard();
   synchronizeAdvancedSystems();advancedSyncDate=S.dateKey();applySafeMode();

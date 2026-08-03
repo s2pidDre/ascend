@@ -497,8 +497,8 @@
           <label>Scenario<select id="testScenario"><option value="protocol">Protocol State</option><option value="class">Class Check-In</option><option value="boss">Weekly Boss</option><option value="rank">Rank Trial</option><option value="recovery">Recovery Protocol</option><option value="timezone">Timezone Change</option></select></label>
           <label>Result<select id="testResult"><option value="success">Success</option><option value="failure">Failure</option><option value="late">Late / Warning</option></select></label>
         </div>
-        <div class="test-result-card" id="testResultCard"><span>NO TEST RUN</span><strong>Choose a scenario</strong><small>Simulation results stay inside this panel.</small></div>
-        <button class="system-button compact-button" id="runDeveloperTest" type="button"><b>Run Isolated Test</b></button>
+        <div class="test-result-card" id="testResultCard"><span>NO TEST RUN</span><strong>Choose a scenario</strong><small>Choose a scenario, then launch the full-screen isolated simulation.</small></div>
+        <button class="system-button compact-button" id="runDeveloperTest" type="button"><b>Launch Full-Screen Test</b></button>
         <button class="ghost-button" id="resetDeveloperTest" type="button">Reset Test Data</button>
         <button class="ghost-button" id="developerTestBack" type="button">Back</button>
       </section>
@@ -553,6 +553,56 @@
         <button class="danger-button hold-button schedule-delete-button" id="scheduleDelete" type="button">
           <span class="hold-fill" id="scheduleDeleteFill"></span><b>Hold to Delete Class</b>
         </button>
+      </section>
+    </div>
+  </div>
+
+  <div class="developer-run-overlay" id="developerRunOverlay" hidden aria-modal="true" role="dialog" aria-label="Developer Test Mode simulation">
+    <div class="developer-run-shell">
+      <header class="developer-run-topbar">
+        <div class="developer-run-brand" aria-label="ASCEND Developer Test Mode">
+          <span class="brand-mark"><img class="brand-mark-image" src="assets/inapp-logo.png" alt="" aria-hidden="true" draggable="false"></span>
+          <span class="brand-copy"><strong>ASCEND</strong><small>DEVELOPER TEST</small></span>
+        </div>
+        <button class="developer-run-exit" id="exitDeveloperRun" type="button">Exit Test</button>
+      </header>
+
+      <section class="developer-run-active" id="developerRunActive">
+        <div class="developer-run-head">
+          <div><p class="eyebrow" id="developerRunProtocol">TEST PROTOCOL</p><h2 id="developerRunWindow">ISOLATED SESSION</h2></div>
+          <div class="developer-run-step"><strong>TEST</strong><span>MODE</span></div>
+        </div>
+        <div class="developer-run-deadline" id="developerRunDeadline">
+          <span id="developerRunStatus">ON TIME</span><strong id="developerRunCountdown">00:45:00 LEFT</strong>
+        </div>
+        <article class="developer-run-card system-panel" id="developerRunCard">
+          <section class="developer-run-zone developer-run-upper">
+            <div class="developer-run-glyph glyph-frame" id="developerRunGlyph" aria-hidden="true"></div>
+            <p class="eyebrow" id="developerRunType">CURRENT DIRECTIVE</p>
+            <h1 id="developerRunTitle">Test Directive</h1>
+            <p class="developer-run-copy" id="developerRunCopy">This isolated simulation does not change live progress.</p>
+          </section>
+          <section class="developer-run-zone developer-run-middle">
+            <div class="developer-run-detail" id="developerRunDetail"></div>
+          </section>
+          <section class="developer-run-zone developer-run-lower">
+            <button class="system-button hold-button developer-run-action" id="developerRunAction" type="button">
+              <span class="hold-fill" id="developerRunFill"></span><b id="developerRunActionLabel">Hold to Resolve Test</b>
+            </button>
+            <p class="developer-run-note" id="developerRunNote">Test data only. Live records remain protected.</p>
+          </section>
+        </article>
+        <div class="developer-run-footer"><span id="developerRunFooterLeft">ISOLATED TEST DATA</span><strong>LIVE DATA PROTECTED</strong></div>
+      </section>
+
+      <section class="developer-run-result" id="developerRunResult" hidden>
+        <div class="developer-run-result-emblem glyph-frame" id="developerRunResultGlyph" aria-hidden="true"></div>
+        <p class="eyebrow" id="developerRunResultLabel">TEST RESOLVED</p>
+        <h1 id="developerRunResultTitle">Simulation Complete</h1>
+        <p id="developerRunResultCopy">The isolated scenario completed without changing live progress.</p>
+        <div class="developer-run-result-grid" id="developerRunResultGrid"></div>
+        <button class="system-button" id="developerRunAgain" type="button"><b>Run Another Scenario</b></button>
+        <button class="ghost-button" id="developerRunExitResult" type="button">Exit Test Mode</button>
       </section>
     </div>
   </div>
