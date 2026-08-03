@@ -988,7 +988,9 @@
     const index=protocol.steps.indexOf(task);$('#stepCurrent').textContent=index+1;$('#stepTotal').textContent=protocol.steps.length;
     const punctual=protocolOnTime(record,protocol);$('#punctualityBadge').textContent=task.type==='timer'||task.type==='academic'||task.type==='trading'?`FOCUS ${focusIntegrity(protocol)}%`:punctual?'ON TIME':'LATE';$('#punctualityBadge').classList.toggle('late',!punctual);
     $('#deadlineCountdown').textContent=`${formatDuration(deadlineMs)} LEFT`;
-    $('#focusSigil').hidden=['audit','planner','academic','trading'].includes(task.type);
+    const customLayout=['audit','planner','academic','trading'].includes(task.type);
+    $('#focusCard').dataset.layout=customLayout?'custom':task.type==='timer'?'timed':'plain';
+    $('#focusSigil').hidden=customLayout;
     setGlyph('focusIcon',task.icon||config.icon);$('#subtaskType').textContent=protocol.boss&&['execution-plan'].includes(task.id)?'WEEKLY BOSS DIRECTIVE':'CURRENT DIRECTIVE';
     $('#subtaskTitle').textContent=task.title;$('#subtaskCopy').textContent=stepCopy(task);
     $('#completedSteps').textContent=`${protocol.steps.filter(step=>step.status==='completed').length} / ${protocol.steps.length} completed`;

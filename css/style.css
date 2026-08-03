@@ -2396,3 +2396,264 @@ body.orientation-blocked .modal-overlay{display:none!important}
   .advanced-action-grid{gap:4px}.attribute-grid{gap:4px}.attribute-core span{font-size:.42rem}.manager-form,.dependency-form{gap:4px}.skill-row button{min-width:45px}
   .timezone-comparison{grid-template-columns:1fr}.timezone-comparison>div{padding:6px}
 }
+
+
+/* Uniform active-directive composition
+   Every protocol card uses one of three explicit layouts set by app.js:
+   plain, timed, or custom. This prevents hidden middle zones, variable title
+   lengths, and button labels from shifting the card or creating overlap. */
+.focus-card[data-layout]{
+  width:100%;
+  height:100%;
+  min-width:0;
+  min-height:0;
+  align-items:stretch;
+  justify-items:stretch;
+  overflow:hidden;
+}
+.focus-card[data-layout] .task-zone{
+  width:100%;
+  min-width:0;
+  min-height:0;
+  align-items:center;
+  justify-self:stretch;
+  overflow:hidden;
+}
+.focus-card[data-layout] .task-zone-upper{
+  text-align:center;
+}
+.focus-card[data-layout] .task-zone-upper .focus-sigil{
+  flex:0 0 auto;
+}
+.focus-card[data-layout] .task-zone-upper > .eyebrow,
+.focus-card[data-layout] .task-zone-upper > h1,
+.focus-card[data-layout] .task-zone-upper > .subtask-copy,
+.focus-card[data-layout] .task-zone-middle > .subtask-timer,
+.focus-card[data-layout] .task-zone-middle > .custom-task-area,
+.focus-card[data-layout] .task-zone-lower > .action-button,
+.focus-card[data-layout] .task-zone-lower > .focus-note{
+  flex:0 0 auto;
+  margin-left:auto;
+  margin-right:auto;
+}
+.focus-card[data-layout] .task-zone-upper > h1{
+  width:min(100%,560px);
+  max-height:2.12em;
+  overflow:hidden;
+  display:-webkit-box;
+  -webkit-box-orient:vertical;
+  -webkit-line-clamp:2;
+}
+.focus-card[data-layout] .task-zone-upper > .subtask-copy{
+  width:min(100%,520px);
+  max-height:4.2em;
+  overflow:hidden;
+  display:-webkit-box;
+  -webkit-box-orient:vertical;
+  -webkit-line-clamp:3;
+}
+.focus-card[data-layout] .task-zone-lower{
+  width:100%;
+  align-items:center;
+  justify-content:flex-end;
+  text-align:center;
+}
+.focus-card[data-layout] .task-zone-lower .action-button{
+  box-sizing:border-box;
+  width:min(92%,440px)!important;
+  max-width:440px!important;
+  min-width:0;
+  margin-left:auto!important;
+  margin-right:auto!important;
+}
+.focus-card[data-layout] .task-zone-lower .focus-note{
+  width:min(100%,500px);
+  min-width:0;
+  margin-left:auto!important;
+  margin-right:auto!important;
+}
+
+/* Plain confirmations: no empty timing row. The directive identity is
+   centered in the available area and every action uses the same width. */
+.focus-card[data-layout="plain"]{
+  grid-template-rows:minmax(0,1fr) auto!important;
+  padding:clamp(14px,2.15vh,22px) var(--panel-pad-x) clamp(13px,2vh,20px);
+}
+.focus-card[data-layout="plain"] .task-zone-middle{
+  display:none!important;
+}
+.focus-card[data-layout="plain"] .task-zone-upper{
+  grid-row:1;
+  justify-content:center;
+  gap:clamp(5px,.8vh,9px);
+  padding:clamp(12px,2vh,22px) 0 clamp(10px,1.5vh,16px);
+}
+.focus-card[data-layout="plain"] .task-zone-upper .focus-sigil{
+  margin:0 0 clamp(8px,1.1vh,12px)!important;
+  translate:0 0!important;
+}
+.focus-card[data-layout="plain"] .task-zone-lower{
+  grid-row:2;
+  gap:clamp(6px,.9vh,9px);
+  padding:clamp(10px,1.4vh,15px) 0 0;
+}
+
+/* Timed directives keep a dedicated timer band while retaining the same
+   centered identity and bottom action rhythm as plain directives. */
+.focus-card[data-layout="timed"]{
+  grid-template-rows:minmax(0,.92fr) minmax(64px,.34fr) auto!important;
+  padding:clamp(13px,2vh,20px) var(--panel-pad-x) clamp(13px,2vh,20px);
+}
+.focus-card[data-layout="timed"] .task-zone-upper{
+  justify-content:center;
+  gap:clamp(5px,.8vh,9px);
+  padding:clamp(5px,.75vh,8px) 0 clamp(7px,1vh,11px);
+}
+.focus-card[data-layout="timed"] .task-zone-upper .focus-sigil{
+  margin:0 0 clamp(7px,1vh,11px)!important;
+  translate:0 0!important;
+}
+.focus-card[data-layout="timed"] .task-zone-middle{
+  display:flex!important;
+  justify-content:center;
+  padding:clamp(4px,.65vh,7px) 0;
+}
+.focus-card[data-layout="timed"] .task-zone-middle .custom-task-area{
+  display:none!important;
+}
+.focus-card[data-layout="timed"] .task-zone-lower{
+  gap:clamp(6px,.9vh,9px);
+  padding:clamp(8px,1.15vh,12px) 0 0;
+}
+
+/* Custom academic states reserve the flexible center for their compact form
+   or paged controls. The heading remains compact and cannot collide with it. */
+.focus-card[data-layout="custom"]{
+  grid-template-rows:auto minmax(0,1fr) auto!important;
+  padding:clamp(11px,1.7vh,17px) var(--panel-pad-x) clamp(11px,1.7vh,17px);
+}
+.focus-card[data-layout="custom"] .task-zone-upper{
+  justify-content:flex-start!important;
+  gap:3px!important;
+  padding:0 0 clamp(5px,.75vh,8px)!important;
+}
+.focus-card[data-layout="custom"] .task-zone-upper .focus-sigil{
+  display:none!important;
+}
+.focus-card[data-layout="custom"] .task-zone-upper > h1{
+  max-height:1.08em;
+  -webkit-line-clamp:1;
+  font-size:clamp(1.08rem,min(5.3vw,3.7vh),1.68rem);
+}
+.focus-card[data-layout="custom"] .task-zone-upper > .subtask-copy{
+  max-height:2.75em;
+  -webkit-line-clamp:2;
+  font-size:clamp(.62rem,min(2vw,1.55vh),.76rem);
+  line-height:1.3;
+}
+.focus-card[data-layout="custom"] .task-zone-middle{
+  display:flex!important;
+  justify-content:center!important;
+  align-items:center;
+  padding:clamp(4px,.65vh,7px) 0;
+  overflow:hidden!important;
+}
+.focus-card[data-layout="custom"] .task-zone-middle .subtask-timer{
+  display:none!important;
+}
+.focus-card[data-layout="custom"] .task-zone-middle .custom-task-area{
+  width:min(100%,480px);
+  max-width:480px;
+  max-height:100%;
+  margin:0 auto!important;
+  overflow:hidden!important;
+}
+.focus-card[data-layout="custom"] .task-zone-lower{
+  gap:clamp(4px,.65vh,7px);
+  padding:clamp(5px,.75vh,8px) 0 0;
+}
+.focus-card[data-layout="custom"] .task-zone-lower .action-button[hidden]{
+  display:none!important;
+}
+
+@media (max-width:480px){
+  .focus-card[data-layout] .task-zone-lower .action-button{
+    width:min(94%,420px)!important;
+  }
+}
+
+@media (max-height:760px){
+  .focus-card[data-layout="plain"]{
+    grid-template-rows:minmax(0,1fr) auto!important;
+    padding-top:10px;
+    padding-bottom:10px;
+  }
+  .focus-card[data-layout="plain"] .task-zone-upper{
+    gap:4px;
+    padding:5px 0 7px;
+  }
+  .focus-card[data-layout="plain"] .task-zone-upper .focus-sigil{
+    margin-bottom:6px!important;
+  }
+  .focus-card[data-layout="plain"] .task-zone-lower{
+    gap:5px;
+    padding-top:7px;
+  }
+  .focus-card[data-layout="timed"]{
+    grid-template-rows:minmax(0,.82fr) minmax(52px,.28fr) auto!important;
+    padding-top:9px;
+    padding-bottom:10px;
+  }
+  .focus-card[data-layout="timed"] .task-zone-upper{
+    gap:4px;
+    padding:2px 0 5px;
+  }
+  .focus-card[data-layout="timed"] .task-zone-upper .focus-sigil{
+    margin-bottom:5px!important;
+  }
+  .focus-card[data-layout="timed"] .task-zone-middle{
+    padding:2px 0;
+  }
+  .focus-card[data-layout="timed"] .task-zone-lower{
+    gap:5px;
+    padding-top:6px;
+  }
+  .focus-card[data-layout="custom"]{
+    padding:8px 12px 9px;
+  }
+  .focus-card[data-layout="custom"] .task-zone-upper{
+    padding-bottom:4px!important;
+  }
+  .focus-card[data-layout="custom"] .task-zone-middle{
+    padding:2px 0;
+  }
+  .focus-card[data-layout="custom"] .task-zone-lower{
+    padding-top:4px;
+  }
+}
+
+@media (max-height:540px){
+  .focus-card[data-layout="plain"] .task-zone-upper,
+  .focus-card[data-layout="timed"] .task-zone-upper{
+    padding-top:1px;
+    padding-bottom:4px;
+  }
+  .focus-card[data-layout="plain"] .task-zone-lower,
+  .focus-card[data-layout="timed"] .task-zone-lower{
+    padding-top:4px;
+  }
+  .focus-card[data-layout="custom"]{
+    padding:6px 10px 7px;
+  }
+}
+
+/* Force every fixed-screen card to use one full-width grid track. Without an
+   explicit column, a short title or short button label can shrink the implicit
+   grid track and pull the entire lower zone off center. */
+.focus-card[data-layout],
+.class-card,
+.free-core,
+.sleep-core,
+.early-core{
+  grid-template-columns:minmax(0,1fr)!important;
+}
