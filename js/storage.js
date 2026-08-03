@@ -4,17 +4,22 @@
   const KEY='ascend_discipline_protocol_v7';
   const RECOVERY_KEY='ascend_discipline_protocol_recovery_v1';
   const SNAPSHOT_KEY='ascend_discipline_protocol_snapshots_v1';
+  const ROLLBACK_KEY='ascend_discipline_protocol_rollbacks_v1';
   const LEGACY_KEYS=['ascend_discipline_protocol_v6','ascend_discipline_protocol_v5','ascend_discipline_protocol_v4','ascend_strict_system_v3','ascend_automatic_year_system_v2','ascend_personal_growth_system_v1'];
-  const VERSION=13;
-  const BACKUP_VERSION=2;
+  const VERSION=14;
+  const BACKUP_VERSION=3;
   const ROUTINE_LOG_LIMIT=420;
   const SNAPSHOT_LIMIT=7;
-  const PERMANENT_LOG_TYPES=new Set(['system','level','rank','mastery','achievement','backup','restore','emergency','attendance-correction','integrity','recovery','snapshot','boss']);
+  const ROLLBACK_LIMIT=4;
+  const PERMANENT_LOG_TYPES=new Set(['system','level','rank','mastery','achievement','backup','restore','emergency','attendance-correction','integrity','recovery','snapshot','boss','migration','quest','skill','weekly']);
   const nowIso=()=>new Date().toISOString();
   const dateKey=(date=new Date())=>`${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
+  const timezoneName=()=>{try{return Intl.DateTimeFormat().resolvedOptions().timeZone||'Local Time'}catch(error){return'Local Time'}};
+  const timezoneOffset=()=>-new Date().getTimezoneOffset();
   const uid=(prefix='id')=>window.crypto?.randomUUID?`${prefix}_${crypto.randomUUID()}`:`${prefix}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
-  const memory=(()=>{const m=new Map();return{getItem:k=>m.has(k)?m.get(k):null,setItem:(k,v)=>m.set(k,String(v)),removeItem:k=>m.delete(k)}})();
+  const memory=(()=>{const map=new Map();return{getItem:key=>map.has(key)?map.get(key):null,setItem:(key,value)=>map.set(key,String(value)),removeItem:key=>map.delete(key)}})();
   const store=(()=>{try{localStorage.setItem('__ascend_test__','1');localStorage.removeItem('__ascend_test__');return localStorage}catch(error){console.warn('Persistent storage unavailable. Using temporary memory.',error);return memory}})();
+  const clone=value=>JSON.parse(JSON.stringify(value));
 
   const rankOrder=['E','D','C','B','A','S'];
   const pendingRankFor=(level,current='E')=>{
@@ -39,11 +44,16 @@
     scheduleExceptions:[],
     attendanceRecords:[],
     academicTasks:[],
+    recurringTaskRules:[],
     tradingNotes:[],
+    quests:{daily:null,history:[]},
+    skills:{points:0,unlocked:[],equipped:[]},
+    weeklyDebriefs:[],
     settings:{sound:true,haptics:true,keepAwake:true,notifications:false,notificationLeadMinutes:10},
     integrity:{clockStatus:'trusted',rewardHold:false,lastWallTime:null,lastVerifiedAt:null,lastFlag:null,lastSessionDelta:0},
+    timezone:{name:timezoneName(),offset:timezoneOffset(),confirmedAt:nowIso(),pending:null,history:[]},
     recovery:{active:false,status:'idle',sourceDate:null,reason:null,action:null,protectedDate:null,protectedProtocolId:null,completedAt:null},
-    system:{recoveredFrom:null,lastStorageWarningAt:null,notificationLedger:{}},
+    system:{recoveredFrom:null,lastStorageWarningAt:null,notificationLedger:{},safeMode:false,lastSuccessfulBoot:null,migrationHistory:[],developerTest:{enabled:false,unlocked:false,scenario:'free',simulatedDate:null,runs:0,lastResult:null}},
     logs:[]
   });
 
@@ -54,7 +64,22 @@
     room:record.room||'',modality:record.modality||'Onsite',status:record.status||'unverified',checkInAt:record.checkInAt||null,dismissedAt:record.dismissedAt||null,
     dismissalStatus:record.dismissalStatus||null,minutesLate:Number(record.minutesLate||0),pendingXp:Number(record.pendingXp||0),xpAwarded:Number(record.xpAwarded||0),
     finalized:Boolean(record.finalized),ongoingUntil:record.ongoingUntil||null,createdAt:record.createdAt||nowIso(),updatedAt:record.updatedAt||record.createdAt||nowIso(),
-    corrections:Array.isArray(record.corrections)?record.corrections:[]
+    timezone:record.timezone||null,corrections:Array.isArray(record.corrections)?record.corrections:[]
+  });
+
+  const normalizeTask=task=>({
+    id:task.id||uid('task'),subjectKey:String(task.subjectKey||task.subjectName||'general').trim().toLowerCase(),subjectName:task.subjectName||'General',
+    title:String(task.title||'Untitled Task').slice(0,80),deadline:task.deadline||'',difficulty:['Low','Medium','High'].includes(task.difficulty)?task.difficulty:'Medium',note:String(task.note||'').slice(0,240),
+    status:task.status==='completed'?'completed':'pending',createdAt:task.createdAt||nowIso(),completedAt:task.completedAt||null,workMinutes:Math.max(0,Number(task.workMinutes||0)),
+    dependencyIds:Array.isArray(task.dependencyIds)?[...new Set(task.dependencyIds.map(String))]:[],sourceRuleId:task.sourceRuleId||null,occurrenceDate:task.occurrenceDate||null
+  });
+
+  const normalizeRule=rule=>({
+    id:rule.id||uid('rule'),active:rule.active!==false,subjectKey:String(rule.subjectKey||rule.subjectName||'general').trim().toLowerCase(),subjectName:rule.subjectName||'General',
+    title:String(rule.title||'Recurring Task').slice(0,80),difficulty:['Low','Medium','High'].includes(rule.difficulty)?rule.difficulty:'Medium',note:String(rule.note||'').slice(0,240),
+    cadence:['daily','weekly','weekdays','monthly'].includes(rule.cadence)?rule.cadence:'weekly',weekdays:Array.isArray(rule.weekdays)?[...new Set(rule.weekdays.map(Number).filter(value=>value>=0&&value<=6))]:[],
+    dayOfMonth:Math.min(28,Math.max(1,Number(rule.dayOfMonth||1))),deadlineTime:rule.deadlineTime||'20:00',startDate:rule.startDate||dateKey(),lastGeneratedDate:rule.lastGeneratedDate||null,
+    dependencyTemplateIds:Array.isArray(rule.dependencyTemplateIds)?[...new Set(rule.dependencyTemplateIds.map(String))]:[],createdAt:rule.createdAt||nowIso()
   });
 
   const pruneLogs=logs=>{
@@ -80,10 +105,7 @@
         if(step.status==='completed'&&!step.completedAt)step.completedAt=step.startedAt||day.finalizedAt||nowIso();
         if(step.status==='active'&&!step.startedAt)step.startedAt=nowIso();
       });
-      if(protocol.status==='active'){
-        if(activeKept)protocol.status='pending';
-        else activeKept=true;
-      }
+      if(protocol.status==='active'){if(activeKept)protocol.status='pending';else activeKept=true}
       if(protocol.status==='cleared'){
         protocol.steps.forEach(step=>{step.status='completed';step.startedAt=step.startedAt||protocol.startedAt||protocol.completedAt;step.completedAt=step.completedAt||protocol.completedAt||nowIso()});
         protocol.earnedXp=Math.max(0,Number(protocol.earnedXp||0));
@@ -95,8 +117,7 @@
     day.completedProtocols=Object.values(protocols).filter(protocol=>protocol?.status==='cleared').length;
     day.failedProtocols=Object.values(protocols).filter(protocol=>protocol?.status==='failed').length;
     if(!['active','cleared','failed'].includes(day.status))day.status='active';
-    day.rewardApplied=Boolean(day.rewardApplied);
-    day.heldXp=Math.max(0,Number(day.heldXp||0));
+    day.rewardApplied=Boolean(day.rewardApplied);day.heldXp=Math.max(0,Number(day.heldXp||0));day.timezone=day.timezone||null;
     return day;
   };
 
@@ -109,7 +130,17 @@
     const base=initialState();
     if(!raw||typeof raw!=='object'||Array.isArray(raw))throw new Error('ASCEND state is not a valid object.');
     const rawSettings=raw.settings&&typeof raw.settings==='object'?raw.settings:{};
-    const state={...base,...raw,player:{...base.player,...(raw.player||{})},integrity:{...base.integrity,...(raw.integrity||{})},recovery:{...base.recovery,...(raw.recovery||{})},system:{...base.system,...(raw.system||{})},settings:{...base.settings,...rawSettings}};
+    const state={
+      ...base,...raw,
+      player:{...base.player,...(raw.player||{})},
+      integrity:{...base.integrity,...(raw.integrity||{})},
+      timezone:{...base.timezone,...(raw.timezone||{})},
+      recovery:{...base.recovery,...(raw.recovery||{})},
+      quests:{...base.quests,...(raw.quests||{})},
+      skills:{...base.skills,...(raw.skills||{})},
+      system:{...base.system,...(raw.system||{}),developerTest:{...base.system.developerTest,...(raw.system?.developerTest||{})}},
+      settings:{...base.settings,...rawSettings}
+    };
     state.version=VERSION;
     state.settings.sound=typeof rawSettings.sound==='boolean'?rawSettings.sound:base.settings.sound;
     state.settings.haptics=typeof rawSettings.haptics==='boolean'?rawSettings.haptics:base.settings.haptics;
@@ -121,7 +152,10 @@
     state.classSchedule=Array.isArray(raw.classSchedule)?raw.classSchedule.map(entry=>({...entry,modality:entry.modality||((entry.room||'').toLowerCase().includes('online')?'Online':'Onsite')})):[];
     state.scheduleExceptions=Array.isArray(raw.scheduleExceptions)?raw.scheduleExceptions.map(normalizeException):[];
     state.attendanceRecords=Array.isArray(raw.attendanceRecords)?raw.attendanceRecords.map(normalizeAttendance):[];
-    state.academicTasks=Array.isArray(raw.academicTasks)?raw.academicTasks:[];
+    state.academicTasks=Array.isArray(raw.academicTasks)?raw.academicTasks.map(normalizeTask):[];
+    const validTaskIds=new Set(state.academicTasks.map(task=>task.id));
+    state.academicTasks.forEach(task=>{task.dependencyIds=task.dependencyIds.filter(id=>id!==task.id&&validTaskIds.has(id))});
+    state.recurringTaskRules=Array.isArray(raw.recurringTaskRules)?raw.recurringTaskRules.map(normalizeRule):[];
     state.tradingNotes=Array.isArray(raw.tradingNotes)?raw.tradingNotes:[];
     state.logs=pruneLogs(raw.logs);
     state.player.achievementUnlocks=state.player.achievementUnlocks&&typeof state.player.achievementUnlocks==='object'&&!Array.isArray(state.player.achievementUnlocks)?state.player.achievementUnlocks:{};
@@ -130,20 +164,17 @@
     if(!['trusted','flagged'].includes(state.integrity.clockStatus))state.integrity.clockStatus='trusted';
     state.integrity.rewardHold=Boolean(state.integrity.rewardHold||state.integrity.clockStatus==='flagged');
     state.system.notificationLedger=state.system.notificationLedger&&typeof state.system.notificationLedger==='object'&&!Array.isArray(state.system.notificationLedger)?state.system.notificationLedger:{};
+    state.system.migrationHistory=Array.isArray(state.system.migrationHistory)?state.system.migrationHistory:[];
+    state.system.safeMode=Boolean(state.system.safeMode);
+    state.quests.daily=state.quests.daily&&typeof state.quests.daily==='object'?state.quests.daily:null;
+    state.quests.history=Array.isArray(state.quests.history)?state.quests.history.slice(-60):[];
+    state.skills.points=Math.max(0,Number(state.skills.points||0));
+    state.skills.unlocked=Array.isArray(state.skills.unlocked)?[...new Set(state.skills.unlocked.map(String))]:[];
+    state.skills.equipped=Array.isArray(state.skills.equipped)?[...new Set(state.skills.equipped.map(String))].slice(0,2):[];
+    state.weeklyDebriefs=Array.isArray(raw.weeklyDebriefs)?raw.weeklyDebriefs.slice(-16):[];
+    state.timezone.name=state.timezone.name||timezoneName();state.timezone.offset=Number.isFinite(Number(state.timezone.offset))?Number(state.timezone.offset):timezoneOffset();
+    state.timezone.history=Array.isArray(state.timezone.history)?state.timezone.history.slice(-20):[];
     return state;
-  };
-
-  const migrateLegacy=raw=>{
-    const state=normalizeCurrent(raw||{});
-    state.logs.push({id:uid('log'),at:nowIso(),type:'system',message:'ASCEND upgraded with integrity checks, automatic recovery snapshots, strict protocol states, schedule exceptions, and optional local alerts.'});
-    state.logs=pruneLogs(state.logs);return state;
-  };
-
-  const parseStateText=text=>{
-    if(!text)throw new Error('No saved state.');
-    const parsed=JSON.parse(text);
-    if(!parsed?.player)throw new Error('Player record missing.');
-    return normalizeCurrent(parsed);
   };
 
   const hashText=text=>{
@@ -152,41 +183,54 @@
     return (hash>>>0).toString(16);
   };
 
-  const readSnapshots=()=>{
-    try{const value=JSON.parse(store.getItem(SNAPSHOT_KEY)||'[]');return Array.isArray(value)?value:[]}catch(error){return[]}
-  };
-  const writeSnapshots=snapshots=>store.setItem(SNAPSHOT_KEY,JSON.stringify(snapshots.slice(-SNAPSHOT_LIMIT)));
-  const snapshotState=state=>JSON.parse(JSON.stringify({...state,system:{...(state.system||{}),recoveredFrom:null}}));
+  const readList=(key)=>{try{const value=JSON.parse(store.getItem(key)||'[]');return Array.isArray(value)?value:[]}catch(error){return[]}};
+  const writeList=(key,value,limit)=>store.setItem(key,JSON.stringify(value.slice(-limit)));
+  const snapshotState=state=>clone({...state,system:{...(state.system||{}),recoveredFrom:null}});
+  const snapshotLimitFor=state=>state?.skills?.equipped?.includes('archive-core')?10:SNAPSHOT_LIMIT;
+
   const createDailySnapshot=(state,force=false)=>{
     const normalized=normalizeCurrent(snapshotState(state));
-    const serialized=JSON.stringify(normalized);
-    const hash=hashText(serialized);
-    const today=dateKey();
-    const snapshots=readSnapshots();
-    const last=snapshots[snapshots.length-1];
+    const serialized=JSON.stringify(normalized),hash=hashText(serialized),today=dateKey(),snapshots=readList(SNAPSHOT_KEY),last=snapshots[snapshots.length-1];
     if(!force&&last&&last.date===today&&last.hash===hash)return last;
     const item={id:uid('snapshot'),date:today,createdAt:nowIso(),hash,state:normalized};
-    const filtered=snapshots.filter(snapshot=>snapshot.date!==today);
-    filtered.push(item);writeSnapshots(filtered);
-    return item;
+    const filtered=snapshots.filter(snapshot=>snapshot.date!==today);filtered.push(item);writeList(SNAPSHOT_KEY,filtered,snapshotLimitFor(normalized));return item;
+  };
+
+  const createPreUpdateRollback=(rawState,fromVersion=Number(rawState?.version||0),label='Pre-update data')=>{
+    if(!rawState||typeof rawState!=='object')return null;
+    const rollbacks=readList(ROLLBACK_KEY),serialized=JSON.stringify(rawState),hash=hashText(serialized);
+    const last=rollbacks[rollbacks.length-1];if(last&&last.hash===hash&&last.fromVersion===fromVersion)return last;
+    const item={id:uid('rollback'),createdAt:nowIso(),fromVersion,toVersion:VERSION,label,hash,state:clone(rawState)};
+    rollbacks.push(item);writeList(ROLLBACK_KEY,rollbacks,ROLLBACK_LIMIT);return item;
+  };
+
+  const migrateLegacy=raw=>{
+    const fromVersion=Number(raw?.version||0);createPreUpdateRollback(raw,fromVersion,'Automatic pre-migration rollback');
+    const state=normalizeCurrent(raw||{});
+    const migration={id:uid('migration'),at:nowIso(),fromVersion,toVersion:VERSION,label:'Advanced hidden systems'};
+    state.system.migrationHistory.push(migration);
+    state.logs.push({id:uid('log'),at:migration.at,type:'migration',message:`ASCEND data migrated from schema ${fromVersion||'legacy'} to ${VERSION}. A rollback point was retained.`});
+    state.logs=pruneLogs(state.logs);return state;
+  };
+
+  const parseStateText=text=>{
+    if(!text)throw new Error('No saved state.');
+    const parsed=JSON.parse(text);if(!parsed?.player)throw new Error('Player record missing.');
+    return Number(parsed.version||0)<VERSION?migrateLegacy(parsed):normalizeCurrent(parsed);
   };
 
   const recoverState=()=>{
-    const attempts=[['recovery',store.getItem(RECOVERY_KEY)],...readSnapshots().slice().reverse().map(snapshot=>[`snapshot:${snapshot.date}`,JSON.stringify(snapshot.state)])];
+    const attempts=[['recovery',store.getItem(RECOVERY_KEY)],...readList(SNAPSHOT_KEY).slice().reverse().map(snapshot=>[`snapshot:${snapshot.date}`,JSON.stringify(snapshot.state)]),...readList(ROLLBACK_KEY).slice().reverse().map(point=>[`rollback:${point.fromVersion}`,JSON.stringify(point.state)])];
     for(const [source,text] of attempts){
-      try{
-        const state=parseStateText(text);state.system.recoveredFrom=source;
-        state.logs.push({id:uid('log'),at:nowIso(),type:'integrity',message:`Automatic data recovery completed from ${source}.`});
-        store.setItem(KEY,JSON.stringify(state));return state;
-      }catch(error){}
+      try{const state=parseStateText(text);state.system.recoveredFrom=source;state.system.safeMode=true;state.logs.push({id:uid('log'),at:nowIso(),type:'integrity',message:`Automatic data recovery completed from ${source}. Safe Mode enabled.`});store.setItem(KEY,JSON.stringify(state));return state}catch(error){}
     }
-    const clean=initialState();clean.system.recoveredFrom='clean-state';return clean;
+    const clean=initialState();clean.system.recoveredFrom='clean-state';clean.system.safeMode=true;return clean;
   };
 
   const load=()=>{
     try{
       const current=store.getItem(KEY);
-      if(current)return parseStateText(current);
+      if(current){const parsed=JSON.parse(current);const state=Number(parsed?.version||0)<VERSION?migrateLegacy(parsed):normalizeCurrent(parsed);if(Number(parsed?.version||0)<VERSION){store.setItem(KEY,JSON.stringify(state));createDailySnapshot(state,true)}return state}
       for(const key of LEGACY_KEYS){const legacy=store.getItem(key);if(!legacy)continue;const migrated=migrateLegacy(JSON.parse(legacy));store.setItem(KEY,JSON.stringify(migrated));createDailySnapshot(migrated,true);return migrated}
       return initialState();
     }catch(error){console.error('ASCEND load failed. Attempting recovery.',error);return recoverState()}
@@ -194,42 +238,36 @@
 
   const persist=state=>{
     const normalized=normalizeCurrent(state);normalized.updatedAt=nowIso();normalized.version=VERSION;normalized.logs=pruneLogs(normalized.logs);
-    const previous=store.getItem(KEY);
-    if(previous){try{parseStateText(previous);store.setItem(RECOVERY_KEY,previous)}catch(error){}}
-    const serialized=JSON.stringify(normalized);
-    try{store.setItem(KEY,serialized)}catch(error){
-      normalized.logs=pruneLogs(normalized.logs).slice(-Math.floor(ROUTINE_LOG_LIMIT/2));
-      store.setItem(KEY,JSON.stringify(normalized));
-    }
-    createDailySnapshot(normalized,false);
-    Object.keys(state).forEach(key=>delete state[key]);Object.assign(state,normalized);
-    return state;
+    const previous=store.getItem(KEY);if(previous){try{JSON.parse(previous);store.setItem(RECOVERY_KEY,previous)}catch(error){}}
+    try{store.setItem(KEY,JSON.stringify(normalized))}catch(error){normalized.logs=pruneLogs(normalized.logs).slice(-Math.floor(ROUTINE_LOG_LIMIT/2));store.setItem(KEY,JSON.stringify(normalized))}
+    createDailySnapshot(normalized,false);Object.keys(state).forEach(key=>delete state[key]);Object.assign(state,normalized);return state;
   };
 
   const save=state=>persist(state);
-  const createBackup=state=>JSON.stringify({app:'ASCEND',backupVersion:BACKUP_VERSION,exportedAt:nowIso(),state:normalizeCurrent(JSON.parse(JSON.stringify(state)))},null,2);
+  const createBackup=state=>JSON.stringify({app:'ASCEND',backupVersion:BACKUP_VERSION,schemaVersion:VERSION,exportedAt:nowIso(),state:normalizeCurrent(clone(state))},null,2);
   const parseBackup=text=>{
     let parsed;try{parsed=JSON.parse(text)}catch(error){throw new Error('The selected file is not valid JSON.')}
     const raw=parsed&&parsed.app==='ASCEND'&&parsed.state?parsed.state:parsed;
     if(!raw||typeof raw!=='object'||Array.isArray(raw))throw new Error('The selected file does not contain ASCEND data.');
     if(!raw.player||typeof raw.player!=='object')throw new Error('The backup is missing the Player record.');
-    return normalizeCurrent(raw);
+    return Number(raw.version||0)<VERSION?migrateLegacy(raw):normalizeCurrent(raw);
   };
   const summarize=state=>({
     initialized:Boolean(state.initialized),playerName:state.player?.codename||state.player?.name||'Player',level:Number(state.player?.level||1),rank:state.player?.rank||'E',
     days:Object.keys(state.dayRecords||{}).length,attendance:Array.isArray(state.attendanceRecords)?state.attendanceRecords.length:0,tasks:Array.isArray(state.academicTasks)?state.academicTasks.length:0,
-    schedules:Array.isArray(state.classSchedule)?state.classSchedule.length:0,exceptions:Array.isArray(state.scheduleExceptions)?state.scheduleExceptions.length:0,trading:Array.isArray(state.tradingNotes)?state.tradingNotes.length:0,
-    logs:Array.isArray(state.logs)?state.logs.length:0,updatedAt:state.updatedAt||state.createdAt||nowIso()
+    recurring:Array.isArray(state.recurringTaskRules)?state.recurringTaskRules.length:0,schedules:Array.isArray(state.classSchedule)?state.classSchedule.length:0,exceptions:Array.isArray(state.scheduleExceptions)?state.scheduleExceptions.length:0,
+    trading:Array.isArray(state.tradingNotes)?state.tradingNotes.length:0,logs:Array.isArray(state.logs)?state.logs.length:0,updatedAt:state.updatedAt||state.createdAt||nowIso()
   });
-  const listSnapshots=()=>readSnapshots().map(({id,date,createdAt,state})=>({id,date,createdAt,summary:summarize(state)})).reverse();
-  const restoreSnapshot=id=>{
-    const snapshot=readSnapshots().find(item=>item.id===id);if(!snapshot)throw new Error('Snapshot not found.');return normalizeCurrent(JSON.parse(JSON.stringify(snapshot.state)));
-  };
+  const listSnapshots=()=>readList(SNAPSHOT_KEY).map(({id,date,createdAt,state})=>({id,date,createdAt,summary:summarize(state)})).reverse();
+  const restoreSnapshot=id=>{const snapshot=readList(SNAPSHOT_KEY).find(item=>item.id===id);if(!snapshot)throw new Error('Snapshot not found.');return normalizeCurrent(clone(snapshot.state))};
+  const listRollbackPoints=()=>readList(ROLLBACK_KEY).map(({id,createdAt,fromVersion,toVersion,label,state})=>({id,createdAt,fromVersion,toVersion,label,summary:summarize(state)})).reverse();
+  const restoreRollbackPoint=id=>{const point=readList(ROLLBACK_KEY).find(item=>item.id===id);if(!point)throw new Error('Rollback point not found.');return normalizeCurrent(clone(point.state))};
   const storageBytes=state=>{
-    const primary=JSON.stringify(state||{}),snapshots=store.getItem(SNAPSHOT_KEY)||'[]',recovery=store.getItem(RECOVERY_KEY)||'';
-    return new TextEncoder().encode(primary+snapshots+recovery).length;
+    const primary=JSON.stringify(state||{}),snapshots=store.getItem(SNAPSHOT_KEY)||'[]',recovery=store.getItem(RECOVERY_KEY)||'',rollbacks=store.getItem(ROLLBACK_KEY)||'[]';
+    return new TextEncoder().encode(primary+snapshots+recovery+rollbacks).length;
   };
   const clearRecoveryNotice=state=>{if(state?.system)state.system.recoveredFrom=null;return state};
+  const schemaInfo=()=>({version:VERSION,backupVersion:BACKUP_VERSION,key:KEY,rollbackCount:readList(ROLLBACK_KEY).length,snapshotCount:readList(SNAPSHOT_KEY).length});
 
-  A.storage={load,save,dateKey,uid,createBackup,parseBackup,summarize,pruneLogs,normalizeCurrent,createDailySnapshot,listSnapshots,restoreSnapshot,storageBytes,clearRecoveryNotice};
+  A.storage={load,save,dateKey,uid,createBackup,parseBackup,summarize,pruneLogs,normalizeCurrent,createDailySnapshot,listSnapshots,restoreSnapshot,createPreUpdateRollback,listRollbackPoints,restoreRollbackPoint,storageBytes,clearRecoveryNotice,schemaInfo,timezoneName,timezoneOffset};
 })();

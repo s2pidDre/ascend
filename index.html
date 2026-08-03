@@ -50,6 +50,16 @@
     <symbol id="glyph-calendar" viewBox="0 0 24 24"><path d="M4 5h16v15H4z"/><path d="M8 2v6M16 2v6M4 10h16"/><path d="m9 15 2 2 4-4"/></symbol>
     <symbol id="glyph-recovery" viewBox="0 0 24 24"><path d="M5 8a8 8 0 1 1-1 7"/><path d="M5 3v5h5"/><path d="m12 7 1.8 3.5L17 12l-3.2 1.5L12 17l-1.8-3.5L7 12l3.2-1.5L12 7Z"/></symbol>
     <symbol id="glyph-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="glyph-attribute" viewBox="0 0 24 24"><path d="M4 18 8 9l4 5 4-10 4 14"/><path d="M3 21h18"/></symbol>
+    <symbol id="glyph-quest" viewBox="0 0 24 24"><path d="M5 4h14v16H5z"/><path d="M8 8h8M8 12h5"/><path d="m14 16 1.5 1.5 3-3"/></symbol>
+    <symbol id="glyph-skill" viewBox="0 0 24 24"><path d="m12 2 2.2 6.3L21 9l-5.2 4.1L17.5 20 12 16.3 6.5 20l1.7-6.9L3 9l6.8-.7L12 2Z"/></symbol>
+    <symbol id="glyph-lab" viewBox="0 0 24 24"><path d="M9 3h6M10 3v6l-5 9a2 2 0 0 0 1.8 3h10.4a2 2 0 0 0 1.8-3l-5-9V3"/><path d="M8 15h8"/></symbol>
+    <symbol id="glyph-diagnostic" viewBox="0 0 24 24"><path d="M4 12h4l2-6 4 12 2-6h4"/><path d="M4 4h16v16H4z"/></symbol>
+    <symbol id="glyph-timezone" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/></symbol>
+    <symbol id="glyph-rollback" viewBox="0 0 24 24"><path d="M8 7H3v-5"/><path d="M4 7a9 9 0 1 1-1 8"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="glyph-recurring" viewBox="0 0 24 24"><path d="M5 8a8 8 0 0 1 13-2"/><path d="M18 2v5h-5M19 16a8 8 0 0 1-13 2"/><path d="M6 22v-5h5"/></symbol>
+    <symbol id="glyph-dependency" viewBox="0 0 24 24"><rect x="3" y="4" width="7" height="6"/><rect x="14" y="14" width="7" height="6"/><path d="M10 7h4v10h-4"/></symbol>
+    <symbol id="glyph-weekly" viewBox="0 0 24 24"><path d="M4 5h16v15H4zM8 2v6M16 2v6M4 10h16"/><path d="m8 16 2 2 5-5"/></symbol>
   </svg>
 
   <div class="launch-splash" id="launchSplash" aria-hidden="true">
@@ -316,13 +326,12 @@
         <div class="control-actions">
           <button class="system-button compact-button" id="openPlayerProfile" type="button"><b>Player Profile</b></button>
           <button class="system-button compact-button secondary-system-button" id="openAcademicControl" type="button"><b>Academic Control Center</b></button>
-          <button class="ghost-button data-backup-entry" id="openDataBackup" type="button">Data Backup & Restore</button>
-          <button class="ghost-button data-backup-entry" id="openSystemIntegrity" type="button">System Integrity & Alerts</button>
         </div>
         <button class="ghost-button" id="scheduleClose" type="button">Close</button>
       </section>
 
       <section class="academic-home-view" id="academicHomeView" hidden>
+        <button class="advanced-shield-button" id="openAdvancedSystem" type="button" aria-label="Open protected System Control Center"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-shield"></use></svg></button>
         <div class="config-sigil glyph-frame" aria-hidden="true"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-academic"></use></svg></div>
         <p class="eyebrow">ACADEMIC CONTROL</p>
         <h2>Academic Control Center</h2>
@@ -332,7 +341,8 @@
         </div>
         <div class="control-actions">
           <button class="system-button compact-button" id="scheduleConfigEdit" type="button"><b>Class Schedule</b></button>
-          <button class="system-button compact-button secondary-system-button" id="openAttendance" type="button"><b>Attendance & Progress</b></button>
+          <button class="system-button compact-button secondary-system-button" id="openAcademicTasks" type="button"><b>Academic Tasks</b></button>
+          <button class="ghost-button" id="openAttendance" type="button">Attendance & Progress</button>
           <button class="ghost-button" id="openScheduleExceptions" type="button">Schedule Exceptions</button>
         </div>
         <button class="ghost-button" id="academicBack" type="button">Back</button>
@@ -341,7 +351,7 @@
       <section class="profile-view" id="profileView" hidden>
         <p class="eyebrow">HIDDEN PLAYER RECORD</p>
         <h2>Player Profile</h2>
-        <div class="section-tabs five" id="profileTabs" aria-label="Profile sections"></div>
+        <div class="section-tabs six" id="profileTabs" aria-label="Profile sections"></div>
         <div class="profile-content" id="profileContent"></div>
         <div class="section-nav">
           <button type="button" id="profilePrev" aria-label="Previous profile section"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-chevron-left"></use></svg></button><span id="profilePageLabel">Identity</span><button type="button" id="profileNext" aria-label="Next profile section"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-chevron-right"></use></svg></button>
@@ -373,6 +383,7 @@
         <p class="integrity-copy" id="integrityCopy">Timeline checks and automatic recovery are active.</p>
         <div class="integrity-actions">
           <button class="danger-button" id="verifyClock" type="button" hidden><b>Verify Current Device Time</b></button>
+          <button class="ghost-button" id="reviewTimezone" type="button">Review Timezone</button>
           <button class="system-button compact-button" id="toggleNotifications" type="button"><b>Enable Local Alerts</b></button>
           <button class="system-button compact-button secondary-system-button" id="toggleWakeLock" type="button"><b>Keep Screen Awake: On</b></button>
           <button class="ghost-button" id="createIntegritySnapshot" type="button">Create Recovery Snapshot</button>
@@ -425,8 +436,85 @@
           </div>
         </div>
         <div class="snapshot-strip"><span>AUTOMATIC SNAPSHOTS</span><strong id="snapshotStripCount">0 available</strong><small id="snapshotStripLatest">No recovery snapshot yet.</small></div>
-        <p class="backup-footnote">Routine activity logs are automatically limited. Up to seven daily recovery snapshots are kept locally.</p>
+        <p class="backup-footnote">Routine activity logs are automatically limited. Seven daily recovery snapshots are kept, or ten while Archive Core is equipped.</p>
         <button class="ghost-button" id="dataBackupBack" type="button">Back</button>
+      </section>
+
+      <section class="academic-tasks-view" id="academicTasksView" hidden>
+        <p class="eyebrow">ACADEMIC EXECUTION</p>
+        <h2>Academic Tasks</h2>
+        <div class="section-tabs three" id="taskManagerTabs" aria-label="Academic task sections">
+          <button type="button" data-task-tab="tasks" class="selected">Tasks</button>
+          <button type="button" data-task-tab="recurring">Recurring</button>
+          <button type="button" data-task-tab="dependencies">Links</button>
+        </div>
+        <div class="task-manager-content" id="taskManagerContent"></div>
+        <button class="ghost-button" id="academicTasksBack" type="button">Back</button>
+      </section>
+
+      <section class="advanced-system-home-view" id="advancedSystemHomeView" hidden>
+        <div class="config-sigil glyph-frame" aria-hidden="true"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-shield"></use></svg></div>
+        <p class="eyebrow">PROTECTED SYSTEM CONTROL</p>
+        <h2>System Control Center</h2>
+        <p class="schedule-hint">Advanced reliability, testing, and recovery tools remain isolated from the main interface.</p>
+        <div class="advanced-action-grid">
+          <button type="button" data-advanced-view="updatesRollbackView"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-rollback"></use></svg><span>Updates & Rollback</span></button>
+          <button type="button" data-advanced-view="systemIntegrityView"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-timezone"></use></svg><span>Time Integrity</span></button>
+          <button type="button" data-advanced-view="diagnosticsView"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-diagnostic"></use></svg><span>Diagnostics</span></button>
+          <button type="button" data-advanced-view="developerTestView" class="developer-entry"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-lab"></use></svg><span>Developer Test</span><i class="hold-line"><b id="developerEntryFill"></b></i></button>
+          <button type="button" data-advanced-view="recoverySystemView"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-recovery"></use></svg><span>Recovery</span></button>
+        </div>
+        <button class="ghost-button" id="advancedSystemBack" type="button">Back</button>
+      </section>
+
+      <section class="updates-rollback-view" id="updatesRollbackView" hidden>
+        <div class="config-sigil glyph-frame" aria-hidden="true"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-rollback"></use></svg></div>
+        <p class="eyebrow">SAFE UPDATE CONTROL</p>
+        <h2>Updates & Rollback</h2>
+        <div class="update-schema-summary" id="updateSchemaSummary"></div>
+        <div class="rollback-record" id="rollbackRecord"></div>
+        <div class="section-nav" id="rollbackNav" hidden><button type="button" id="rollbackPrev" aria-label="Previous rollback"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-chevron-left"></use></svg></button><span id="rollbackPageLabel">1 / 1</span><button type="button" id="rollbackNext" aria-label="Next rollback"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-chevron-right"></use></svg></button></div>
+        <button class="danger-button compact-danger" id="restoreRollback" type="button" hidden><b>Restore Selected Data</b></button>
+        <button class="ghost-button" id="updatesRollbackBack" type="button">Back</button>
+      </section>
+
+      <section class="diagnostics-view" id="diagnosticsView" hidden>
+        <div class="config-sigil glyph-frame" aria-hidden="true"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-diagnostic"></use></svg></div>
+        <p class="eyebrow">DEVICE CAPABILITY CHECK</p>
+        <h2>System Diagnostics</h2>
+        <div class="diagnostic-grid" id="diagnosticGrid"></div>
+        <p class="diagnostic-note" id="diagnosticNote">Capability results reflect the current browser and installation mode.</p>
+        <button class="system-button compact-button" id="rerunDiagnostics" type="button"><b>Run Diagnostics</b></button>
+        <button class="ghost-button" id="diagnosticsBack" type="button">Back</button>
+      </section>
+
+      <section class="developer-test-view" id="developerTestView" hidden>
+        <div class="config-sigil glyph-frame" aria-hidden="true"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-lab"></use></svg></div>
+        <p class="eyebrow">ISOLATED SANDBOX</p>
+        <h2>Developer Test Mode</h2>
+        <div class="test-mode-banner">TEST DATA ONLY · LIVE PROGRESS PROTECTED</div>
+        <div class="test-form">
+          <label>Scenario<select id="testScenario"><option value="protocol">Protocol State</option><option value="class">Class Check-In</option><option value="boss">Weekly Boss</option><option value="rank">Rank Trial</option><option value="recovery">Recovery Protocol</option><option value="timezone">Timezone Change</option></select></label>
+          <label>Result<select id="testResult"><option value="success">Success</option><option value="failure">Failure</option><option value="late">Late / Warning</option></select></label>
+        </div>
+        <div class="test-result-card" id="testResultCard"><span>NO TEST RUN</span><strong>Choose a scenario</strong><small>Simulation results stay inside this panel.</small></div>
+        <button class="system-button compact-button" id="runDeveloperTest" type="button"><b>Run Isolated Test</b></button>
+        <button class="ghost-button" id="resetDeveloperTest" type="button">Reset Test Data</button>
+        <button class="ghost-button" id="developerTestBack" type="button">Back</button>
+      </section>
+
+      <section class="recovery-system-view" id="recoverySystemView" hidden>
+        <div class="config-sigil glyph-frame" aria-hidden="true"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-recovery"></use></svg></div>
+        <p class="eyebrow">DATA PROTECTION</p>
+        <h2>Recovery Center</h2>
+        <div class="recovery-system-summary" id="recoverySystemSummary"></div>
+        <div class="control-actions">
+          <button class="system-button compact-button" id="openDataBackup" type="button"><b>Backup & Restore</b></button>
+          <button class="system-button compact-button secondary-system-button" id="openSystemIntegrity" type="button"><b>Snapshots & Alerts</b></button>
+          <button class="ghost-button" id="toggleSafeMode" type="button">Emergency Safe Mode</button>
+          <button class="ghost-button" id="openEmergencyRecovery" type="button">Open Emergency Recovery</button>
+        </div>
+        <button class="ghost-button" id="recoverySystemBack" type="button">Back</button>
       </section>
 
       <section class="schedule-overview-view" id="scheduleOverviewView" hidden>
@@ -502,6 +590,33 @@
         <span class="hold-fill" id="emergencyExitFill"></span><b>Hold to Exit Protocol</b>
       </button>
       <button class="ghost-button" id="returnDirectiveButton" type="button">Return to Directive</button>
+    </div>
+  </div>
+
+  <div class="timezone-overlay modal-overlay" id="timezoneOverlay" hidden>
+    <div class="timezone-panel system-panel">
+      <div class="config-sigil glyph-frame" aria-hidden="true"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-timezone"></use></svg></div>
+      <p class="eyebrow">TIMEZONE CHANGE DETECTED</p>
+      <h2>Confirm Timeline</h2>
+      <div class="timezone-comparison" id="timezoneComparison"></div>
+      <p>Existing records keep their original timeline. Only future schedules follow the confirmed timezone.</p>
+      <button class="system-button compact-button" id="confirmTimezoneTravel" type="button"><b>Confirm Travel / Timezone Change</b></button>
+      <button class="danger-button" id="flagTimezoneClock" type="button"><b>This Was Not Travel</b></button>
+      <button class="ghost-button" id="closeTimezoneOverlay" type="button">Close</button>
+    </div>
+  </div>
+
+  <div class="emergency-recovery-overlay modal-overlay" id="emergencyRecoveryOverlay" hidden>
+    <div class="emergency-recovery-panel system-panel">
+      <div class="config-sigil glyph-frame" aria-hidden="true"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-recovery"></use></svg></div>
+      <p class="eyebrow">EMERGENCY RECOVERY MODE</p>
+      <h2>Data Remains Protected</h2>
+      <p id="emergencyRecoveryCopy">Optional animations and background systems are paused while you secure or restore local data.</p>
+      <div class="emergency-recovery-actions">
+        <button class="system-button compact-button" id="emergencyExportBackup" type="button"><b>Export Backup Now</b></button>
+        <button class="system-button compact-button secondary-system-button" id="emergencyRestoreSnapshot" type="button"><b>Restore Latest Snapshot</b></button>
+        <button class="ghost-button" id="emergencyContinue" type="button">Continue in Safe Mode</button>
+      </div>
     </div>
   </div>
 
