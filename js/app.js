@@ -755,8 +755,91 @@
     const ledgerEntries=Object.entries(state.system.notificationLedger).sort((a,b)=>String(b[1]).localeCompare(String(a[1]))).slice(0,100);state.system.notificationLedger=Object.fromEntries(ledgerEntries);S.save(state);
     try{const registration=await navigator.serviceWorker?.ready;if(registration?.showNotification)await registration.showNotification(title,{body,tag,icon:'assets/icon-192.png?v=20260803',badge:'assets/icon-192.png?v=20260803',silent:true,renotify:false});else new Notification(title,{body,tag,icon:'assets/icon-192.png?v=20260803',silent:true})}catch(error){}
   };
+  const reminderBridgeState=()=>state.system.reminderBridge||(state.system.reminderBridge={lastCheckAt:null,missedCount:0,lastMissedAt:null,lastExportAt:null,lastExportEvents:0});
+  const invalidateExternalCalendar=()=>{state.settings.externalCalendarConfirmed=false;};
+  const escapeIcs=value=>String(value??'').replace(/\\/g,'\\\\').replace(/\n/g,'\\n').replace(/,/g,'\\,').replace(/;/g,'\\;');
+  const icsLocal=date=>`${date.getFullYear()}${pad(date.getMonth()+1)}${pad(date.getDate())}T${pad(date.getHours())}${pad(date.getMinutes())}00`;
+  const icsUtc=date=>`${date.getUTCFullYear()}${pad(date.getUTCMonth()+1)}${pad(date.getUTCDate())}T${pad(date.getUTCHours())}${pad(date.getUTCMinutes())}${pad(date.getUTCSeconds())}Z`;
+  const addCalendarEvent=(lines,{uid,start,end,summary,description,leadMinutes=10,deadlineAlarm=true})=>{
+    lines.push('BEGIN:VEVENT',`UID:${escapeIcs(uid)}`,`DTSTAMP:${icsUtc(new Date())}`,`DTSTART:${icsLocal(start)}`,`DTEND:${icsLocal(end)}`,`SUMMARY:${escapeIcs(summary)}`,`DESCRIPTION:${escapeIcs(description)}`,'CATEGORIES:ASCEND');
+    lines.push('BEGIN:VALARM',`TRIGGER:-PT${Math.max(1,leadMinutes)}M`,'ACTION:DISPLAY',`DESCRIPTION:${escapeIcs(`${summary} starts soon.`)}`,'END:VALARM');
+    if(deadlineAlarm)lines.push('BEGIN:VALARM','TRIGGER;RELATED=END:-PT5M','ACTION:DISPLAY',`DESCRIPTION:${escapeIcs(`${summary} deadline in five minutes.`)}`,'END:VALARM');
+    lines.push('END:VEVENT');
+  };
+  const buildReminderCalendar=(options={})=>{
+    const test=Boolean(options.test),lead=Number(state.settings.notificationLeadMinutes||10),horizon=test?1:Number(state.settings.externalCalendarHorizonDays||60),now=new Date(),lines=['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//ASCEND//External Reminder Bridge//EN','CALSCALE:GREGORIAN','METHOD:PUBLISH',`X-WR-CALNAME:${escapeIcs(test?'ASCEND Reminder Test':'ASCEND Discipline Reminders')}`];
+    let events=0;
+    if(test){
+      const start=new Date(now.getTime()+2*60000),end=new Date(start.getTime()+15*60000);
+      addCalendarEvent(lines,{uid:`ascend-reminder-test-${start.getTime()}@local`,start,end,summary:'ASCEND · External Reminder Test',description:'Two-minute device calendar reminder test. Import this event and keep calendar notifications enabled.',leadMinutes:1,deadlineAlarm:false});events=1;
+    }else{
+      const cursor=new Date(now);cursor.setHours(0,0,0,0);
+      for(let offset=0;offset<horizon;offset++){
+        const date=new Date(cursor);date.setDate(cursor.getDate()+offset);const key=S.dateKey(date);
+        protocolBlueprints.forEach(config=>{
+          const start=timeOnDate(date,config.start),end=timeOnDate(date,config.end);
+          addCalendarEvent(lines,{uid:`ascend-protocol-${key}-${config.id}@local`,start,end,summary:`ASCEND · ${config.name}`,description:`Fixed ASCEND protocol from ${formatTime(config.start)} to ${formatTime(config.end)}. Open ASCEND and complete every required stage before the deadline.`,leadMinutes:lead,deadlineAlarm:true});events++;
+        });
+        classesForDate(date).forEach(entry=>{
+          const start=timeOnDate(date,entry.start),end=timeOnDate(date,entry.end),location=[entry.modality,entry.room].filter(Boolean).join(' · ');
+          addCalendarEvent(lines,{uid:`ascend-class-${key}-${entry.id}@local`,start,end,summary:`ASCEND Class · ${entry.subject}`,description:`Class check-in for ${entry.subject}${location?` · ${location}`:''}. Open ASCEND to confirm attendance and dismissal.`,leadMinutes:Math.max(lead,15),deadlineAlarm:true});events++;
+        });
+      }
+    }
+    lines.push('END:VCALENDAR');
+    return{text:lines.join('\r\n')+'\r\n',events};
+  };
+  const shareCalendarFile=async(name,content)=>{
+    const blob=new Blob([content],{type:'text/calendar;charset=utf-8'}),file=typeof File==='function'?new File([blob],name,{type:'text/calendar'}):null;
+    if(file&&navigator.share&&navigator.canShare?.({files:[file]})){
+      try{await navigator.share({title:'ASCEND Device Reminders',text:'Import this ASCEND reminder calendar into your device calendar.',files:[file]});return'shared'}catch(error){if(error?.name==='AbortError')return'cancelled'}
+    }
+    const url=URL.createObjectURL(blob),link=document.createElement('a');link.href=url;link.download=name;document.body.appendChild(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1500);return'downloaded';
+  };
+  const scheduledReminderMomentsBetween=(start,end)=>{
+    const moments=[];if(!(start instanceof Date)||!(end instanceof Date)||end<=start)return moments;
+    const cursor=new Date(start);cursor.setHours(0,0,0,0);const last=new Date(end);last.setHours(23,59,59,999);
+    for(let date=new Date(cursor);date<=last;date.setDate(date.getDate()+1)){
+      protocolBlueprints.forEach(config=>{const moment=timeOnDate(date,config.start);if(moment>start&&moment<=end)moments.push({at:moment,label:config.name})});
+      classesForDate(date).forEach(entry=>{const moment=timeOnDate(date,entry.start);if(moment>start&&moment<=end)moments.push({at:moment,label:`${entry.subject} class`})});
+      if(moments.length>40)break;
+    }
+    return moments.sort((a,b)=>a.at-b.at);
+  };
+  const checkReminderGap=(now=new Date())=>{
+    const bridge=reminderBridgeState(),last=bridge.lastCheckAt?new Date(bridge.lastCheckAt):null;
+    if(!last||Number.isNaN(last.getTime())){bridge.lastCheckAt=now.toISOString();S.save(state);return}
+    const gap=now-last;if(gap<60000)return;
+    if(gap>=120000){
+      const events=scheduledReminderMomentsBetween(last,now);
+      if(events.length){bridge.missedCount=Number(bridge.missedCount||0)+events.length;bridge.lastMissedAt=now.toISOString();state.logs.push({id:S.uid('log'),at:now.toISOString(),type:'reminder',message:`Reminder gap detected after ASCEND was inactive: ${events.length} scheduled event(s).`});if(document.visibilityState==='visible'&&launchDismissed)showSystemNotice('alert','REMINDER GAP DETECTED',`${events.length} scheduled event(s) passed while ASCEND was inactive. Device calendar alarms are the external fallback.`,3600)}
+    }
+    bridge.lastCheckAt=now.toISOString();S.save(state);
+  };
+  const renderExternalReminders=()=>{
+    setControlView('externalRemindersView');const bridge=reminderBridgeState(),permission=('Notification' in window)?Notification.permission:'unsupported',local=state.settings.notifications&&permission==='granted';
+    $('#externalLocalStatus').textContent=local?'ON':permission==='denied'?'BLOCKED':'OFF';
+    $('#externalCalendarStatus').textContent=state.settings.externalCalendarConfirmed?'ACTIVE':state.settings.externalCalendarExportedAt?'EXPORTED':'NOT EXPORTED';
+    $('#externalHorizonStatus').textContent=`${state.settings.externalCalendarHorizonDays||60} DAYS`;
+    $('#externalMissedStatus').textContent=String(bridge.missedCount||0);
+    $('#externalReminderLead').value=String(state.settings.notificationLeadMinutes||10);
+    $('#externalToggleAlerts b').textContent=state.settings.notifications?'Disable Local Alerts':'Enable Local Alerts';
+    $('#confirmExternalCalendar').textContent=state.settings.externalCalendarConfirmed?'Calendar Confirmed Active':'Confirm Calendar Imported';
+    const last=state.settings.externalCalendarExportedAt?formatShortDate(state.settings.externalCalendarExportedAt):null;
+    $('#externalReminderCopy').textContent=state.settings.externalCalendarConfirmed?`Device calendar bridge confirmed${last?` · last exported ${last}`:''}. Re-export after schedule or timezone changes.`:'Export the next 60 days of protocols and classes, then import the .ics file into your device calendar so alarms can fire while the PWA is fully closed.';
+  };
+  const exportReminderCalendar=async(test=false)=>{
+    const calendar=buildReminderCalendar({test}),fileName=test?`ascend-reminder-test-${S.dateKey(new Date())}.ics`:`ascend-device-reminders-${S.dateKey(new Date())}.ics`,result=await shareCalendarFile(fileName,calendar.text);
+    if(result==='cancelled')return;
+    if(!test){const now=new Date().toISOString(),bridge=reminderBridgeState();state.settings.externalCalendarExportedAt=now;state.settings.externalCalendarConfirmed=false;bridge.lastExportAt=now;bridge.lastExportEvents=calendar.events;state.logs.push({id:S.uid('log'),at:now,type:'reminder',message:`External reminder calendar exported with ${calendar.events} event(s).`});save({silent:true});showSystemNotice('alert','CALENDAR FILE READY',`${calendar.events} reminders exported. Import the file into your device calendar, then confirm activation.`,3800);renderExternalReminders()}else showSystemNotice('alert','TEST REMINDER READY','Import the calendar event. Its alarm is scheduled approximately two minutes from now.',3600);
+  };
+  const confirmExternalCalendar=()=>{
+    state.settings.externalCalendarConfirmed=!state.settings.externalCalendarConfirmed;const now=new Date().toISOString();state.logs.push({id:S.uid('log'),at:now,type:'reminder',message:`Device calendar reminder bridge marked ${state.settings.externalCalendarConfirmed?'active':'inactive'}.`});save({silent:true});showSystemNotice('alert',state.settings.externalCalendarConfirmed?'DEVICE CALENDAR ACTIVE':'DEVICE CALENDAR UNCONFIRMED',state.settings.externalCalendarConfirmed?'External calendar alarms are now recorded as the closed-app fallback.':'Re-import the current calendar file before relying on external alarms.',3000);renderExternalReminders();
+  };
+
   const sweepNotifications=(record,now=new Date())=>{
-    if(!state.settings.notifications||Date.now()-notificationSweepAt<20000)return;notificationSweepAt=Date.now();
+    if(Date.now()-notificationSweepAt<20000)return;notificationSweepAt=Date.now();checkReminderGap(now);
+    if(!state.settings.notifications)return;
     const lead=notificationLeadMinutes()*60000;
     protocolBlueprints.forEach(config=>{
       const protocol=record?.protocols?.[config.id];if(!protocol||protocol.status!=='pending')return;
@@ -1248,10 +1331,10 @@
       if(['no-classes','cancel'].includes(type)){record.status='cancelled';record.finalized=true;record.dismissalStatus='cancelled';record.dismissedAt=new Date().toISOString();record.pendingXp=0;record.xpAwarded=0}
       else{record.scheduledStart=start;record.scheduledEnd=end;record.updatedAt=new Date().toISOString()}
     });
-    state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'schedule',message:`Schedule exception saved for ${date}: ${type}.`});save();exceptionUi.index=0;renderScheduleExceptions();showSystemNotice('snapshot','SCHEDULE EXCEPTION SAVED','Only the selected date is affected.',2400);
+    invalidateExternalCalendar();state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'schedule',message:`Schedule exception saved for ${date}: ${type}.`});save();exceptionUi.index=0;renderScheduleExceptions();showSystemNotice('snapshot','SCHEDULE EXCEPTION SAVED','Only the selected date is affected.',2400);
   };
   const deleteScheduleException=()=>{
-    const item=sortedExceptions()[exceptionUi.index];if(!item)return;state.scheduleExceptions=state.scheduleExceptions.filter(value=>value.id!==item.id);state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'schedule',message:`Schedule exception deleted for ${item.date}.`});save();exceptionUi.index=Math.max(0,exceptionUi.index-1);renderScheduleExceptions();
+    const item=sortedExceptions()[exceptionUi.index];if(!item)return;state.scheduleExceptions=state.scheduleExceptions.filter(value=>value.id!==item.id);invalidateExternalCalendar();state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'schedule',message:`Schedule exception deleted for ${item.date}.`});save();exceptionUi.index=Math.max(0,exceptionUi.index-1);renderScheduleExceptions();
   };
 
   const skillDefinitions=[
@@ -1394,7 +1477,7 @@
   };
   const confirmTimezoneChange=()=>{
     const pending=state.timezone?.pending;if(!pending)return;
-    state.timezone.history.push({...pending,confirmedAt:new Date().toISOString()});state.timezone.name=pending.toName;state.timezone.offset=pending.toOffset;state.timezone.confirmedAt=new Date().toISOString();state.timezone.pending=null;
+    state.timezone.history.push({...pending,confirmedAt:new Date().toISOString()});state.timezone.name=pending.toName;state.timezone.offset=pending.toOffset;state.timezone.confirmedAt=new Date().toISOString();state.timezone.pending=null;invalidateExternalCalendar();
     state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'integrity',message:`Timezone change confirmed: ${pending.fromName} to ${pending.toName}. Existing records retained their original timeline.`});save();$('#timezoneOverlay').hidden=true;renderSystemIntegrity();
   };
   const rejectTimezoneChange=()=>{const pending=state.timezone?.pending;if(pending)flagClockIntegrity('Timezone changed without confirmed travel.',(pending.toOffset-pending.fromOffset)*60000);$('#timezoneOverlay').hidden=true;renderSystemIntegrity()};
@@ -1601,7 +1684,7 @@
   const closeEmergencyRecovery=()=>{$('#emergencyRecoveryOverlay').hidden=true};
   const synchronizeAdvancedSystems=()=>{const before=JSON.stringify({quest:state.quests?.daily?.date,rules:state.academicTasks.length,debriefs:state.weeklyDebriefs?.length,pending:state.timezone?.pending});ensureDailyQuest();const generated=generateRecurringTasks();ensureWeeklyDebrief();const changedTimezone=detectTimezoneChange();const watchdogDate=state.system.watchdog?.lastRun?S.dateKey(new Date(state.system.watchdog.lastRun)):'';if(watchdogDate!==S.dateKey())runDataConsistencyWatchdog(false);if(generated||changedTimezone||before!==JSON.stringify({quest:state.quests?.daily?.date,rules:state.academicTasks.length,debriefs:state.weeklyDebriefs?.length,pending:state.timezone?.pending}))save({silent:true})};
 
-  const controlViews=['controlHomeView','academicHomeView','profileView','attendanceView','systemIntegrityView','scheduleExceptionsView','dataBackupView','academicTasksView','conflictScanView','advancedSystemHomeView','updatesRollbackView','diagnosticsView','developerTestView','recoverySystemView','scheduleOverviewView','scheduleEditView'];
+  const controlViews=['controlHomeView','academicHomeView','profileView','attendanceView','systemIntegrityView','scheduleExceptionsView','dataBackupView','academicTasksView','conflictScanView','advancedSystemHomeView','updatesRollbackView','diagnosticsView','externalRemindersView','developerTestView','recoverySystemView','scheduleOverviewView','scheduleEditView'];
   const setControlView=view=>{
     controlUi.view=view;
     controlViews.forEach(id=>{const node=document.getElementById(id);if(node)node.hidden=id!==view});
@@ -1862,12 +1945,12 @@
         state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'schedule',message:`Academic tasks and attendance relinked from ${oldSubject} to ${subject}.`});
       }
     }else state.classSchedule.push({id:S.uid('class'),subject,code,day,room,modality,start,end,active:true,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()});
-    state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'schedule',message:`Class schedule saved: ${subject}, ${scheduleDayName(day)} ${start}-${end}.`});
+    invalidateExternalCalendar();state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'schedule',message:`Class schedule saved: ${subject}, ${scheduleDayName(day)} ${start}-${end}.`});
     save();scheduleUi.day=day;scheduleUi.page=0;scheduleUi.editId=null;scheduleUi.isNew=false;renderScheduleOverview();showBreachWarning('SCHEDULE UPDATED',`${subject} now synchronizes with attendance, subject XP, and task tracking.`);
   };
   const deleteScheduleEntry=()=>{
     const entry=currentScheduleEntry();if(!entry)return;
-    state.classSchedule=state.classSchedule.filter(item=>item.id!==entry.id);
+    state.classSchedule=state.classSchedule.filter(item=>item.id!==entry.id);invalidateExternalCalendar();
     state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'schedule',message:`Class removed from future schedule: ${entry.subject}. Attendance, XP, and task history preserved.`});
     save();scheduleUi.day=Number(entry.day);scheduleUi.page=0;scheduleUi.editId=null;scheduleUi.isNew=false;renderScheduleOverview();showBreachWarning('CLASS DELETED',`${entry.subject} was removed from future meetings. Existing records were preserved.`);
   };
@@ -1996,7 +2079,7 @@
     $('#systemIntegrityBack').addEventListener('click',renderAdvancedSystemHome);
     $('#taskManagerTabs').addEventListener('click',event=>{const button=event.target.closest('[data-task-tab]');if(!button)return;controlUi.taskTab=button.dataset.taskTab;renderTaskManager()});
     $('#taskManagerContent').addEventListener('click',handleTaskManagerAction);
-    $('#advancedSystemHomeView').addEventListener('click',event=>{const button=event.target.closest('[data-advanced-view]');if(!button||button.classList.contains('developer-entry'))return;const view=button.dataset.advancedView;if(view==='updatesRollbackView')renderUpdatesRollback();else if(view==='systemIntegrityView')renderSystemIntegrity();else if(view==='diagnosticsView')renderDiagnostics();else if(view==='recoverySystemView')renderRecoverySystem()});
+    $('#advancedSystemHomeView').addEventListener('click',event=>{const button=event.target.closest('[data-advanced-view]');if(!button||button.classList.contains('developer-entry'))return;const view=button.dataset.advancedView;if(view==='updatesRollbackView')renderUpdatesRollback();else if(view==='systemIntegrityView')renderSystemIntegrity();else if(view==='diagnosticsView')renderDiagnostics();else if(view==='externalRemindersView')renderExternalReminders();else if(view==='recoverySystemView')renderRecoverySystem()});
     const developerEntry=$('#advancedSystemHomeView .developer-entry');
     developerEntry.addEventListener('click',()=>{state.system.developerTest.unlocked=true;save({silent:true});controlUi.directDeveloper=false;renderDeveloperTest()});
     $('#updatesRollbackBack').addEventListener('click',renderAdvancedSystemHome);
@@ -2006,6 +2089,12 @@
     $('#diagnosticsBack').addEventListener('click',renderAdvancedSystemHome);
     $('#rerunDiagnostics').addEventListener('click',renderDiagnostics);
     $('#runConsistencyWatchdog').addEventListener('click',()=>{runDataConsistencyWatchdog(true);renderDiagnostics()});
+    $('#externalRemindersBack').addEventListener('click',renderAdvancedSystemHome);
+    $('#externalToggleAlerts').addEventListener('click',async()=>{await toggleNotifications();renderExternalReminders()});
+    $('#externalReminderLead').addEventListener('change',event=>{state.settings.notificationLeadMinutes=clamp(Number(event.target.value||10),5,30);invalidateExternalCalendar();save({silent:true});renderExternalReminders()});
+    $('#exportReminderCalendar').addEventListener('click',()=>exportReminderCalendar(false));
+    $('#testExternalReminder').addEventListener('click',()=>exportReminderCalendar(true));
+    $('#confirmExternalCalendar').addEventListener('click',confirmExternalCalendar);
     $('#developerTestBack').addEventListener('click',()=>{if(controlUi.directDeveloper)closeScheduleOverlay();else renderAdvancedSystemHome()});
     $('#runDeveloperTest').addEventListener('click',runDeveloperTest);
     $('#resetDeveloperTest').addEventListener('click',resetDeveloperTest);

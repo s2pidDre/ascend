@@ -1,4 +1,4 @@
-const CACHE='ascend-discipline-v32-feedback-lab-layout';
+const CACHE='ascend-discipline-v33-external-reminders';
 const ASSETS=[
   './',
   './index.html',
@@ -44,6 +44,22 @@ self.addEventListener('notificationclick',event=>{
   event.waitUntil(clients.matchAll({type:'window',includeUncontrolled:true}).then(windows=>{
     const existing=windows.find(client=>'focus' in client);
     if(existing)return existing.focus();
-    return clients.openWindow('./index.html');
+    return clients.openWindow(event.notification.data?.url||'./index.html');
   }));
+});
+
+
+self.addEventListener('push',event=>{
+  let payload={};
+  try{payload=event.data?.json?.()||{body:event.data?.text?.()||''}}catch(error){payload={body:event.data?.text?.()||''}}
+  const title=payload.title||'ASCEND Reminder';
+  const options={
+    body:payload.body||'A scheduled ASCEND event requires attention.',
+    tag:payload.tag||`ascend-push-${Date.now()}`,
+    icon:'assets/icon-192.png?v=20260803',
+    badge:'assets/icon-192.png?v=20260803',
+    data:{url:payload.url||'./index.html'},
+    renotify:false
+  };
+  event.waitUntil(self.registration.showNotification(title,options));
 });

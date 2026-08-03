@@ -6,12 +6,12 @@
   const SNAPSHOT_KEY='ascend_discipline_protocol_snapshots_v1';
   const ROLLBACK_KEY='ascend_discipline_protocol_rollbacks_v1';
   const LEGACY_KEYS=['ascend_discipline_protocol_v6','ascend_discipline_protocol_v5','ascend_discipline_protocol_v4','ascend_strict_system_v3','ascend_automatic_year_system_v2','ascend_personal_growth_system_v1'];
-  const VERSION=15;
-  const BACKUP_VERSION=4;
+  const VERSION=16;
+  const BACKUP_VERSION=5;
   const ROUTINE_LOG_LIMIT=420;
   const SNAPSHOT_LIMIT=7;
   const ROLLBACK_LIMIT=4;
-  const PERMANENT_LOG_TYPES=new Set(['system','level','rank','mastery','achievement','backup','restore','emergency','attendance-correction','integrity','recovery','snapshot','boss','migration','quest','skill','weekly','test','watchdog']);
+  const PERMANENT_LOG_TYPES=new Set(['system','level','rank','mastery','achievement','backup','restore','emergency','attendance-correction','integrity','recovery','snapshot','boss','migration','quest','skill','weekly','test','watchdog','reminder']);
   const nowIso=()=>new Date().toISOString();
   const dateKey=(date=new Date())=>`${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
   const timezoneName=()=>{try{return Intl.DateTimeFormat().resolvedOptions().timeZone||'Local Time'}catch(error){return'Local Time'}};
@@ -49,11 +49,11 @@
     quests:{daily:null,history:[]},
     skills:{points:0,unlocked:[],equipped:[]},
     weeklyDebriefs:[],
-    settings:{sound:true,haptics:true,keepAwake:true,notifications:false,notificationLeadMinutes:10},
+    settings:{sound:true,haptics:true,keepAwake:true,notifications:false,notificationLeadMinutes:10,externalCalendarConfirmed:false,externalCalendarExportedAt:null,externalCalendarHorizonDays:60},
     integrity:{clockStatus:'trusted',rewardHold:false,lastWallTime:null,lastVerifiedAt:null,lastFlag:null,lastSessionDelta:0},
     timezone:{name:timezoneName(),offset:timezoneOffset(),confirmedAt:nowIso(),pending:null,history:[]},
     recovery:{active:false,status:'idle',sourceDate:null,reason:null,action:null,protectedDate:null,protectedProtocolId:null,completedAt:null},
-    system:{recoveredFrom:null,lastStorageWarningAt:null,notificationLedger:{},safeMode:false,lastSuccessfulBoot:null,migrationHistory:[],auditTrail:[],watchdog:{lastRun:null,issues:0,repairs:0,summary:'Not run'},developerTest:{enabled:false,unlocked:false,scenario:'free',simulatedDate:null,runs:0,lastResult:null,sandboxMode:'profile',reports:[],labHistory:[]}},
+    system:{recoveredFrom:null,lastStorageWarningAt:null,notificationLedger:{},safeMode:false,lastSuccessfulBoot:null,migrationHistory:[],auditTrail:[],watchdog:{lastRun:null,issues:0,repairs:0,summary:'Not run'},reminderBridge:{lastCheckAt:null,missedCount:0,lastMissedAt:null,lastExportAt:null,lastExportEvents:0},developerTest:{enabled:false,unlocked:false,scenario:'free',simulatedDate:null,runs:0,lastResult:null,sandboxMode:'profile',reports:[],labHistory:[]}},
     logs:[]
   });
 
@@ -139,7 +139,7 @@
       recovery:{...base.recovery,...(raw.recovery||{})},
       quests:{...base.quests,...(raw.quests||{})},
       skills:{...base.skills,...(raw.skills||{})},
-      system:{...base.system,...(raw.system||{}),developerTest:{...base.system.developerTest,...(raw.system?.developerTest||{})}},
+      system:{...base.system,...(raw.system||{}),reminderBridge:{...base.system.reminderBridge,...(raw.system?.reminderBridge||{})},developerTest:{...base.system.developerTest,...(raw.system?.developerTest||{})}},
       settings:{...base.settings,...rawSettings}
     };
     state.version=VERSION;
@@ -148,6 +148,9 @@
     state.settings.keepAwake=typeof rawSettings.keepAwake==='boolean'?rawSettings.keepAwake:base.settings.keepAwake;
     state.settings.notifications=typeof rawSettings.notifications==='boolean'?rawSettings.notifications:base.settings.notifications;
     state.settings.notificationLeadMinutes=Math.min(30,Math.max(5,Number(rawSettings.notificationLeadMinutes||10)));
+    state.settings.externalCalendarConfirmed=Boolean(rawSettings.externalCalendarConfirmed);
+    state.settings.externalCalendarExportedAt=rawSettings.externalCalendarExportedAt||null;
+    state.settings.externalCalendarHorizonDays=Math.min(90,Math.max(30,Number(rawSettings.externalCalendarHorizonDays||60)));
     state.dayRecords=raw.dayRecords&&typeof raw.dayRecords==='object'&&!Array.isArray(raw.dayRecords)?raw.dayRecords:{};
     Object.values(state.dayRecords).forEach(normalizeProtocolState);
     state.classSchedule=Array.isArray(raw.classSchedule)?raw.classSchedule.map(entry=>({...entry,modality:entry.modality||((entry.room||'').toLowerCase().includes('online')?'Online':'Onsite')})):[];
@@ -168,6 +171,9 @@
     state.system.migrationHistory=Array.isArray(state.system.migrationHistory)?state.system.migrationHistory:[];
     state.system.auditTrail=Array.isArray(state.system.auditTrail)?state.system.auditTrail.slice(-240):[];
     state.system.watchdog={...base.system.watchdog,...(state.system.watchdog&&typeof state.system.watchdog==='object'?state.system.watchdog:{})};
+    state.system.reminderBridge={...base.system.reminderBridge,...(state.system.reminderBridge&&typeof state.system.reminderBridge==='object'?state.system.reminderBridge:{})};
+    state.system.reminderBridge.missedCount=Math.max(0,Number(state.system.reminderBridge.missedCount||0));
+    state.system.reminderBridge.lastExportEvents=Math.max(0,Number(state.system.reminderBridge.lastExportEvents||0));
     state.system.developerTest.reports=Array.isArray(state.system.developerTest.reports)?state.system.developerTest.reports.slice(-30):[];
     state.system.developerTest.labHistory=Array.isArray(state.system.developerTest.labHistory)?state.system.developerTest.labHistory.slice(-40):[];
     state.system.developerTest.sandboxMode=['profile','sample'].includes(state.system.developerTest.sandboxMode)?state.system.developerTest.sandboxMode:'profile';

@@ -2316,7 +2316,7 @@ body.orientation-blocked .recovery-overlay{display:none!important}
 
 /* Hidden progression, task automation, safe updates, and recovery controls. */
 .schedule-panel{position:relative}
-.control-home-view,.academic-home-view,.profile-view,.attendance-view,.system-integrity-view,.schedule-exceptions-view,.data-backup-view,.academic-tasks-view,.conflict-scan-view,.advanced-system-home-view,.updates-rollback-view,.diagnostics-view,.developer-test-view,.recovery-system-view,.schedule-overview-view,.schedule-edit-view{
+.control-home-view,.academic-home-view,.profile-view,.attendance-view,.system-integrity-view,.schedule-exceptions-view,.data-backup-view,.academic-tasks-view,.conflict-scan-view,.advanced-system-home-view,.updates-rollback-view,.diagnostics-view,.external-reminders-view,.developer-test-view,.recovery-system-view,.schedule-overview-view,.schedule-edit-view{
   display:flex;min-height:0;flex:1;flex-direction:column;gap:8px;overflow:hidden;
 }
 .section-tabs.six{grid-template-columns:repeat(6,1fr)}
@@ -2388,7 +2388,7 @@ body.safe-mode::before,body.safe-mode .energy-field,body.safe-mode .system-grid{
 body.orientation-blocked .modal-overlay{display:none!important}
 
 @media(max-height:760px){
-  .control-home-view,.academic-home-view,.profile-view,.attendance-view,.system-integrity-view,.schedule-exceptions-view,.data-backup-view,.academic-tasks-view,.conflict-scan-view,.advanced-system-home-view,.updates-rollback-view,.diagnostics-view,.developer-test-view,.recovery-system-view,.schedule-overview-view,.schedule-edit-view{gap:5px}
+  .control-home-view,.academic-home-view,.profile-view,.attendance-view,.system-integrity-view,.schedule-exceptions-view,.data-backup-view,.academic-tasks-view,.conflict-scan-view,.advanced-system-home-view,.updates-rollback-view,.diagnostics-view,.external-reminders-view,.developer-test-view,.recovery-system-view,.schedule-overview-view,.schedule-edit-view{gap:5px}
   .advanced-shield-button{top:8px;right:8px;width:30px;height:30px;padding:6px}.advanced-action-grid>button{min-height:52px;padding:6px 8px}.advanced-action-grid>button:last-child{min-height:40px}
   .manager-form{padding:5px;gap:4px}.manager-form input,.manager-form select,.dependency-form select,.test-form select{height:28px}.weekday-field select{height:38px}.manager-record{padding:7px}.manager-record-actions button{min-height:28px}
   .attribute-row{padding:5px}.attribute-row>small,.skill-row small{display:none}.skill-row{padding:5px}.skill-row button{height:25px}.daily-quest-card{padding:8px;gap:5px}.quest-history{margin-top:3px}.weekly-debrief{padding:7px;gap:5px}
@@ -3137,3 +3137,109 @@ body.orientation-blocked .developer-run-overlay{display:none!important}
 .developer-time-controls{grid-row:3}
 .developer-run-card{grid-row:4}
 .developer-run-footer{grid-row:5}
+
+
+/* External reminder bridge: hidden device-calendar and notification controls. */
+.external-reminders-view{
+  min-height:0;
+  overflow:hidden;
+  align-content:center;
+  gap:clamp(6px,1vh,10px);
+}
+.external-reminders-view>h2,
+.external-reminders-view>.eyebrow,
+.external-reminders-view>.reminder-bridge-copy,
+.external-reminders-view>.reminder-bridge-footnote{margin:0}
+.reminder-bridge-summary{
+  width:100%;
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:6px;
+}
+.reminder-bridge-summary>div{
+  min-width:0;
+  padding:8px 7px;
+  border:1px solid rgba(75,199,255,.22);
+  background:rgba(3,13,31,.72);
+  text-align:center;
+  clip-path:polygon(6px 0,100% 0,100% calc(100% - 6px),calc(100% - 6px) 100%,0 100%,0 6px);
+}
+.reminder-bridge-summary span{
+  display:block;
+  color:#6d89aa;
+  font-size:.46rem;
+  letter-spacing:.12em;
+}
+.reminder-bridge-summary strong{
+  display:block;
+  margin-top:3px;
+  color:#dff8ff;
+  font-size:.7rem;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.reminder-bridge-copy{
+  width:min(100%,520px);
+  color:#91a8c2;
+  font-size:.66rem;
+  line-height:1.38;
+  text-align:center;
+  text-wrap:balance;
+}
+.reminder-lead-field{
+  width:min(100%,430px);
+  display:grid;
+  gap:4px;
+  color:#718dac;
+  font-size:.5rem;
+  letter-spacing:.1em;
+  text-transform:uppercase;
+}
+.reminder-lead-field select{
+  width:100%;
+  min-height:36px;
+}
+.reminder-bridge-actions{
+  width:100%;
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:6px;
+}
+.reminder-bridge-actions .system-button,
+.reminder-bridge-actions .ghost-button{
+  min-height:40px;
+  margin:0;
+  padding:6px 8px;
+  font-size:.53rem;
+}
+.reminder-bridge-footnote{
+  width:min(100%,540px);
+  color:#607a99;
+  font-size:.52rem;
+  line-height:1.32;
+  text-align:center;
+  text-wrap:balance;
+}
+@media (max-height:760px){
+  .external-reminders-view{gap:5px}
+  .external-reminders-view .config-sigil{width:38px;height:38px}
+  .reminder-bridge-summary{gap:4px}
+  .reminder-bridge-summary>div{padding:6px 5px}
+  .reminder-bridge-summary strong{font-size:.61rem}
+  .reminder-bridge-copy{font-size:.58rem;line-height:1.28}
+  .reminder-lead-field select{min-height:31px}
+  .reminder-bridge-actions{gap:4px}
+  .reminder-bridge-actions .system-button,
+  .reminder-bridge-actions .ghost-button{min-height:33px;font-size:.46rem;padding:4px 5px}
+  .reminder-bridge-footnote{font-size:.46rem;line-height:1.2}
+}
+@media (max-height:540px){
+  .external-reminders-view .config-sigil,
+  .external-reminders-view>.eyebrow{display:none}
+  .reminder-bridge-summary>div{padding:4px}
+  .reminder-bridge-copy{font-size:.51rem}
+  .reminder-bridge-footnote{display:none}
+  .reminder-bridge-actions .system-button,
+  .reminder-bridge-actions .ghost-button{min-height:28px;font-size:.42rem}
+}

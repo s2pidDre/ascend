@@ -476,6 +476,7 @@
           <button type="button" data-advanced-view="updatesRollbackView"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-rollback"></use></svg><span>Updates & Rollback</span></button>
           <button type="button" data-advanced-view="systemIntegrityView"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-timezone"></use></svg><span>Time Integrity</span></button>
           <button type="button" data-advanced-view="diagnosticsView"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-diagnostic"></use></svg><span>Diagnostics</span></button>
+          <button type="button" data-advanced-view="externalRemindersView"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-bell"></use></svg><span>External Reminders</span></button>
           <button type="button" data-advanced-view="developerTestView" class="developer-entry"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-lab"></use></svg><span>Developer Test</span></button>
           <button type="button" data-advanced-view="recoverySystemView"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-recovery"></use></svg><span>Recovery</span></button>
         </div>
@@ -503,6 +504,29 @@
         <button class="system-button compact-button" id="rerunDiagnostics" type="button"><b>Run Diagnostics</b></button>
         <button class="ghost-button" id="runConsistencyWatchdog" type="button">Run Data Consistency Check</button>
         <button class="ghost-button" id="diagnosticsBack" type="button">Back</button>
+      </section>
+
+
+      <section class="external-reminders-view" id="externalRemindersView" hidden>
+        <div class="config-sigil glyph-frame" aria-hidden="true"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-bell"></use></svg></div>
+        <p class="eyebrow">DEVICE ALARM BRIDGE</p>
+        <h2>External Reminders</h2>
+        <div class="reminder-bridge-summary">
+          <div><span>LOCAL ALERTS</span><strong id="externalLocalStatus">OFF</strong></div>
+          <div><span>CALENDAR</span><strong id="externalCalendarStatus">NOT EXPORTED</strong></div>
+          <div><span>HORIZON</span><strong id="externalHorizonStatus">60 DAYS</strong></div>
+          <div><span>GAPS FOUND</span><strong id="externalMissedStatus">0</strong></div>
+        </div>
+        <p class="reminder-bridge-copy" id="externalReminderCopy">Export ASCEND schedules to your device calendar so its alarms can fire while the PWA is fully closed.</p>
+        <label class="reminder-lead-field">Advance warning<select id="externalReminderLead"><option value="5">5 minutes</option><option value="10">10 minutes</option><option value="15">15 minutes</option><option value="20">20 minutes</option><option value="30">30 minutes</option></select></label>
+        <div class="reminder-bridge-actions">
+          <button class="system-button compact-button" id="externalToggleAlerts" type="button"><b>Enable Local Alerts</b></button>
+          <button class="system-button compact-button secondary-system-button" id="exportReminderCalendar" type="button"><b>Share Device Calendar</b></button>
+          <button class="ghost-button" id="testExternalReminder" type="button">Create 2-Minute Test Reminder</button>
+          <button class="ghost-button" id="confirmExternalCalendar" type="button">Confirm Calendar Imported</button>
+        </div>
+        <p class="reminder-bridge-footnote">After sharing or downloading the .ics file, import it into your phone calendar and keep calendar notifications enabled. Re-export whenever schedules or timezones change.</p>
+        <button class="ghost-button" id="externalRemindersBack" type="button">Back</button>
       </section>
 
       <section class="developer-test-view" id="developerTestView" hidden>
