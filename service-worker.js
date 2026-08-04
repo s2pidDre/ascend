@@ -1,4 +1,4 @@
-const CACHE='ascend-discipline-v34-simplified-developer-tests';
+const CACHE='ascend-discipline-v34-live-time-developer-simulator';
 const ASSETS=[
   './',
   './index.html',

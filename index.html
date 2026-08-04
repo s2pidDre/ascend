@@ -531,27 +531,17 @@
 
       <section class="developer-test-view" id="developerTestView" hidden>
         <div class="config-sigil glyph-frame" aria-hidden="true"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-lab"></use></svg></div>
-        <p class="eyebrow">ISOLATED TESTING</p>
+        <p class="eyebrow">ISOLATED LIVE TESTING</p>
         <h2>Developer Test Mode</h2>
-        <div class="test-mode-banner">FULL-SCREEN TESTS · LIVE DATA PROTECTED</div>
-        <p class="developer-quick-copy">Choose one test. Quick runs clone your current profile and use a safe success path.</p>
-        <div class="developer-quick-grid" id="developerQuickGrid">
-          <button type="button" data-developer-quick="protocol"><span>Protocol</span><small>Active directive</small></button>
-          <button type="button" data-developer-quick="class"><span>Class</span><small>Attendance check</small></button>
-          <button type="button" data-developer-quick="recovery"><span>Recovery</span><small>Failure recovery</small></button>
-          <button type="button" data-developer-quick="lab"><span>Feedback</span><small>Haptic and alert</small></button>
+        <div class="test-mode-banner">FULL-SCREEN SIMULATOR · LIVE DATA PROTECTED</div>
+        <p class="developer-live-copy">Launch the real-time simulator, change its clock, and watch ASCEND move between Sleep, Early Wake, Protocol, Class, and Free Window states automatically.</p>
+        <div class="developer-live-launch-form">
+          <label>Sandbox<select id="testSandboxMode"><option value="profile">Clone Current Profile</option><option value="sample">Clean Sample Data</option></select></label>
+          <label>Start time<span class="time-shell"><input id="developerStartDateTime" type="datetime-local" step="60"></span></label>
         </div>
-        <button class="ghost-button developer-advanced-toggle" id="developerAdvancedToggle" type="button">Advanced Tests</button>
-        <div class="developer-advanced-options" id="developerAdvancedOptions" hidden>
-          <div class="test-form developer-test-options">
-            <label>Scenario<select id="testScenario"><option value="protocol">Protocol State</option><option value="class">Class Check-In</option><option value="boss">Weekly Boss</option><option value="rank">Rank Trial</option><option value="recovery">Recovery Protocol</option><option value="timezone">Timezone Change</option><option value="chain">Full Day Scenario Chain</option><option value="lab">Notification & Haptic Lab</option></select></label>
-            <label>Result<select id="testResult"><option value="success">Success</option><option value="failure">Failure</option><option value="late">Late / Warning</option></select></label>
-            <label>Sandbox<select id="testSandboxMode"><option value="profile">Clone Current Profile</option><option value="sample">Clean Sample Data</option></select></label>
-          </div>
-          <div class="test-result-card" id="testResultCard"><span>ADVANCED TEST</span><strong>Custom scenario</strong><small>Use only when testing alternate outcomes, time controls, or sample data.</small></div>
-          <button class="system-button compact-button" id="runDeveloperTest" type="button"><b>Launch Advanced Test</b></button>
-          <button class="ghost-button" id="resetDeveloperTest" type="button">Clear Test History</button>
-        </div>
+        <button class="system-button compact-button" id="launchDeveloperLive" type="button"><b>Launch Live Simulator</b></button>
+        <button class="ghost-button" id="launchDeveloperFeedback" type="button">Open Feedback Lab</button>
+        <button class="ghost-button" id="resetDeveloperTest" type="button">Clear Test History</button>
         <button class="ghost-button" id="developerTestBack" type="button">Back</button>
       </section>
 
@@ -627,11 +617,17 @@
         <div class="developer-run-deadline" id="developerRunDeadline">
           <span id="developerRunStatus">ON TIME</span><strong id="developerRunCountdown">00:45:00 LEFT</strong>
         </div>
-        <div class="developer-time-controls" id="developerTimeControls">
-          <button type="button" id="developerAdvanceFive">+5 MIN</button>
-          <button type="button" id="developerJumpDeadline">DEADLINE</button>
-          <button type="button" id="developerHideTwenty">HIDE 20M</button>
-          <button type="button" id="developerNextEvent">NEXT</button>
+        <div class="developer-live-toolbar" id="developerLiveToolbar">
+          <div class="developer-live-time-row">
+            <label><span>SIMULATED TIME</span><span class="time-shell"><input id="developerSimulatedDateTime" type="datetime-local" step="1"></span></label>
+            <button type="button" id="developerApplyTime">Apply</button>
+          </div>
+          <div class="developer-live-control-row">
+            <button type="button" id="developerBackFifteen">−15M</button>
+            <button type="button" id="developerForwardFifteen">+15M</button>
+            <button type="button" id="developerNextEvent">Next Event</button>
+            <label><span>SPEED</span><select id="developerTimeSpeed"><option value="0">Paused</option><option value="1" selected>1× Real Time</option><option value="60">60×</option><option value="300">300×</option></select></label>
+          </div>
         </div>
         <article class="developer-run-card system-panel" id="developerRunCard">
           <section class="developer-run-zone developer-run-upper">

@@ -20,6 +20,7 @@
   let controlUi={view:'home',profilePage:0,progressPage:0,directiveIndex:0,achievementPage:0,attendanceTab:'overall',subjectIndex:0,historyIndex:0,correction:false,taskTab:'tasks',taskIndex:0,ruleIndex:0,dependencyIndex:0,rollbackIndex:0,directDeveloper:false,developerAdvanced:false};
   let developerRunSession=null;
   let developerReportPage=0;
+  let developerClockTimer=null;
   let conflictUi={index:0,issues:[]};
   const processedConfirmationTokens=new Set();
   let currentClassContext=null;
@@ -1585,101 +1586,181 @@
     ];
   };
   const renderDiagnostics=async()=>{setControlView('diagnosticsView');$('#diagnosticGrid').innerHTML='<div class="diagnostic-loading">RUNNING CHECKS…</div>';const entries=await collectDiagnostics();$('#diagnosticGrid').innerHTML=entries.map(([label,value])=>`<div class="diagnostic-row ${['UNSUPPORTED','BLOCKED'].includes(value)?'failed':''}"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join('');const watchdog=state.system.watchdog||{};$('#watchdogSummary').innerHTML=`<span>DATA WATCHDOG${watchdog.lastRun?` · ${formatShortDate(watchdog.lastRun)}`:''}</span><strong>${escapeHtml(watchdog.summary||'Not run')}</strong><small>${Number(watchdog.issues||0)} issue(s) · ${Number(watchdog.repairs||0)} repair(s)</small>`};
-  const developerScenarioDefinitions={
-    protocol:{protocol:'WAKE PROTOCOL',window:'5:00 AM – 6:00 AM',type:'CURRENT DIRECTIVE',title:'Leave Your Bed',copy:'Stand up and place both feet on the floor.',icon:'wake',detail:'STEP 1 / 7 · 100 XP',action:'Hold to Confirm',note:'The cloned sandbox receives the simulated result.'},
-    class:{protocol:'CLASS CHECK-IN',window:'9:30 AM – 11:00 AM',type:'ATTENDANCE CHECK',title:'Confirm Your Attendance',copy:'Simulate an early, present, late, or failed check-in window.',icon:'academic',detail:'CHECK-IN WINDOW · 15 MINUTES',action:'Hold to Confirm Attendance',note:'The simulated attendance record stays inside Test Mode.'},
-    boss:{protocol:'WEEKLY BOSS',window:'PERFORMANCE TRIAL',type:'BOSS OBJECTIVE',title:'Morning Sequence Dominion',copy:'Clear every morning protocol without a late confirmation.',icon:'quest',detail:'OBJECTIVE · 5 SUCCESSFUL DAYS',action:'Hold to Resolve Boss',note:'Boss rewards and penalties are isolated from live progression.'},
-    rank:{protocol:'RANK TRIAL',window:'ASCENSION EVALUATION',type:'TRIAL REQUIREMENT',title:'Advance to the Next Rank',copy:'Meet the attendance, discipline, and integrity requirements.',icon:'apex',detail:'REQUIRED · 90% ATTENDANCE',action:'Hold to Resolve Trial',note:'The live player rank cannot change during this simulation.'},
-    recovery:{protocol:'RECOVERY PROTOCOL',window:'RE-ENTER THE SEQUENCE',type:'RECOVERY ACTION',title:'Prepare the Next Protocol',copy:'Acknowledge the failure and arm one practical recovery action.',icon:'recovery',detail:'RECOVERY XP · 0',action:'Hold to Arm Recovery',note:'Recovery remains strict and grants no free XP.'},
-    timezone:{protocol:'TIME INTEGRITY',window:'TIMEZONE CHANGE DETECTED',type:'TIMELINE CONFIRMATION',title:'Confirm Travel or Clock Change',copy:'Existing records keep their original timezone while future schedules await confirmation.',icon:'timezone',detail:'UTC +08:00 → UTC +09:00',action:'Hold to Confirm Timeline',note:'No live timezone or schedule data will be modified.'},
-    lab:{protocol:'SYSTEM LAB',window:'NOTIFICATION & HAPTIC TEST',type:'DEVICE FEEDBACK',title:'Preview System Feedback',copy:'Trigger individual haptic patterns and safe local test alerts.',icon:'lab',detail:'LIVE PROGRESS · PROTECTED',action:'Hold to End Lab Session',note:'Use Exit Test to leave immediately, or hold below to finish and generate a test report.'}
-  };
-  const developerChainEvents=[
-    {scenario:'protocol',protocol:'WAKE PROTOCOL',window:'5:00 AM – 6:00 AM',title:'Wake Confirmation',copy:'Simulate the first required morning confirmation.',icon:'wake',detail:'CHAIN 1 / 5'},
-    {scenario:'protocol',protocol:'BREAKFAST PROTOCOL',window:'6:00 AM – 7:00 AM',title:'Complete Proper Breakfast',copy:'Simulate nutrition and hydration confirmation.',icon:'meal',detail:'CHAIN 2 / 5'},
-    {scenario:'class',protocol:'CLASS CHECK-IN',window:'9:30 AM – 11:00 AM',title:'Confirm Attendance',copy:'Simulate a scheduled class check-in and dismissal.',icon:'academic',detail:'CHAIN 3 / 5'},
-    {scenario:'protocol',protocol:'PRODUCTIVITY PROTOCOL',window:'8:00 PM – 9:00 PM',title:'Execute Priority Task',copy:'Simulate a risk-ranked academic focus block.',icon:'work',detail:'CHAIN 4 / 5'},
-    {scenario:'protocol',protocol:'SHUTDOWN PROTOCOL',window:'9:00 PM – 10:00 PM',title:'Enter Bed and Close the Day',copy:'Simulate the final required shutdown action.',icon:'sleep',detail:'CHAIN 5 / 5'}
-  ];
-  const developerResultDefinitions={
-    success:{status:'ON TIME',countdown:'00:42:18 LEFT',className:'success',glyph:'success',label:'TEST CLEAR',title:'Simulation Cleared',copy:'The success path completed inside isolated test data.',summary:'SUCCESS PATH'},
-    failure:{status:'FAILED',countdown:'00:00:00',className:'failure',glyph:'failure',label:'TEST FAILURE',title:'Failure Path Resolved',copy:'The failure and consequence path completed without changing live records.',summary:'FAILURE PATH'},
-    late:{status:'WARNING',countdown:'00:04:58 LEFT',className:'late',glyph:'clock',label:'WARNING PATH',title:'Late State Simulated',copy:'The warning and deadline path completed without applying a live penalty.',summary:'LATE / WARNING'}
-  };
+  const developerLabDefinition={protocol:'SYSTEM LAB',window:'NOTIFICATION & HAPTIC TEST',type:'DEVICE FEEDBACK',title:'Preview System Feedback',copy:'Trigger individual haptic patterns and safe local test alerts.',icon:'lab',detail:'LIVE PROGRESS · PROTECTED',action:'Hold to End Lab Session',note:'Use Exit Test to leave immediately, or hold below to finish the laboratory session.'};
   const createDeveloperSandbox=mode=>{
     const sandbox=clone(state);
     if(mode==='sample'){
-      sandbox.player={...sandbox.player,name:'Test Player',codename:'Sandbox',level:12,rank:'C',streak:4,totalXp:1850};sandbox.dayRecords={};sandbox.attendanceRecords=[];sandbox.academicTasks=[];sandbox.classSchedule=[];sandbox.scheduleExceptions=[];
+      sandbox.player={...sandbox.player,name:'Test Player',codename:'Sandbox',level:12,rank:'C',streak:4,totalXp:1850};
+      sandbox.dayRecords={};sandbox.attendanceRecords=[];sandbox.academicTasks=[];sandbox.scheduleExceptions=[];
+      sandbox.classSchedule=Array.from({length:7},(_,day)=>({id:`sample-class-${day}`,subject:'Developer Test Class',code:'DEV 101',day,room:'Simulation Room',modality:'Onsite',start:'09:30',end:'11:00',active:true}));
     }
     sandbox.system={...sandbox.system,developerSandbox:true};return sandbox;
   };
   const addDeveloperEvent=(type,detail,data={})=>{if(!developerRunSession)return;developerRunSession.events.push({at:new Date(developerRunSession.simulatedAt).toISOString(),type,detail,...data})};
-  const currentDeveloperScenario=()=>{
-    if(!developerRunSession)return developerScenarioDefinitions.protocol;
-    if(developerRunSession.scenario==='chain')return developerChainEvents[developerRunSession.chainIndex]||developerChainEvents[0];
-    return developerScenarioDefinitions[developerRunSession.scenario]||developerScenarioDefinitions.protocol;
-  };
   const developerSandboxSummary=sandbox=>`${sandbox.player?.codename||sandbox.player?.name||'Player'} · Level ${sandbox.player?.level||1} · ${sandbox.classSchedule?.length||0} classes · ${sandbox.academicTasks?.filter(task=>task.status!=='completed').length||0} pending tasks`;
-  const renderDeveloperTest=()=>{setControlView('developerTestView');const test=state.system.developerTest||{},advanced=$('#developerAdvancedOptions');if(advanced)advanced.hidden=!controlUi.developerAdvanced;const toggle=$('#developerAdvancedToggle');if(toggle)toggle.textContent=controlUi.developerAdvanced?'Hide Advanced Tests':'Advanced Tests';$('#testSandboxMode').value=test.sandboxMode||'profile';$('#testResultCard').innerHTML=test.lastResult?`<span>${escapeHtml(String(test.scenario||'test').toUpperCase())} · RUN ${test.runs||0}</span><strong>${escapeHtml(test.lastResult.title)}</strong><small>${escapeHtml(test.lastResult.copy)}</small>`:'<span>ADVANCED TEST</span><strong>Custom scenario</strong><small>Use only when testing alternate outcomes, time controls, or sample data.</small>'};
+  const developerDateTimeValue=value=>{
+    const date=value instanceof Date?value:new Date(value);if(Number.isNaN(date.getTime()))return'';
+    return `${date.getFullYear()}-${pad(date.getMonth()+1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+  };
+  const developerStepCopy=(step,date)=>Array.isArray(step.copy)?step.copy[(date.getDate()+step.id.length)%step.copy.length]:step.copy;
+  const developerClassesForDate=date=>{
+    if(!developerRunSession)return[];const sandbox=developerRunSession.sandbox,key=S.dateKey(date),exceptions=(sandbox.scheduleExceptions||[]).filter(item=>item.active!==false&&item.date===key);
+    if(exceptions.some(item=>item.type==='no-classes'))return[];
+    let entries=(sandbox.classSchedule||[]).filter(entry=>entry.active!==false&&Number(entry.day)===date.getDay()).map(entry=>({...entry}));
+    exceptions.forEach(exception=>{
+      if(exception.type==='cancel')entries=entries.filter(entry=>entry.id!==exception.classId);
+      if(['reschedule','special'].includes(exception.type))entries=entries.map(entry=>entry.id===exception.classId?{...entry,start:exception.start||entry.start,end:exception.end||entry.end,exceptionType:exception.type}:entry);
+    });
+    return entries.sort((a,b)=>minutes(a.start)-minutes(b.start));
+  };
+  const developerProtocolProgress=(date,config)=>{
+    const session=developerRunSession,key=S.dateKey(date);session.protocolProgress=session.protocolProgress||{};session.protocolProgress[key]=session.protocolProgress[key]||{};
+    if(!session.protocolProgress[key][config.id])session.protocolProgress[key][config.id]={stepIndex:config.id==='wake'?1:0,cleared:false,failed:false,timers:{}};
+    return session.protocolProgress[key][config.id];
+  };
+  const developerAttendanceRecord=(entry,date)=>{
+    const session=developerRunSession,key=`${S.dateKey(date)}::${entry.id}`;session.attendance=session.attendance||{};
+    return session.attendance[key]||(session.attendance[key]={checkedInAt:null,status:'unverified',finalized:false,dismissedAt:null});
+  };
+  const developerNextEventMoment=from=>{
+    if(!developerRunSession)return null;const candidates=[];
+    for(let offset=0;offset<3;offset+=1){
+      const date=new Date(from);date.setDate(from.getDate()+offset);date.setHours(0,0,0,0);
+      [['04:00','Early Wake Window'],['05:00','Wake Protocol'],['22:00','Recovery Window']].forEach(([time,label])=>candidates.push({at:timeOnDate(date,time),label}));
+      protocolBlueprints.forEach(config=>candidates.push({at:timeOnDate(date,config.start),label:config.name}));
+      developerClassesForDate(date).forEach(entry=>candidates.push({at:timeOnDate(date,entry.start),label:`${entry.subject} Class`}));
+    }
+    return candidates.filter(item=>item.at>from).sort((a,b)=>a.at-b.at)[0]||null;
+  };
+  const developerClassStateAt=now=>{
+    for(const entry of developerClassesForDate(now)){
+      const record=developerAttendanceRecord(entry,now),start=timeOnDate(now,entry.start),end=timeOnDate(now,entry.end);
+      if(record.finalized)continue;
+      if(record.checkedInAt){
+        if(now<end)return{mode:'active',entry,record,start,end};
+        if(now-end<=60*60000)return{mode:'dismissal',entry,record,start,end};
+        record.finalized=true;continue;
+      }
+      if(now>=start&&now<end)return{mode:'checkin',entry,record,start,end};
+      if(now<start&&start-now<=15*60000)return{mode:'approaching',entry,record,start,end};
+      if(now>=end&&now-end<=60*60000)return{mode:'resolve',entry,record,start,end};
+    }
+    return null;
+  };
+  const developerLiveStateAt=now=>{
+    const session=developerRunSession;
+    if(session.mode==='lab')return{kind:'lab',...developerLabDefinition,status:'LAB READY',countdown:'SESSION ACTIVE',resultClass:'success',layout:'lab',actionDisabled:false};
+    const dateKey=S.dateKey(now),minute=todayMinutes(now);
+    if(isSleepWindow(now)){
+      const wake=nextWakeMoment(now);return{kind:'sleep',protocol:'RECOVERY WINDOW',window:'10:00 PM – 4:00 AM',type:'SYSTEM STANDBY',title:'Recovery Window',copy:'ASCEND remains in low-power recovery until the Early Wake window opens.',icon:'sleep',detail:`WAKE PROTOCOL · ${formatClock(wake)}`,status:'STANDBY',countdown:`${formatDuration(Math.max(0,wake-now))} UNTIL WAKE`,resultClass:'success',layout:'plain',action:null,note:'Advance or edit simulated time to watch the next system state appear.'};
+    }
+    session.earlyWakeConfirmed=session.earlyWakeConfirmed||{};
+    if(isEarlyWakeWindow(now)&&!session.earlyWakeConfirmed[dateKey]){
+      const wake=timeOnDate(now,'05:00');return{kind:'early',protocol:'EARLY WAKE SIGN-IN',window:'4:00 AM – 5:00 AM',type:'CONSCIOUSNESS CHECK',title:'Are You Awake?',copy:'Confirming now records an early wake and begins the Wake Protocol inside the sandbox.',icon:'signal',detail:'EARLY START AVAILABLE',status:'AVAILABLE',countdown:`${formatDuration(Math.max(0,wake-now))} UNTIL 5:00 AM`,resultClass:'success',layout:'plain',action:'Hold to Confirm Awake',note:'This confirmation affects only isolated Developer Test data.'};
+    }
+    let config=protocolBlueprints.find(item=>minute>=minutes(item.start)&&minute<minutes(item.end));
+    if(!config&&session.earlyWakeConfirmed[dateKey]&&minute>=240&&minute<360)config=blueprint('wake');
+    if(config){
+      const progress=developerProtocolProgress(now,config),steps=config.subtasks(session.sandbox.player?.level||1),end=timeOnDate(now,config.end),timeLeft=Math.max(0,end-now);
+      if(!progress.cleared){
+        if(progress.failed)return{kind:'protocol-failed',config,progress,protocol:config.name.toUpperCase(),window:`${formatTime(config.start)} – ${formatTime(config.end)}`,type:'PROTOCOL FAILED',title:`${config.name} Failed`,copy:'The simulated deadline passed before every required stage was completed.',icon:'failure',detail:`0 XP · ${progress.stepIndex} / ${steps.length} COMPLETED`,status:'FAILED',countdown:'00:00:00',resultClass:'failure',layout:'plain',action:null,note:'Reset the simulator or move to a new date to test a fresh sequence.'};
+        if(progress.stepIndex>=steps.length){progress.cleared=true}
+        else{
+          const task=steps[progress.stepIndex],timerStart=progress.timers[task.id],timerRemaining=task.type==='timer'&&timerStart?Math.max(0,task.duration*60000-(now-new Date(timerStart))):null;
+          const minutesLeft=timeLeft/60000,resultClass=minutesLeft<=5?'failure':minutesLeft<=10?'late':'success',status=minutesLeft<=5?'CRITICAL':minutesLeft<=10?'WARNING':'ON TIME';
+          let action=task.type==='timer'?(timerStart?(timerRemaining>0?'Dungeon in Progress':'Hold to Confirm Dungeon Clear'):'Hold to Start Dungeon'):(task.type==='tap'?'Hold to Confirm Complete':'Hold to Confirm');
+          const actionDisabled=task.type==='timer'&&Boolean(timerStart)&&timerRemaining>0;
+          const detail=task.type==='timer'?(timerStart?`${formatDuration(timerRemaining)} · ${timerRemaining>0?'DUNGEON ACTIVE':'TIME CLEARED'}`:`${task.duration}:00 REQUIRED TIME`):`STEP ${progress.stepIndex+1} / ${steps.length} · ${config.xp} XP AVAILABLE`;
+          return{kind:'protocol',config,progress,task,steps,protocol:config.name.toUpperCase(),window:`${formatTime(config.start)} – ${formatTime(config.end)}`,type:task.id==='execution-plan'&&config.id==='productivity'?'WEEKLY BOSS DIRECTIVE':'CURRENT DIRECTIVE',title:task.title,copy:developerStepCopy(task,now),icon:task.icon||config.icon,detail,status,countdown:`${formatDuration(timeLeft)} LEFT`,resultClass,layout:task.type==='timer'?'timed':'plain',action,actionDisabled,note:'Complete every required stage before the simulated fixed deadline.'};
+        }
+      }
+    }
+    const classState=developerClassStateAt(now);
+    if(classState){
+      const {entry,record,start,end,mode}=classState,until=mode==='approaching'?start-now:Math.max(0,end-now),location=[entry.modality,entry.room].filter(Boolean).join(' · ');
+      if(mode==='approaching')return{kind:'class',classMode:mode,entry,record,protocol:'CLASS APPROACHING',window:`${formatTime(entry.start)} – ${formatTime(entry.end)}`,type:entry.code||'SCHEDULED CLASS',title:entry.subject,copy:`${location||'Scheduled meeting'} begins soon. Early attendance confirmation is available.`,icon:'academic',detail:'CHECK-IN OPENS · 15 MINUTES EARLY',status:'APPROACHING',countdown:`${formatDuration(until)} UNTIL CLASS`,resultClass:'success',layout:'plain',action:'Hold to Confirm Attendance',note:'Attendance stays inside the isolated sandbox.'};
+      if(mode==='checkin')return{kind:'class',classMode:mode,entry,record,protocol:'CLASS CHECK-IN',window:`${formatTime(entry.start)} – ${formatTime(entry.end)}`,type:entry.code||'ATTENDANCE CHECK',title:entry.subject,copy:`Confirm that you are present for ${location||'the scheduled class'}.`,icon:'academic',detail:'ATTENDANCE XP · PENDING',status:now-start<=10*60000?'ON TIME':'LATE',countdown:`${formatDuration(until)} CLASS REMAINING`,resultClass:now-start<=10*60000?'success':'late',layout:'plain',action:'Hold to Confirm Attendance',note:'The simulated attendance record remains isolated.'};
+      if(mode==='active')return{kind:'class',classMode:mode,entry,record,protocol:'CLASS ACTIVE',window:`${formatTime(entry.start)} – ${formatTime(entry.end)}`,type:entry.code||'ATTENDANCE ACTIVE',title:entry.subject,copy:`Attendance confirmed. ASCEND is waiting for the scheduled dismissal.`,icon:'academic',detail:`${String(record.status||'present').toUpperCase()} · XP PENDING`,status:'PRESENT',countdown:`${formatDuration(until)} REMAINING`,resultClass:'success',layout:'plain',action:'Hold to Dismiss Early',note:'Use the simulated clock to reach the normal dismissal time.'};
+      return{kind:'class',classMode:mode,entry,record,protocol:mode==='resolve'?'ATTENDANCE UNRESOLVED':'CLASS DISMISSAL',window:`${formatTime(entry.start)} – ${formatTime(entry.end)}`,type:'ATTENDANCE RESOLUTION',title:entry.subject,copy:mode==='resolve'?'The class ended without a check-in. Resolve the simulated attendance record.':'The scheduled class has ended. Finalize dismissal and attendance XP.',icon:'academic',detail:mode==='resolve'?'UNVERIFIED · 0 XP':'DISMISSAL READY',status:mode==='resolve'?'UNVERIFIED':'COMPLETE',countdown:'CLASS ENDED',resultClass:mode==='resolve'?'late':'success',layout:'plain',action:mode==='resolve'?'Hold to Resolve Present':'Hold to Confirm Dismissal',note:'No live attendance record will be created.'};
+    }
+    const next=developerNextEventMoment(now),countdown=next?formatDuration(Math.max(0,next.at-now)):'--:--:--';
+    return{kind:'free',protocol:'FREE WINDOW',window:'SYSTEM STANDBY',type:next?'NEXT DIRECTIVE':'NO PENDING EVENT',title:next?next.label:'Free Window',copy:next?`The next simulated event begins at ${formatClock(next.at)}.`:'No additional event is scheduled in the current test horizon.',icon:'signal',detail:next?`${formatDate(next.at)} · ${formatClock(next.at)}`:'LIVE DATA PROTECTED',status:'FREE',countdown:next?`${countdown} UNTIL NEXT`:'NO EVENT',resultClass:'success',layout:'plain',action:null,note:'Change simulated time to inspect another app state.'};
+  };
+  const reconcileDeveloperTimeline=(fromMs,toMs)=>{
+    if(!developerRunSession||toMs<=fromMs)return;const from=new Date(fromMs),to=new Date(toMs),cursor=new Date(from);cursor.setHours(0,0,0,0);let days=0,lastFailure=null;
+    while(cursor<=to&&days<14){
+      protocolBlueprints.forEach(config=>{const end=timeOnDate(cursor,config.end);if(end>from&&end<=to){const progress=developerProtocolProgress(cursor,config);if(!progress.cleared&&!progress.failed){progress.failed=true;lastFailure=config.name;addDeveloperEvent('deadline',`${config.name} failed at its simulated deadline`)}}});
+      cursor.setDate(cursor.getDate()+1);days+=1;
+    }
+    if(lastFailure)showSystemNotice('alert','SIMULATED DEADLINE PASSED',`${lastFailure} was marked failed inside the sandbox.`,2100);
+  };
+  const setDeveloperSimulatedTime=(value,reason='Simulated time changed')=>{
+    if(!developerRunSession)return;const next=value instanceof Date?value.getTime():Number(value);if(!Number.isFinite(next))return;
+    const previous=developerRunSession.simulatedAt;reconcileDeveloperTimeline(previous,next);developerRunSession.simulatedAt=next;developerRunSession.lastRealTick=performance.now();addDeveloperEvent('time',`${reason}: ${new Date(next).toISOString()}`);renderDeveloperRun();
+  };
   const updateDeveloperTimeDisplay=()=>{
-    if(!developerRunSession)return;const simulated=new Date(developerRunSession.simulatedAt);$('#developerRunWindow').dataset.simulated=formatClock(simulated);$('#developerRunFooterLeft').textContent=developerRunSession.advanced?`SIMULATED ${formatClock(simulated)} · ${developerRunSession.scenario==='chain'?`EVENT ${developerRunSession.chainIndex+1}/${developerChainEvents.length}`:'ADVANCED TEST'}`:'QUICK TEST · ISOLATED SESSION';
+    if(!developerRunSession)return;const simulated=new Date(developerRunSession.simulatedAt),speed=Number(developerRunSession.speed||0),input=$('#developerSimulatedDateTime');
+    if(input&&document.activeElement!==input)input.value=developerDateTimeValue(simulated);
+    const speedText=speed===0?'PAUSED':speed===1?'1× REAL TIME':`${speed}× SPEED`;
+    $('#developerRunFooterLeft').textContent=`${formatDate(simulated).toUpperCase()} · ${formatClock(simulated)} · ${speedText}`;
+    const speedControl=$('#developerTimeSpeed');if(speedControl&&speedControl.value!==String(speed))speedControl.value=String(speed);
   };
   const renderDeveloperRun=()=>{
-    if(!developerRunSession)return;const scenario=currentDeveloperScenario(),result=developerResultDefinitions[developerRunSession.result]||developerResultDefinitions.success,isLab=developerRunSession.scenario==='lab',advanced=Boolean(developerRunSession.advanced);
-    const overlay=$('#developerRunOverlay');overlay.dataset.result=result.className;overlay.dataset.scenario=developerRunSession.scenario;overlay.dataset.mode=advanced?'advanced':'quick';$('#developerRunCard').classList.toggle('developer-run-card-lab',isLab);$('#developerRunActive').hidden=false;$('#developerRunResult').hidden=true;
-    $('#developerRunProtocol').textContent=scenario.protocol;$('#developerRunWindow').textContent=scenario.window;$('#developerRunStatus').textContent=isLab?'LAB READY':result.status;$('#developerRunCountdown').textContent=isLab?'SESSION ACTIVE':result.countdown;$('#developerRunType').textContent=scenario.type||'CURRENT DIRECTIVE';$('#developerRunTitle').textContent=scenario.title;$('#developerRunCopy').textContent=scenario.copy;$('#developerRunDetail').innerHTML=advanced?`<span>${escapeHtml(result.summary)}</span><strong>${escapeHtml(scenario.detail)}</strong><small>${escapeHtml(developerSandboxSummary(developerRunSession.sandbox))}</small>`:`<strong>${escapeHtml(scenario.detail)}</strong>`;$('#developerRunDetail').hidden=isLab;$('#developerRunActionLabel').textContent=scenario.action||'Hold to Resolve Test';$('#developerRunNote').textContent=scenario.note||'Test data only. Live records remain protected.';$('#developerRunFill').style.width='0%';setGlyph('developerRunGlyph',scenario.icon);
-    $('#developerLabPanel').hidden=!isLab;$('#developerTimeControls').hidden=isLab||!advanced;updateDeveloperTimeDisplay();
+    if(!developerRunSession)return;const live=developerLiveStateAt(new Date(developerRunSession.simulatedAt)),isLab=live.kind==='lab',overlay=$('#developerRunOverlay');developerRunSession.currentState=live;
+    overlay.dataset.result=live.resultClass||'success';overlay.dataset.scenario=isLab?'lab':'live';overlay.dataset.mode='live';$('#developerRunCard').classList.toggle('developer-run-card-lab',isLab);$('#developerRunCard').dataset.layout=live.layout||'plain';$('#developerRunActive').hidden=false;$('#developerRunResult').hidden=true;
+    $('#developerRunProtocol').textContent=live.protocol;$('#developerRunWindow').textContent=live.window;$('#developerRunStatus').textContent=live.status;$('#developerRunCountdown').textContent=live.countdown;$('#developerRunType').textContent=live.type;$('#developerRunTitle').textContent=live.title;$('#developerRunCopy').textContent=live.copy;$('#developerRunDetail').innerHTML=live.detail?`<strong>${escapeHtml(live.detail)}</strong>`:'';$('#developerRunDetail').hidden=isLab||!live.detail;$('#developerLabPanel').hidden=!isLab;$('#developerLiveToolbar').hidden=isLab;$('#developerRunFill').style.width='0%';setGlyph('developerRunGlyph',live.icon||'apex');
+    const action=$('#developerRunAction');action.hidden=!live.action;action.disabled=Boolean(live.actionDisabled);$('#developerRunActionLabel').textContent=live.action||'No Action Required';$('#developerRunNote').textContent=live.note||'Test data only. Live records remain protected.';$('#developerRunNote').hidden=!live.note;
+    const step=$('.developer-run-step');if(step){step.querySelector('strong').textContent=isLab?'LAB':'LIVE';step.querySelector('span').textContent=isLab?'MODE':'TIME'}
+    updateDeveloperTimeDisplay();
+  };
+  const startDeveloperClock=()=>{
+    clearInterval(developerClockTimer);if(!developerRunSession)return;developerRunSession.lastRealTick=performance.now();developerClockTimer=setInterval(()=>{
+      if(!developerRunSession||developerRunSession.mode!=='live')return;const now=performance.now(),speed=Number(developerRunSession.speed||0),elapsed=now-developerRunSession.lastRealTick;developerRunSession.lastRealTick=now;
+      if(speed>0){const previous=developerRunSession.simulatedAt,next=previous+elapsed*speed;reconcileDeveloperTimeline(previous,next);developerRunSession.simulatedAt=next;renderDeveloperRun()}
+    },250);
+  };
+  const stopDeveloperClock=()=>{clearInterval(developerClockTimer);developerClockTimer=null};
+  const renderDeveloperTest=()=>{
+    setControlView('developerTestView');const test=state.system.developerTest||{},start=$('#developerStartDateTime');$('#testSandboxMode').value=test.sandboxMode||'profile';if(start&&document.activeElement!==start)start.value=developerDateTimeValue(new Date());
   };
   const launchDeveloperRun=(options={})=>{
-    const scenario=options.scenario||$('#testScenario').value,result=options.result||$('#testResult').value,sandboxMode=options.sandboxMode||$('#testSandboxMode').value||'profile',advanced=Boolean(options.advanced);state.system=state.system||{};state.system.developerTest=state.system.developerTest||{};state.system.developerTest.sandboxMode=sandboxMode;
-    developerRunSession={scenario,result,sandboxMode,advanced,sandbox:createDeveloperSandbox(sandboxMode),simulatedAt:Date.now(),chainIndex:0,hiddenMinutes:0,completed:false,startedAt:new Date().toISOString(),returnDirect:Boolean(controlUi.directDeveloper),events:[],reportPages:[]};
-    addDeveloperEvent('sandbox',`Created ${sandboxMode==='profile'?'real-profile clone':'clean sample'} sandbox`,{summary:developerSandboxSummary(developerRunSession.sandbox)});addDeveloperEvent('state',`Entered full-screen ${advanced?'advanced':'quick'} Developer Test Mode`);
-    cancelHold();$('#scheduleOverlay').hidden=true;$('#developerRunOverlay').hidden=false;document.body.classList.add('developer-test-running');releaseWakeLock();renderDeveloperRun();requestAnimationFrame(()=>$('#developerRunOverlay').classList.add('developer-run-visible'));haptic('tap');
+    const mode=options.mode||'live',sandboxMode=options.sandboxMode||$('#testSandboxMode')?.value||'profile',inputValue=$('#developerStartDateTime')?.value,parsed=inputValue?new Date(inputValue):null,simulatedAt=Number(options.simulatedAt)||(parsed&&!Number.isNaN(parsed.getTime())?parsed.getTime():Date.now());state.system=state.system||{};state.system.developerTest=state.system.developerTest||{};state.system.developerTest.sandboxMode=sandboxMode;
+    developerRunSession={mode,sandboxMode,sandbox:createDeveloperSandbox(sandboxMode),simulatedAt,speed:mode==='live'?1:0,lastRealTick:performance.now(),protocolProgress:{},attendance:{},earlyWakeConfirmed:{},completed:false,startedAt:new Date().toISOString(),returnDirect:options.returnDirect??Boolean(controlUi.directDeveloper),events:[]};
+    addDeveloperEvent('sandbox',`Created ${sandboxMode==='profile'?'real-profile clone':'clean sample'} sandbox`,{summary:developerSandboxSummary(developerRunSession.sandbox)});addDeveloperEvent('state',`Entered full-screen ${mode==='live'?'live-time simulator':'feedback laboratory'}`);
+    cancelHold();$('#scheduleOverlay').hidden=true;$('#developerRunOverlay').hidden=false;document.body.classList.add('developer-test-running');releaseWakeLock();renderDeveloperRun();requestAnimationFrame(()=>$('#developerRunOverlay').classList.add('developer-run-visible'));if(mode==='live')startDeveloperClock();haptic('tap');
   };
-  const advanceDeveloperTime=(minutesToAdd,reason)=>{if(!developerRunSession)return;developerRunSession.simulatedAt+=minutesToAdd*60000;addDeveloperEvent('time',`${reason}: +${minutesToAdd} minute(s)`);updateDeveloperTimeDisplay();showSystemNotice('integrity','SIMULATED TIME UPDATED',`${reason} · ${formatClock(new Date(developerRunSession.simulatedAt))}`,1700)};
-  const jumpDeveloperDeadline=()=>{if(!developerRunSession)return;developerRunSession.simulatedAt+=45*60000;addDeveloperEvent('deadline','Jumped directly to the scenario deadline',{decision:developerRunSession.result});$('#developerRunCountdown').textContent='00:00:00';$('#developerRunStatus').textContent=developerRunSession.result==='success'?'DEADLINE':'FAILED';updateDeveloperTimeDisplay()};
-  const hideDeveloperTwenty=()=>{if(!developerRunSession)return;developerRunSession.hiddenMinutes+=20;developerRunSession.simulatedAt+=20*60000;addDeveloperEvent('visibility','Simulated app hidden for 20 minutes',{recalculated:true});$('#developerRunCountdown').textContent='00:22:18 LEFT';updateDeveloperTimeDisplay();showSystemNotice('integrity','BACKGROUND RETURN SIMULATED','Timers recalculated from absolute timestamps.',2000)};
-  const nextDeveloperEvent=()=>{if(!developerRunSession)return;if(developerRunSession.scenario!=='chain'){advanceDeveloperTime(15,'Advanced to next scheduled event');return}if(developerRunSession.chainIndex<developerChainEvents.length-1){addDeveloperEvent('chain',`Resolved ${currentDeveloperScenario().protocol}`);developerRunSession.chainIndex+=1;developerRunSession.simulatedAt+=60*60000;renderDeveloperRun()}else completeDeveloperRun()};
-  const buildDeveloperReport=()=>{
-    const result=developerResultDefinitions[developerRunSession.result]||developerResultDefinitions.success,scenario=currentDeveloperScenario(),events=developerRunSession.events;
-    const checks=[
-      ['Sandbox',developerRunSession.sandboxMode==='profile'?'Current profile clone':'Clean sample data'],
-      ['States',`${events.filter(item=>item.type==='state'||item.type==='chain').length+1} entered`],
-      ['Simulated time',formatClock(new Date(developerRunSession.simulatedAt))],
-      ['Hidden return',`${developerRunSession.hiddenMinutes} minute(s)`],
-      ['Reward decision',developerRunSession.result==='success'?'Would award simulated XP':'Would award 0 simulated XP'],
-      ['Penalty decision',developerRunSession.result==='failure'?'Would apply simulated failure':'No live penalty'],
-      ['Haptic events',`${events.filter(item=>item.type==='haptic').length}`],
-      ['Notifications',`${events.filter(item=>item.type==='notification').length}`],
-      ['Deadline state',result.summary],
-      ['Duplicate guard','Passed · one resolution token'],
-      ['Live XP','Unchanged'],
-      ['Live records','Protected'],
-      ['Errors','0 detected'],
-      ['Scenario',scenario.protocol]
-    ];
-    const pages=[];for(let i=0;i<checks.length;i+=4)pages.push(checks.slice(i,i+4));return pages;
-  };
-  const renderDeveloperReportPage=()=>{
-    const pages=developerRunSession?.reportPages||[];developerReportPage=clamp(developerReportPage,0,Math.max(0,pages.length-1));const page=pages[developerReportPage]||[];$('#developerReportCard').innerHTML=page.map(([label,value])=>`<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(String(value))}</strong></div>`).join('');$('#developerReportNav').hidden=pages.length<=1;$('#developerReportPageLabel').textContent=pages.length?`${developerReportPage+1} / ${pages.length}`:'0 / 0';$('#developerReportPrev').disabled=developerReportPage===0;$('#developerReportNext').disabled=developerReportPage>=pages.length-1;
-  };
+  const advanceDeveloperTime=(minutesToAdd,reason)=>{if(!developerRunSession)return;setDeveloperSimulatedTime(developerRunSession.simulatedAt+minutesToAdd*60000,reason||`${minutesToAdd} minute adjustment`)};
+  const nextDeveloperEvent=()=>{if(!developerRunSession)return;const next=developerNextEventMoment(new Date(developerRunSession.simulatedAt));if(next)setDeveloperSimulatedTime(next.at.getTime(),`Jumped to ${next.label}`)};
+  const applyDeveloperDateTime=()=>{const input=$('#developerSimulatedDateTime'),date=input?.value?new Date(input.value):null;if(!date||Number.isNaN(date.getTime())){showBreachWarning('INVALID TEST TIME','Choose a valid simulated date and time.');return}setDeveloperSimulatedTime(date,'Manual simulated time')};
+  const setDeveloperSpeed=value=>{if(!developerRunSession)return;developerRunSession.speed=clamp(Number(value||0),0,300);developerRunSession.lastRealTick=performance.now();addDeveloperEvent('speed',`Simulation speed set to ${developerRunSession.speed}x`);renderDeveloperRun()};
   const completeDeveloperRun=()=>{
-    if(!developerRunSession||developerRunSession.completed)return;if(developerRunSession.scenario==='chain'&&developerRunSession.chainIndex<developerChainEvents.length-1){nextDeveloperEvent();return}developerRunSession.completed=true;const scenario=currentDeveloperScenario(),result=developerResultDefinitions[developerRunSession.result]||developerResultDefinitions.success,test=state.system.developerTest,advanced=Boolean(developerRunSession.advanced);
-    addDeveloperEvent('resolution',`${scenario.protocol} resolved as ${result.summary}`);developerRunSession.reportPages=buildDeveloperReport();developerReportPage=0;
-    test.enabled=true;test.scenario=developerRunSession.scenario;test.runs=Number(test.runs||0)+1;const report={id:S.uid('test'),at:new Date().toISOString(),scenario:developerRunSession.scenario,result:developerRunSession.result,sandboxMode:developerRunSession.sandboxMode,advanced,events:clone(developerRunSession.events),summary:developerRunSession.reportPages.flat()};test.reports=[...(test.reports||[]),report].slice(-30);test.lastResult={at:report.at,title:`${scenario.protocol} · ${result.summary}`,copy:advanced?`${result.copy} ${developerSandboxSummary(developerRunSession.sandbox)}`:result.copy};state.logs.push({id:S.uid('log'),at:report.at,type:'test',message:`Developer test completed: ${developerRunSession.scenario} · ${developerRunSession.result}.`});save({silent:true});
-    $('#developerRunActive').hidden=true;$('#developerRunResult').hidden=false;$('#developerRunResultLabel').textContent=result.label;$('#developerRunResultTitle').textContent=result.title;$('#developerRunResultCopy').textContent=result.copy;$('#developerRunResultGrid').innerHTML=advanced?`<div><span>SCENARIO</span><strong>${escapeHtml(scenario.protocol)}</strong></div><div><span>RESULT</span><strong>${escapeHtml(result.summary)}</strong></div><div><span>SANDBOX</span><strong>${escapeHtml(developerRunSession.sandboxMode.toUpperCase())}</strong></div><div><span>LIVE DATA</span><strong>PROTECTED</strong></div>`:`<div><span>SCENARIO</span><strong>${escapeHtml(scenario.protocol)}</strong></div><div><span>LIVE DATA</span><strong>PROTECTED</strong></div>`;setGlyph('developerRunResultGlyph',result.glyph);$('#developerRunResultGlyph').className=`developer-run-result-emblem glyph-frame ${result.className}`;$('#developerReportCard').hidden=!advanced;$('#developerReportNav').hidden=true;if(advanced){renderDeveloperReportPage()}else{$('#developerReportCard').innerHTML=''}haptic(developerRunSession.result==='failure'?'failed':developerRunSession.result==='late'?'warning':'clear');
+    if(!developerRunSession)return;const live=developerRunSession.currentState,now=new Date(developerRunSession.simulatedAt);if(!live)return;
+    if(live.kind==='lab'){addDeveloperEvent('resolution','Feedback laboratory session ended');exitDeveloperRun(true);return}
+    if(live.kind==='early'){developerRunSession.earlyWakeConfirmed[S.dateKey(now)]=true;const wake=developerProtocolProgress(now,blueprint('wake'));wake.stepIndex=Math.max(1,wake.stepIndex);addDeveloperEvent('state','Early wake confirmed');haptic('start');showSystemNotice('integrity','SIMULATED WAKE CONFIRMED','Wake Protocol opened inside isolated test data.',1800);renderDeveloperRun();return}
+    if(live.kind==='protocol'){
+      const {progress,task,steps,config}=live;if(task.type==='timer'){
+        const started=progress.timers[task.id];if(!started){progress.timers[task.id]=now.toISOString();addDeveloperEvent('timer',`${task.title} started`);haptic('start');renderDeveloperRun();return}
+        if(now-new Date(started)<task.duration*60000)return;
+      }
+      progress.stepIndex+=1;addDeveloperEvent('completion',`${task.title} completed`);if(progress.stepIndex>=steps.length){progress.cleared=true;addDeveloperEvent('resolution',`${config.name} cleared`);haptic('clear');showSystemNotice('integrity','SIMULATED PROTOCOL CLEARED',`${config.name} completed inside the sandbox.`,1900)}else haptic('tap');renderDeveloperRun();return;
+    }
+    if(live.kind==='class'){
+      const {record,classMode,entry}=live;if(['approaching','checkin','resolve'].includes(classMode)){record.checkedInAt=now.toISOString();record.status=classMode==='approaching'?'early':classMode==='resolve'?'present':now-timeOnDate(now,entry.start)<=10*60000?'present':'late';if(classMode==='resolve'){record.finalized=true;record.dismissedAt=now.toISOString()}addDeveloperEvent('attendance',`${entry.subject} marked ${record.status}`);haptic('attendance');showSystemNotice('integrity','SIMULATED ATTENDANCE RECORDED',`${entry.subject} · ${record.status.toUpperCase()}`,1800)}else{record.finalized=true;record.dismissedAt=now.toISOString();addDeveloperEvent('attendance',`${entry.subject} dismissed`);haptic('dismissal');showSystemNotice('integrity','SIMULATED CLASS DISMISSED',`${entry.subject} finalized inside the sandbox.`,1800)}renderDeveloperRun();
+    }
   };
+  const buildDeveloperReport=()=>[];
+  const renderDeveloperReportPage=()=>{};
   const previewDeveloperHaptic=()=>{if(!developerRunSession)return;const kind=$('#developerLabEvent').value;haptic(kind);addDeveloperEvent('haptic',`Previewed ${kind} vibration pattern`);showSystemNotice('integrity','HAPTIC PREVIEW',`${kind.toUpperCase()} pattern triggered.`,1600)};
   const sendDeveloperTestNotification=async()=>{if(!developerRunSession)return;const kind=$('#developerLabEvent').value;if(!('Notification' in window)){showBreachWarning('NOTIFICATIONS UNSUPPORTED','This browser cannot send a local test alert.');return}let permission=Notification.permission;if(permission==='default')permission=await Notification.requestPermission();if(permission!=='granted'){showBreachWarning('ALERT PERMISSION REQUIRED','Allow notifications before running the alert laboratory.');return}try{new Notification(`ASCEND TEST · ${kind.toUpperCase()}`,{body:'Developer Test Mode notification. Live schedule records are unchanged.',tag:`ascend-test-${Date.now()}`,icon:'assets/icon-192.png'});addDeveloperEvent('notification',`Sent ${kind} test notification`);showSystemNotice('alert','TEST ALERT SENT','The notification laboratory completed successfully.',1800)}catch(error){showBreachWarning('TEST ALERT FAILED',error.message||'Notification could not be created.')}};
   const exitDeveloperRun=(returnToPanel=false)=>{
-    cancelHold('developer-run');$('#developerRunFill').style.width='0%';const returnDirect=developerRunSession?.returnDirect??true,overlay=$('#developerRunOverlay');overlay.classList.remove('developer-run-visible');overlay.hidden=true;delete overlay.dataset.scenario;delete overlay.dataset.mode;$('#developerRunCard').classList.remove('developer-run-card-lab');$('#developerRunDetail').hidden=false;$('#developerReportCard').hidden=false;document.body.classList.remove('developer-test-running');developerRunSession=null;developerReportPage=0;
+    stopDeveloperClock();cancelHold('developer-run');$('#developerRunFill').style.width='0%';const returnDirect=developerRunSession?.returnDirect??true,overlay=$('#developerRunOverlay');overlay.classList.remove('developer-run-visible');overlay.hidden=true;delete overlay.dataset.scenario;delete overlay.dataset.mode;$('#developerRunCard').classList.remove('developer-run-card-lab');$('#developerRunDetail').hidden=false;document.body.classList.remove('developer-test-running');developerRunSession=null;developerReportPage=0;
     if(returnToPanel){controlUi.directDeveloper=returnDirect;$('#scheduleOverlay').hidden=false;renderDeveloperTest();releaseWakeLock()}else{controlUi.directDeveloper=false;renderApp();if(activeProtocolRecord())requestWakeLock()}
   };
-  const startDeveloperRunAction=event=>{if(!developerRunSession||developerRunSession.completed)return;event?.preventDefault();beginHold('developer-run',1300,progress=>{$('#developerRunFill').style.width=`${progress*100}%`},completeDeveloperRun)};
-  const runDeveloperTest=()=>launchDeveloperRun({advanced:true});
-  const runQuickDeveloperTest=scenario=>launchDeveloperRun({scenario,result:'success',sandboxMode:'profile',advanced:false});
-  const toggleDeveloperAdvanced=()=>{controlUi.developerAdvanced=!controlUi.developerAdvanced;renderDeveloperTest()};
-  const resetDeveloperTest=()=>{state.system.developerTest={enabled:false,unlocked:true,scenario:'free',simulatedDate:null,runs:0,lastResult:null,sandboxMode:'profile',reports:[],labHistory:[]};save({silent:true});renderDeveloperTest()};
+  const startDeveloperRunAction=event=>{if(!developerRunSession||!developerRunSession.currentState?.action||$('#developerRunAction').disabled)return;event?.preventDefault();beginHold('developer-run',1200,progress=>{$('#developerRunFill').style.width=`${progress*100}%`},completeDeveloperRun)};
+  const runDeveloperTest=()=>launchDeveloperRun({mode:'live'});
+  const runQuickDeveloperTest=scenario=>launchDeveloperRun({mode:scenario==='lab'?'lab':'live'});
+  const toggleDeveloperAdvanced=()=>{};
+  const resetDeveloperTest=()=>{state.system.developerTest={enabled:false,unlocked:true,scenario:'live',simulatedDate:null,runs:0,lastResult:null,sandboxMode:'profile',reports:[],labHistory:[]};save({silent:true});renderDeveloperTest();showSystemNotice('integrity','TEST HISTORY CLEARED','Developer sandbox history was reset.',1600)};
   const renderRecoverySystem=()=>{setControlView('recoverySystemView');const snapshots=S.listSnapshots(),rollbacks=S.listRollbackPoints();$('#recoverySystemSummary').innerHTML=`<div><span>SAFE MODE</span><strong>${state.system.safeMode?'ACTIVE':'STANDBY'}</strong></div><div><span>SNAPSHOTS</span><strong>${snapshots.length}</strong></div><div><span>ROLLBACKS</span><strong>${rollbacks.length}</strong></div><div><span>LAST BOOT</span><strong>${state.system.lastSuccessfulBoot?formatShortDate(state.system.lastSuccessfulBoot):'PENDING'}</strong></div>`;$('#toggleSafeMode').textContent=state.system.safeMode?'Exit Emergency Safe Mode':'Emergency Safe Mode'};
   const toggleSafeMode=()=>{state.system.safeMode=!state.system.safeMode;state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'integrity',message:`Emergency Safe Mode ${state.system.safeMode?'enabled':'disabled'}.`});save({silent:true});applySafeMode();renderRecoverySystem()};
   const openEmergencyRecovery=()=>{$('#emergencyRecoveryOverlay').hidden=false;$('#emergencyRestoreSnapshot').disabled=!S.listSnapshots().length};
@@ -1976,8 +2057,8 @@
     if(!$('#emergencyOverlay').hidden)return;
     cancelHold();resetBrandAccessVisual();brandHoldStartedAt=0;brandHoldProtocolActive=false;brandHoldDeveloperReady=false;
     state.system=state.system||{};state.system.developerTest=state.system.developerTest||{};state.system.developerTest.unlocked=true;
-    save({silent:true});controlUi.directDeveloper=true;$('#scheduleOverlay').hidden=false;releaseWakeLock();renderDeveloperTest();haptic('tap');
-    showSystemNotice('integrity','DEVELOPER MODE OPEN','Isolated test data only. Live progress remains protected.',2100);
+    save({silent:true});controlUi.directDeveloper=true;releaseWakeLock();launchDeveloperRun({mode:'live',sandboxMode:'profile',simulatedAt:Date.now(),returnDirect:true});
+    showSystemNotice('integrity','LIVE SIMULATOR OPEN','Change simulated time and watch ASCEND react without changing live progress.',2100);
   };
   const startBrandAccessHold=()=>{
     if(!$('#scheduleOverlay').hidden||!$('#emergencyOverlay').hidden)return;
@@ -2098,19 +2179,20 @@
     $('#testExternalReminder').addEventListener('click',()=>exportReminderCalendar(true));
     $('#confirmExternalCalendar').addEventListener('click',confirmExternalCalendar);
     $('#developerTestBack').addEventListener('click',()=>{if(controlUi.directDeveloper)closeScheduleOverlay();else renderAdvancedSystemHome()});
-    $('#developerQuickGrid').addEventListener('click',event=>{const button=event.target.closest('[data-developer-quick]');if(!button)return;runQuickDeveloperTest(button.dataset.developerQuick)});
-    $('#developerAdvancedToggle').addEventListener('click',toggleDeveloperAdvanced);
-    $('#runDeveloperTest').addEventListener('click',runDeveloperTest);
+    $('#launchDeveloperLive').addEventListener('click',runDeveloperTest);
+    $('#launchDeveloperFeedback').addEventListener('click',()=>launchDeveloperRun({mode:'lab'}));
     $('#resetDeveloperTest').addEventListener('click',resetDeveloperTest);
     $('#exitDeveloperRun').addEventListener('click',()=>exitDeveloperRun(false));
     $('#developerRunAgain').addEventListener('click',()=>exitDeveloperRun(true));
     $('#developerRunExitResult').addEventListener('click',()=>exitDeveloperRun(false));
     $('#developerRunAction').addEventListener('pointerdown',startDeveloperRunAction);
     ['pointerup','pointercancel','pointerleave'].forEach(type=>$('#developerRunAction').addEventListener(type,()=>{cancelHold('developer-run');$('#developerRunFill').style.width='0%'}));
-    $('#developerAdvanceFive').addEventListener('click',()=>advanceDeveloperTime(5,'Manual time acceleration'));
-    $('#developerJumpDeadline').addEventListener('click',jumpDeveloperDeadline);
-    $('#developerHideTwenty').addEventListener('click',hideDeveloperTwenty);
+    $('#developerApplyTime').addEventListener('click',applyDeveloperDateTime);
+    $('#developerSimulatedDateTime').addEventListener('keydown',event=>{if(event.key==='Enter')applyDeveloperDateTime()});
+    $('#developerBackFifteen').addEventListener('click',()=>advanceDeveloperTime(-15,'Moved back 15 minutes'));
+    $('#developerForwardFifteen').addEventListener('click',()=>advanceDeveloperTime(15,'Moved forward 15 minutes'));
     $('#developerNextEvent').addEventListener('click',nextDeveloperEvent);
+    $('#developerTimeSpeed').addEventListener('change',event=>setDeveloperSpeed(event.target.value));
     $('#previewDeveloperHaptic').addEventListener('click',previewDeveloperHaptic);
     $('#sendDeveloperNotification').addEventListener('click',sendDeveloperTestNotification);
     $('#developerReportPrev').addEventListener('click',()=>{developerReportPage=Math.max(0,developerReportPage-1);renderDeveloperReportPage()});
