@@ -178,7 +178,7 @@
         <span class="class-status-chip" id="classStatusChip">CHECK-IN</span>
       </div>
 
-      <article class="class-card system-panel">
+      <article class="class-card system-panel" id="classCard" data-mode="approaching">
         <section class="state-zone state-zone-upper class-upper" aria-label="Class identity">
           <span class="class-code" id="classCode">SUBJECT</span>
           <h1 id="classTitle">Research 2</h1>
@@ -191,23 +191,23 @@
         <section class="state-zone state-zone-lower class-lower" aria-label="Class actions">
           <div class="class-action-grid" id="classCheckinActions">
             <button class="system-button compact-button hold-button" id="classConfirmButton" type="button"><span class="hold-fill" id="classConfirmFill"></span><b>Hold to Confirm Present</b></button>
-            <button class="ghost-button" type="button" data-class-action="not-yet">Not There Yet</button>
-            <button class="ghost-button" type="button" data-class-action="cancelled">Class Cancelled</button>
-            <button class="ghost-button danger-ghost" type="button" data-class-action="absent">Mark Absent</button>
+            <button class="ghost-button class-action-secondary" type="button" data-class-action="not-yet">Not There Yet</button>
+            <button class="ghost-button class-action-secondary" type="button" data-class-action="cancelled">Class Cancelled</button>
+            <button class="ghost-button danger-ghost class-action-danger" type="button" data-class-action="absent">Mark Absent</button>
           </div>
 
           <div class="class-action-grid" id="classActiveActions" hidden>
             <button class="system-button compact-button" type="button" data-class-action="dismissed">Dismissed</button>
-            <button class="ghost-button" type="button" data-class-action="ongoing">Still Ongoing</button>
-            <button class="ghost-button" type="button" data-class-action="dismissed-early">Dismissed Early</button>
-            <button class="ghost-button danger-ghost" type="button" data-class-action="cancelled">Class Was Cancelled</button>
+            <button class="ghost-button class-action-secondary" type="button" data-class-action="ongoing">Still Ongoing</button>
+            <button class="ghost-button class-action-secondary" type="button" data-class-action="dismissed-early">Dismissed Early</button>
+            <button class="ghost-button danger-ghost class-action-danger" type="button" data-class-action="cancelled">Class Was Cancelled</button>
           </div>
 
           <div class="class-action-grid" id="classResolveActions" hidden>
             <button class="system-button compact-button" type="button" data-class-action="resolve-present">I Attended</button>
-            <button class="ghost-button" type="button" data-class-action="resolve-late">I Was Late</button>
-            <button class="ghost-button" type="button" data-class-action="cancelled">Class Was Cancelled</button>
-            <button class="ghost-button danger-ghost" type="button" data-class-action="absent">I Was Absent</button>
+            <button class="ghost-button class-action-secondary" type="button" data-class-action="resolve-late">I Was Late</button>
+            <button class="ghost-button class-action-secondary" type="button" data-class-action="cancelled">Class Was Cancelled</button>
+            <button class="ghost-button danger-ghost class-action-danger" type="button" data-class-action="absent">I Was Absent</button>
           </div>
 
           <p class="class-footnote" id="classFootnote">Attendance XP is finalized after dismissal is recorded.</p>

@@ -7,6 +7,7 @@
   let transitionTimer=null;
   let wakeLock=null;
   let lastVisibilityLoss=null;
+  let hiddenFocusContext=null;
   let earlyWakeDismissedSession=false;
   let holdSession=null;
   let brandHoldStartedAt=0;
@@ -274,8 +275,8 @@
     if(morningFailures>=2)return{id:'dawn-chain',title:'Dawn Chain',copy:'Clear Wake and Breakfast on time, then complete the full day.',requirements:['Wake on time','Breakfast on time','Full day clear']};
     if(absences>=1)return{id:'attendance-lock',title:'Attendance Lock',copy:'Resolve every scheduled class and complete the full day without an absence.',requirements:['No absent class','No unresolved class','Full day clear']};
     if(pending>=2)return{id:'deadline-hunter',title:'Deadline Hunter',copy:'Complete at least one academic task during Productivity and clear the full day.',requirements:['Complete one task','Productivity clear','Full day clear'],baselineCompleted:state.academicTasks.filter(task=>task.status==='completed').length};
-    if(breaches>=2)return{id:'focus-unbroken',title:'Focus Unbroken',copy:'Clear every protocol without hiding ASCEND during an active directive.',requirements:['Full day clear','Zero focus breaches']};
-    return{id:'perfect-sequence',title:'Perfect Sequence',copy:'Achieve a Perfect Clear across the complete Saturday sequence.',requirements:['All protocols on time','Zero focus breaches','Full day clear']};
+    if(breaches>=2)return{id:'focus-unbroken',title:'Focus Unbroken',copy:'Clear every timed task without hiding ASCEND while its focus timer is active.',requirements:['Full day clear','Zero timed-task focus breaches']};
+    return{id:'perfect-sequence',title:'Perfect Sequence',copy:'Achieve a Perfect Clear across the complete Saturday sequence.',requirements:['All protocols on time','Zero timed-task focus breaches','Full day clear']};
   };
   const rankTrialPlanFor=rank=>{
     const plans={
@@ -332,6 +333,12 @@
   };
 
   const currentStep=protocol=>protocol?.steps.find(step=>step.status==='pending'||step.status==='active')||null;
+  const timedFocusTypes=new Set(['timer','academic','trading']);
+  const activeTimedFocusContext=()=>{
+    const protocol=activeProtocolRecord(),task=currentStep(protocol);
+    if(!protocol||!task||task.status!=='active'||!timedFocusTypes.has(task.type))return null;
+    return{date:currentKey(),protocolId:protocol.id,taskId:task.id,startedAt:new Date()};
+  };
   const stepCopy=step=>Array.isArray(step.copy)?step.copy[(new Date().getDate()+step.id.length)%step.copy.length]:step.copy;
   const startProtocol=(record,config,now=new Date())=>{
     const protocol=record.protocols[config.id];
@@ -643,6 +650,7 @@
   const renderClassScreen=(context,now=new Date())=>{
     requestWakeLock();show('classScreen');document.body.dataset.state=context.mode==='dismissal'||context.mode==='resolve'?'warning':'active';currentClassContext=context;
     const {entry,record,start,end,mode}=context;
+    $('#classCard').dataset.mode=mode;
     $('#classCode').textContent=entry.code||'CLASS';$('#classTitle').textContent=entry.subject;
     $('#classWindow').textContent=`${formatTime(entry.start)} – ${formatTime(entry.end)}`;
     const location=[entry.modality||record?.modality,entry.room||record?.room].filter(Boolean).join(' · ');$('#classLocation').textContent=location||'Location not set';
@@ -1379,7 +1387,7 @@
     const lowest=[...derivedAttributes()].sort((a,b)=>a.value-b.value)[0]?.id||'discipline';
     const templates={
       discipline:{id:'clear-day',title:'Complete the Sequence',copy:'Clear every required protocol today.',xp:30},
-      focus:{id:'no-breach',title:'Unbroken Focus',copy:'Clear the day without a Focus Breach.',xp:35},
+      focus:{id:'no-breach',title:'Unbroken Focus',copy:'Clear the day without leaving ASCEND during an active timed task.',xp:35},
       endurance:{id:'wake-clear',title:'First Victory',copy:'Clear the Wake Protocol today.',xp:25},
       recovery:{id:'recovery-action',title:'Re-enter the Sequence',copy:'Complete an active Recovery Protocol.',xp:25},
       academic:{id:'academic-task',title:'Academic Advance',copy:'Complete one pending academic task today.',xp:30},
@@ -1846,7 +1854,7 @@
       {id:'perfect-attendance',title:'Perfect Attendance',unlocked:academic.required>=5&&academic.attendanceRate===100,detail:'Maintain perfect verified attendance across five classes.',candidateAt:nthAttendanceDate(['early','present','late'],5)},
       {id:'early-arrival-specialist',title:'Early Arrival Specialist',unlocked:academic.counts.early>=5,detail:'Record five early class arrivals.',candidateAt:nthAttendanceDate(['early'],5)},
       {id:'weekly-boss-slayer',title:'Weekly Boss Slayer',unlocked:Boolean(firstBoss),detail:'Defeat one Weekly Boss.',candidateAt:firstBoss?`${firstBoss.date}T22:00:00`:null},
-      {id:'focus-unbroken',title:'Focus Unbroken',unlocked:state.player.totalClearDays>=3&&firstFocusUnlockDate()!=null,detail:'Clear three days without a Focus Breach.',candidateAt:firstFocusUnlockDate()},
+      {id:'focus-unbroken',title:'Focus Unbroken',unlocked:state.player.totalClearDays>=3&&firstFocusUnlockDate()!=null,detail:'Clear three days without a timed-task Focus Breach.',candidateAt:firstFocusUnlockDate()},
       {id:'subject-specialist',title:'Subject Specialist',unlocked:subjects.some(subject=>subject.level>=5),detail:'Reach Subject Level 5.',candidateAt:specialistSource}
     ];
     const unlocks=state.player.achievementUnlocks||(state.player.achievementUnlocks={}),newAchievements=[];
@@ -2307,13 +2315,26 @@
     });
     document.addEventListener('keyup',event=>{if(event.key==='Escape'&&escapeTimer){clearTimeout(escapeTimer);escapeTimer=null}});
     document.addEventListener('visibilitychange',()=>{
-      if(document.hidden){if(activeProtocolRecord()&&$('#emergencyOverlay').hidden&&$('#scheduleOverlay').hidden&&$('#developerRunOverlay').hidden)lastVisibilityLoss=new Date();releaseWakeLock()}
-      else{
-        if(lastVisibilityLoss&&activeProtocolRecord()){
-          const returned=new Date(),duration=Math.max(0,returned-lastVisibilityLoss),protocol=activeProtocolRecord();protocol.focusBreaches=(protocol.focusBreaches||0)+1;protocol.hiddenMilliseconds=(protocol.hiddenMilliseconds||0)+duration;
-          state.logs.push({id:S.uid('log'),at:returned.toISOString(),type:'breach',message:`Focus breach during ${protocol.name}: ${Math.ceil(duration/60000)} minute(s).`});save();showBreachWarning('FOCUS BREACH RECORDED',`ASCEND was hidden for ${Math.max(1,Math.ceil(duration/60000))} minute(s). XP was reduced and the deadline continued.`);
+      if(document.hidden){
+        const overlaysClosed=$('#emergencyOverlay').hidden&&$('#scheduleOverlay').hidden&&$('#developerRunOverlay').hidden;
+        hiddenFocusContext=overlaysClosed?activeTimedFocusContext():null;
+        lastVisibilityLoss=hiddenFocusContext?hiddenFocusContext.startedAt:null;
+        releaseWakeLock();
+      }else{
+        if(hiddenFocusContext&&lastVisibilityLoss){
+          const returned=new Date(),duration=Math.max(0,returned-lastVisibilityLoss);
+          const record=state.dayRecords?.[hiddenFocusContext.date];
+          const protocol=record?.protocols?.[hiddenFocusContext.protocolId];
+          const task=protocol?.steps?.find(step=>step.id===hiddenFocusContext.taskId);
+          if(protocol&&task&&task.status==='active'&&timedFocusTypes.has(task.type)){
+            protocol.focusBreaches=(protocol.focusBreaches||0)+1;
+            protocol.hiddenMilliseconds=(protocol.hiddenMilliseconds||0)+duration;
+            state.logs.push({id:S.uid('log'),at:returned.toISOString(),type:'breach',message:`Timed-task Focus Breach during ${protocol.name} · ${task.title}: ${Math.ceil(duration/60000)} minute(s).`});
+            save();
+            showBreachWarning('FOCUS BREACH RECORDED',`ASCEND was hidden during the active timed task for ${Math.max(1,Math.ceil(duration/60000))} minute(s). Focus XP was reduced and the timer continued.`);
+          }
         }
-        lastVisibilityLoss=null;earlyWakeDismissedSession=false;renderApp();
+        hiddenFocusContext=null;lastVisibilityLoss=null;earlyWakeDismissedSession=false;renderApp();
       }
     });
     window.addEventListener('pageshow',renderApp);window.addEventListener('focus',renderApp);

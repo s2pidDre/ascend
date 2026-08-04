@@ -1,4 +1,4 @@
-const CACHE='ascend-discipline-v34-live-time-developer-simulator';
+const CACHE='ascend-discipline-v35-attendance-focus-rules';
 const ASSETS=[
   './',
   './index.html',
