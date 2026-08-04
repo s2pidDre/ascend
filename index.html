@@ -531,17 +531,27 @@
 
       <section class="developer-test-view" id="developerTestView" hidden>
         <div class="config-sigil glyph-frame" aria-hidden="true"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-lab"></use></svg></div>
-        <p class="eyebrow">ISOLATED SANDBOX</p>
+        <p class="eyebrow">ISOLATED TESTING</p>
         <h2>Developer Test Mode</h2>
-        <div class="test-mode-banner">TEST DATA ONLY · LIVE PROGRESS PROTECTED</div>
-        <div class="test-form developer-test-options">
-          <label>Scenario<select id="testScenario"><option value="protocol">Protocol State</option><option value="class">Class Check-In</option><option value="boss">Weekly Boss</option><option value="rank">Rank Trial</option><option value="recovery">Recovery Protocol</option><option value="timezone">Timezone Change</option><option value="chain">Full Day Scenario Chain</option><option value="lab">Notification & Haptic Lab</option></select></label>
-          <label>Result<select id="testResult"><option value="success">Success</option><option value="failure">Failure</option><option value="late">Late / Warning</option></select></label>
-          <label>Sandbox<select id="testSandboxMode"><option value="profile">Clone Current Profile</option><option value="sample">Clean Sample Data</option></select></label>
+        <div class="test-mode-banner">FULL-SCREEN TESTS · LIVE DATA PROTECTED</div>
+        <p class="developer-quick-copy">Choose one test. Quick runs clone your current profile and use a safe success path.</p>
+        <div class="developer-quick-grid" id="developerQuickGrid">
+          <button type="button" data-developer-quick="protocol"><span>Protocol</span><small>Active directive</small></button>
+          <button type="button" data-developer-quick="class"><span>Class</span><small>Attendance check</small></button>
+          <button type="button" data-developer-quick="recovery"><span>Recovery</span><small>Failure recovery</small></button>
+          <button type="button" data-developer-quick="lab"><span>Feedback</span><small>Haptic and alert</small></button>
         </div>
-        <div class="test-result-card" id="testResultCard"><span>NO TEST RUN</span><strong>Choose a scenario</strong><small>Choose a scenario, then launch the full-screen isolated simulation.</small></div>
-        <button class="system-button compact-button" id="runDeveloperTest" type="button"><b>Launch Full-Screen Test</b></button>
-        <button class="ghost-button" id="resetDeveloperTest" type="button">Reset Test Data</button>
+        <button class="ghost-button developer-advanced-toggle" id="developerAdvancedToggle" type="button">Advanced Tests</button>
+        <div class="developer-advanced-options" id="developerAdvancedOptions" hidden>
+          <div class="test-form developer-test-options">
+            <label>Scenario<select id="testScenario"><option value="protocol">Protocol State</option><option value="class">Class Check-In</option><option value="boss">Weekly Boss</option><option value="rank">Rank Trial</option><option value="recovery">Recovery Protocol</option><option value="timezone">Timezone Change</option><option value="chain">Full Day Scenario Chain</option><option value="lab">Notification & Haptic Lab</option></select></label>
+            <label>Result<select id="testResult"><option value="success">Success</option><option value="failure">Failure</option><option value="late">Late / Warning</option></select></label>
+            <label>Sandbox<select id="testSandboxMode"><option value="profile">Clone Current Profile</option><option value="sample">Clean Sample Data</option></select></label>
+          </div>
+          <div class="test-result-card" id="testResultCard"><span>ADVANCED TEST</span><strong>Custom scenario</strong><small>Use only when testing alternate outcomes, time controls, or sample data.</small></div>
+          <button class="system-button compact-button" id="runDeveloperTest" type="button"><b>Launch Advanced Test</b></button>
+          <button class="ghost-button" id="resetDeveloperTest" type="button">Clear Test History</button>
+        </div>
         <button class="ghost-button" id="developerTestBack" type="button">Back</button>
       </section>
 

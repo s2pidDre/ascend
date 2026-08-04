@@ -1,4 +1,4 @@
-const CACHE='ascend-discipline-v33-external-reminders';
+const CACHE='ascend-discipline-v34-simplified-developer-tests';
 const ASSETS=[
   './',
   './index.html',
