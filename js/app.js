@@ -1862,7 +1862,7 @@
     if(newAchievements.length){newAchievements.forEach(item=>state.logs.push({id:S.uid('log'),at:item.unlockedAt||new Date().toISOString(),type:'achievement',message:`Achievement unlocked: ${item.title}.`}));save()}
     return items;
   };
-  const renderControlHome=()=>{setControlView('controlHomeView')};
+  const renderControlHome=()=>{setControlView('controlHomeView');$('#freeScheduleClassCount').textContent=activeSchedule().length;$('#freeScheduleExceptionCount').textContent=(state.scheduleExceptions||[]).filter(item=>item.active!==false).length};
   const renderAcademicHome=()=>{
     setControlView('academicHomeView');const academic=overallAcademicStats();$('#scheduleHomeCount').textContent=activeSchedule().length;$('#academicHomeXp').textContent=academic.xp;
   };
@@ -2157,6 +2157,8 @@
     $('#scheduleClose').addEventListener('click',closeScheduleOverlay);
     $('#openPlayerProfile').addEventListener('click',()=>{controlUi.profilePage=0;renderProfile()});
     $('#openAcademicControl').addEventListener('click',renderAcademicHome);
+    $('#openFreeSchedule').addEventListener('click',()=>{scheduleUi.day=defaultScheduleDay();scheduleUi.page=0;renderScheduleOverview()});
+    $('#openFreeExceptions').addEventListener('click',()=>{exceptionUi.index=0;renderScheduleExceptions()});
     $('#openAcademicTasks').addEventListener('click',()=>{controlUi.taskTab='tasks';renderAcademicTasks()});
     $('#openAdvancedSystem').addEventListener('click',renderAdvancedSystemHome);
     $('#openDataBackup').addEventListener('click',()=>{backupUi={pending:null,fileName:''};renderDataBackup()});
@@ -2235,7 +2237,7 @@
     $('#rerunConflictScan').addEventListener('click',()=>renderConflictScan(true));
     $('#conflictPrev').addEventListener('click',()=>{conflictUi.index=Math.max(0,conflictUi.index-1);renderConflictRecord()});
     $('#conflictNext').addEventListener('click',()=>{conflictUi.index=Math.min(Math.max(0,conflictUi.issues.length-1),conflictUi.index+1);renderConflictRecord()});
-    $('#scheduleExceptionsBack').addEventListener('click',renderAcademicHome);
+    $('#scheduleExceptionsBack').addEventListener('click',renderControlHome);
     $('#exceptionType').addEventListener('change',syncExceptionFields);
     $('#saveScheduleException').addEventListener('click',saveScheduleException);
     $('#exceptionPrev').addEventListener('click',()=>{exceptionUi.index=Math.max(0,exceptionUi.index-1);renderScheduleExceptions()});
@@ -2272,7 +2274,7 @@
       const correction=event.target.closest('[data-correct-status]');if(correction){const record=historyRecords()[controlUi.historyIndex];if(record)correctAttendanceRecord(record,correction.dataset.correctStatus)}
     });
 
-    $('#scheduleOverviewBack').addEventListener('click',renderAcademicHome);$('#scheduleBack').addEventListener('click',renderScheduleOverview);$('#scheduleSave').addEventListener('click',saveScheduleEntry);
+    $('#scheduleOverviewBack').addEventListener('click',renderControlHome);$('#scheduleBack').addEventListener('click',renderScheduleOverview);$('#scheduleSave').addEventListener('click',saveScheduleEntry);
     $('#scheduleAdd').addEventListener('click',()=>openScheduleEditor(null));
     $('#scheduleWeekTabs').addEventListener('click',event=>{const button=event.target.closest('[data-day]');if(!button)return;scheduleUi.day=Number(button.dataset.day);scheduleUi.page=0;renderScheduleOverview()});
     $('#scheduleClassList').addEventListener('click',event=>{const button=event.target.closest('[data-class-id]');if(button)openScheduleEditor(button.dataset.classId)});

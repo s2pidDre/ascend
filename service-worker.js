@@ -1,4 +1,4 @@
-const CACHE='ascend-discipline-v35-attendance-focus-rules';
+const CACHE='ascend-discipline-v36-schedule-only-free-window';
 const ASSETS=[
   './',
   './index.html',

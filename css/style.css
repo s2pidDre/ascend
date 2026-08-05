@@ -3740,3 +3740,29 @@ body.orientation-blocked .developer-run-overlay{display:none!important}
   .class-card[data-mode] .class-action-grid .ghost-button{min-height:27px;padding:3px 5px;font-size:.43rem}
   .class-card[data-mode] .class-footnote{font-size:.43rem}
 }
+
+
+/* Free Window schedule-only control center */
+.schedule-only-home{
+  justify-content:center;
+}
+.schedule-only-summary{
+  margin-block:clamp(7px,1.2vh,12px);
+}
+.schedule-only-actions{
+  width:min(100%,430px);
+  align-self:center;
+  gap:clamp(7px,1.1vh,10px);
+}
+.schedule-only-actions .system-button{
+  min-height:46px;
+}
+@media (max-height:680px){
+  .schedule-only-summary{
+    margin-block:4px;
+    padding:8px;
+  }
+  .schedule-only-actions .system-button{
+    min-height:38px;
+  }
+}
