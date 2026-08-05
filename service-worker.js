@@ -1,4 +1,4 @@
-const CACHE='ascend-discipline-v40-evening-schedule-update';
+const CACHE='ascend-discipline-v41-simplified-attendance-overview';
 const ASSETS=[
   './',
   './index.html',

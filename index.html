@@ -99,7 +99,7 @@
         <span>Maximum level</span><strong>50</strong>
         <span>Wake directive</span><strong>5:00 AM</strong>
         <span>Class window</span><strong>7:30 AM–7:30 PM</strong>
-        <span>Final deadline</span><strong>11:00 PM</strong>
+        <span>Final deadline</span><strong>10:00 PM</strong>
       </div>
       <p class="setup-help">Tap ASCEND to open the Player Profile. Hold the clock for 3 seconds to manage your class schedule from any screen. Hold ASCEND for 3 seconds to open Developer Test Mode. During an active protocol, keep holding ASCEND to 6 seconds for Emergency Override.</p>
       <button class="system-button" id="activateButton" type="button"><span></span><b>Activate System</b></button>
@@ -131,7 +131,7 @@
           <div class="sleep-symbol glyph-frame" aria-hidden="true"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-sleep"></use></svg></div>
           <p class="eyebrow">RECOVERY STATE</p>
           <h1>Sleep Window</h1>
-          <p class="sleep-range">11:00 PM – 4:00 AM</p>
+          <p class="sleep-range">10:00 PM – 5:00 AM</p>
         </section>
         <section class="state-zone state-zone-middle sleep-middle" aria-label="Next wake countdown">
           <span class="sleep-kicker">NEXT WAKE DIRECTIVE</span>
@@ -322,14 +322,14 @@
         <div class="config-sigil glyph-frame" aria-hidden="true"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-calendar"></use></svg></div>
         <p class="eyebrow">HIDDEN SCHEDULE ACCESS</p>
         <h2>Schedule Center</h2>
-        <p class="schedule-hint">Manage your weekly classes and one-day schedule changes from any ASCEND state.</p>
+        <p class="schedule-hint">Manage your weekly classes and review attendance from any ASCEND state.</p>
         <div class="config-summary two-stat schedule-only-summary">
           <div><span>ACTIVE CLASSES</span><strong id="freeScheduleClassCount">0</strong></div>
-          <div><span>ONE-DAY CHANGES</span><strong id="freeScheduleExceptionCount">0</strong></div>
+          <div><span>ATTENDANCE</span><strong id="freeScheduleAttendanceRate">0%</strong></div>
         </div>
         <div class="control-actions schedule-only-actions">
           <button class="system-button compact-button" id="openFreeSchedule" type="button"><b>Class Schedule</b></button>
-          <button class="system-button compact-button secondary-system-button" id="openFreeExceptions" type="button"><b>Schedule Exceptions</b></button>
+          <button class="system-button compact-button secondary-system-button" id="openFreeAttendance" type="button"><b>Attendance Overview</b></button>
         </div>
         <button id="openPlayerProfile" type="button" hidden aria-hidden="true" tabindex="-1">Player Profile</button>
         <button id="openAcademicControl" type="button" hidden aria-hidden="true" tabindex="-1">Academic Control Center</button>
@@ -366,12 +366,13 @@
         <button class="ghost-button" id="profileBack" type="button">Close</button>
       </section>
 
-      <section class="attendance-view" id="attendanceView" hidden>
+      <section class="attendance-view simplified-attendance-view" id="attendanceView" hidden>
+        <div class="config-sigil glyph-frame" aria-hidden="true"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-academic"></use></svg></div>
         <p class="eyebrow">ACADEMIC RECORD</p>
-        <h2>Attendance & Progress</h2>
-        <div class="section-tabs three" id="attendanceTabs" aria-label="Attendance sections"></div>
-        <div class="attendance-content" id="attendanceContent"></div>
-        <div class="section-nav" id="attendanceNav">
+        <h2>Attendance Overview</h2>
+        <div class="section-tabs three" id="attendanceTabs" hidden aria-hidden="true"></div>
+        <div class="attendance-content simplified-attendance-content" id="attendanceContent"></div>
+        <div class="section-nav" id="attendanceNav" hidden aria-hidden="true">
           <button type="button" id="attendancePrev" aria-label="Previous attendance record"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-chevron-left"></use></svg></button><span id="attendancePageLabel">1 / 1</span><button type="button" id="attendanceNext" aria-label="Next attendance record"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-chevron-right"></use></svg></button>
         </div>
         <button class="ghost-button" id="attendanceBack" type="button">Back</button>

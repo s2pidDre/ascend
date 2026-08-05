@@ -4167,3 +4167,139 @@ body.orientation-blocked .developer-run-overlay{display:none!important}
   .simple-profile-links small{font-size:.34rem}
   .simple-attribute-grid span{font-size:.35rem}
 }
+
+
+/* Simplified attendance overview inside the hidden Schedule Center. */
+.simplified-attendance-view{
+  justify-content:center;
+}
+.simplified-attendance-view>.config-sigil{
+  flex:0 0 auto;
+}
+.simplified-attendance-content{
+  flex:0 1 auto;
+  width:100%;
+  justify-content:center;
+  gap:clamp(6px,1vh,10px);
+}
+.attendance-overview-stats{
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:6px;
+}
+.attendance-overview-stats>div{
+  min-width:0;
+  display:grid;
+  align-content:center;
+  gap:2px;
+  min-height:62px;
+  padding:8px 9px;
+  border:1px solid rgba(75,199,255,.2);
+  background:rgba(3,13,31,.7);
+  text-align:left;
+}
+.attendance-overview-stats span{
+  color:#6e88a8;
+  font-size:.46rem;
+  letter-spacing:.11em;
+}
+.attendance-overview-stats strong{
+  color:#e0f7ff;
+  font-size:1rem;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+.attendance-overview-stats small{
+  color:#7891ad;
+  font-size:.48rem;
+  line-height:1.2;
+}
+.simplified-attendance-counts{
+  grid-template-columns:repeat(3,minmax(0,1fr));
+}
+.attendance-latest-card{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto;
+  align-items:center;
+  gap:10px;
+  padding:9px 10px;
+  border:1px solid rgba(136,103,255,.24);
+  background:rgba(15,12,42,.52);
+  text-align:left;
+  clip-path:polygon(6px 0,100% 0,100% calc(100% - 6px),calc(100% - 6px) 100%,0 100%,0 6px);
+}
+.attendance-latest-card>div{
+  min-width:0;
+  display:grid;
+  gap:2px;
+}
+.attendance-latest-card span{
+  color:var(--violet);
+  font-size:.45rem;
+  letter-spacing:.12em;
+}
+.attendance-latest-card strong{
+  color:#e4f7ff;
+  font-size:.7rem;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+.attendance-latest-card small{
+  color:#7891ad;
+  font-size:.5rem;
+}
+.attendance-latest-card>b{
+  max-width:105px;
+  padding:6px 8px;
+  border:1px solid rgba(75,199,255,.28);
+  color:#dff7ff;
+  background:rgba(5,22,47,.75);
+  font-size:.5rem;
+  letter-spacing:.08em;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+.attendance-latest-card .attendance-status-absent,
+.attendance-latest-card .attendance-status-unverified{
+  border-color:rgba(255,83,108,.4);
+  color:#ff9aaa;
+}
+.attendance-latest-card .attendance-status-cancelled{
+  border-color:rgba(136,103,255,.4);
+  color:#c9bfff;
+}
+.attendance-empty{
+  min-height:58px;
+}
+@media (max-height:680px){
+  .simplified-attendance-view{
+    gap:4px;
+  }
+  .simplified-attendance-view>.config-sigil{
+    width:40px;
+    height:40px;
+  }
+  .simplified-attendance-content{
+    gap:4px;
+  }
+  .attendance-overview-stats,
+  .simplified-attendance-counts{
+    gap:4px;
+  }
+  .attendance-overview-stats>div{
+    min-height:48px;
+    padding:5px 7px;
+  }
+  .attendance-overview-stats small{
+    display:none;
+  }
+  .simplified-attendance-counts>div{
+    padding:4px 3px;
+  }
+  .attendance-latest-card{
+    padding:6px 8px;
+  }
+}

@@ -526,17 +526,11 @@
     return protocolBlueprints.find(config=>minutes(config.start)>minute&&record.protocols[config.id].status==='pending')||null;
   };
 
-  const exceptionsForDate=date=>state.scheduleExceptions.filter(item=>item.active!==false&&item.date===S.dateKey(date));
-  const classesForDate=date=>{
-    const exceptions=exceptionsForDate(date);
-    if(exceptions.some(item=>item.type==='no-classes'))return[];
-    let entries=activeSchedule().filter(entry=>Number(entry.day)===date.getDay()).map(entry=>({...entry}));
-    exceptions.forEach(exception=>{
-      if(exception.type==='cancel')entries=entries.filter(entry=>entry.id!==exception.classId);
-      if(['reschedule','special'].includes(exception.type))entries=entries.map(entry=>entry.id===exception.classId?{...entry,start:exception.start||entry.start,end:exception.end||entry.end,exceptionType:exception.type,exceptionNote:exception.note||'',exceptionId:exception.id}:entry);
-    });
-    return entries.sort((a,b)=>minutes(a.start)-minutes(b.start));
-  };
+  const exceptionsForDate=()=>[];
+  const classesForDate=date=>activeSchedule()
+    .filter(entry=>Number(entry.day)===date.getDay())
+    .map(entry=>({...entry}))
+    .sort((a,b)=>minutes(a.start)-minutes(b.start));
   const meetingKey=(entry,date=new Date())=>`${S.dateKey(date)}::${entry.id}`;
   const attendanceFor=(entry,date=new Date())=>state.attendanceRecords.find(record=>record.meetingKey===meetingKey(entry,date))||null;
   const nextClassAt=(date=new Date())=>classesForDate(date).find(entry=>minutes(entry.start)>todayMinutes(date)&&attendanceFor(entry,date)?.status!=='cancelled')||null;
@@ -1865,7 +1859,7 @@
     if(newAchievements.length){newAchievements.forEach(item=>state.logs.push({id:S.uid('log'),at:item.unlockedAt||new Date().toISOString(),type:'achievement',message:`Achievement unlocked: ${item.title}.`}));save()}
     return items;
   };
-  const renderControlHome=()=>{setControlView('controlHomeView');$('#freeScheduleClassCount').textContent=activeSchedule().length;$('#freeScheduleExceptionCount').textContent=(state.scheduleExceptions||[]).filter(item=>item.active!==false).length};
+  const renderControlHome=()=>{setControlView('controlHomeView');const academic=overallAcademicStats();$('#freeScheduleClassCount').textContent=activeSchedule().length;$('#freeScheduleAttendanceRate').textContent=`${academic.attendanceRate}%`};
   const renderAcademicHome=()=>{
     setControlView('academicHomeView');const academic=overallAcademicStats();$('#scheduleHomeCount').textContent=activeSchedule().length;$('#academicHomeXp').textContent=academic.xp;
   };
@@ -1939,25 +1933,37 @@
   };
   const attendanceTabs=[{id:'overall',label:'Overall'},{id:'subjects',label:'Subjects'},{id:'history',label:'History'}];
   const historyRecords=()=>[...state.attendanceRecords].sort((a,b)=>`${b.scheduledDate}T${b.scheduledStart}`.localeCompare(`${a.scheduledDate}T${a.scheduledStart}`));
+  const currentWeekAttendance=()=>{
+    const now=new Date(),weekday=now.getDay()||7,start=new Date(now);start.setHours(0,0,0,0);start.setDate(start.getDate()-(weekday-1));
+    const end=new Date(start);end.setDate(end.getDate()+7);
+    const records=state.attendanceRecords.filter(record=>{const date=new Date(`${record.scheduledDate}T12:00:00`);return date>=start&&date<end});
+    const counts={early:0,present:0,late:0,absent:0,cancelled:0,unverified:0};records.forEach(record=>{if(counts[record.status]!==undefined)counts[record.status]+=1});
+    const attended=counts.early+counts.present+counts.late,required=attended+counts.absent;
+    return{records,counts,attended,required,start,end};
+  };
   const renderAttendance=()=>{
-    setControlView('attendanceView');const academic=overallAcademicStats();
-    $('#attendanceTabs').innerHTML=attendanceTabs.map(tab=>`<button type="button" data-attendance-tab="${tab.id}" class="${tab.id===controlUi.attendanceTab?'selected':''}">${tab.label}</button>`).join('');
-    if(controlUi.attendanceTab==='overall'){
-      $('#attendanceNav').hidden=true;$('#attendanceContent').innerHTML=`<div class="stat-grid"><div><span>ACADEMIC XP</span><strong>${academic.xp}</strong></div><div><span>ATTENDANCE</span><strong>${academic.attendanceRate}%</strong></div><div><span>PUNCTUALITY</span><strong>${academic.punctualityRate}%</strong></div><div><span>CURRENT STREAK</span><strong>${academic.streaks.current}</strong></div></div><div class="attendance-counts"><div><span>EARLY</span><strong>${academic.counts.early}</strong></div><div><span>PRESENT</span><strong>${academic.counts.present}</strong></div><div><span>LATE</span><strong>${academic.counts.late}</strong></div><div><span>ABSENT</span><strong>${academic.counts.absent}</strong></div><div><span>UNVERIFIED</span><strong>${academic.counts.unverified}</strong></div><div><span>CANCELLED</span><strong>${academic.counts.cancelled}</strong></div></div>`;
-      return;
-    }
-    if(controlUi.attendanceTab==='subjects'){
-      const subjects=academic.subjects;controlUi.subjectIndex=clamp(controlUi.subjectIndex,0,Math.max(0,subjects.length-1));$('#attendanceNav').hidden=!subjects.length;
-      if(!subjects.length){$('#attendanceContent').innerHTML='<div class="schedule-empty"><strong>No Subject Data</strong><span>Add classes to begin attendance and habit tracking.</span></div>';return}
-      const stats=subjects[controlUi.subjectIndex];$('#attendancePageLabel').textContent=`${controlUi.subjectIndex+1} / ${subjects.length}`;
-      $('#attendanceContent').innerHTML=`<div class="subject-title"><span>SUBJECT LEVEL ${stats.level}</span><strong>${escapeHtml(stats.subject.name)}</strong><small>${stats.subject.code?escapeHtml(stats.subject.code):'SCHEDULE-LINKED SUBJECT'}</small></div><div class="stat-grid"><div><span>SUBJECT XP</span><strong>${stats.xp}</strong></div><div><span>ATTENDANCE</span><strong>${stats.attendanceRate}%</strong></div><div><span>PUNCTUALITY</span><strong>${stats.punctualityRate}%</strong></div><div><span>STREAK</span><strong>${stats.streaks.current}</strong></div></div><div class="subject-details"><span>Best streak</span><strong>${stats.streaks.best}</strong><span>Tasks</span><strong>${stats.completedTasks}/${stats.tasks.length}</strong><span>Work time</span><strong>${stats.workMinutes} min</strong><span>Pending</span><strong>${stats.pendingTasks}</strong></div>`;
-      return;
-    }
-    const records=historyRecords();controlUi.historyIndex=clamp(controlUi.historyIndex,0,Math.max(0,records.length-1));$('#attendanceNav').hidden=!records.length;
-    if(!records.length){$('#attendanceContent').innerHTML='<div class="schedule-empty"><strong>No Attendance History</strong><span>Records appear after scheduled classes.</span></div>';return}
-    const record=records[controlUi.historyIndex];$('#attendancePageLabel').textContent=`${controlUi.historyIndex+1} / ${records.length}`;
-    const checkIn=record.checkInAt?formatClock(new Date(record.checkInAt)):'Not recorded',dismissal=record.dismissedAt?formatClock(new Date(record.dismissedAt)):'Pending';
-    $('#attendanceContent').innerHTML=`<div class="history-card"><span>${escapeHtml(record.scheduledDate)}</span><strong>${escapeHtml(record.subjectName)}</strong><small>${formatTime(record.scheduledStart)}–${formatTime(record.scheduledEnd)} · ${escapeHtml(record.modality||'Onsite')}</small><div class="history-grid"><span>Status</span><b>${escapeHtml(record.status.toUpperCase())}</b><span>Check-in</span><b>${checkIn}</b><span>Dismissed</span><b>${dismissal}</b><span>XP</span><b>${record.finalized?`+${record.xpAwarded}`:'LOCKED'}</b></div></div>${controlUi.correction?`<div class="correction-grid"><button type="button" data-correct-status="early">Early</button><button type="button" data-correct-status="present">Present</button><button type="button" data-correct-status="late">Late</button><button type="button" data-correct-status="absent">Absent</button><button type="button" data-correct-status="cancelled">Cancelled</button><button type="button" data-correct-status="unverified">Unverified</button></div>`:'<button class="custom-primary" type="button" data-attendance-action="correct">Correct Record</button>'}`;
+    setControlView('attendanceView');controlUi.attendanceTab='overall';controlUi.correction=false;
+    const academic=overallAcademicStats(),week=currentWeekAttendance(),records=historyRecords(),latest=records[0]||null;
+    $('#attendanceTabs').innerHTML='';$('#attendanceTabs').hidden=true;$('#attendanceNav').hidden=true;
+    const weekRate=week.required?Math.round(week.attended/week.required*100):0;
+    const onTime=academic.counts.early+academic.counts.present;
+    const latestMarkup=latest?`<div class="attendance-latest-card"><div><span>LATEST RECORD</span><strong>${escapeHtml(latest.subjectName)}</strong><small>${escapeHtml(latest.scheduledDate)} · ${formatTime(latest.scheduledStart)}</small></div><b class="attendance-status-${escapeHtml(latest.status)}">${escapeHtml(latest.status.toUpperCase())}</b></div>`:'<div class="schedule-empty attendance-empty"><strong>No Attendance Records</strong><span>Your first completed class check-in will appear here.</span></div>';
+    $('#attendanceContent').innerHTML=`
+      <div class="attendance-overview-stats">
+        <div><span>ATTENDANCE</span><strong>${academic.attendanceRate}%</strong></div>
+        <div><span>PUNCTUALITY</span><strong>${academic.punctualityRate}%</strong></div>
+        <div><span>THIS WEEK</span><strong>${week.required?`${week.attended}/${week.required}`:'—'}</strong><small>${week.required?`${weekRate}% attended`:'No required classes yet'}</small></div>
+        <div><span>CURRENT STREAK</span><strong>${academic.streaks.current}</strong></div>
+      </div>
+      <div class="attendance-counts simplified-attendance-counts">
+        <div><span>ON TIME</span><strong>${onTime}</strong></div>
+        <div><span>LATE</span><strong>${academic.counts.late}</strong></div>
+        <div><span>ABSENT</span><strong>${academic.counts.absent}</strong></div>
+        <div><span>UNVERIFIED</span><strong>${academic.counts.unverified}</strong></div>
+        <div><span>CANCELLED</span><strong>${academic.counts.cancelled}</strong></div>
+        <div><span>TOTAL</span><strong>${records.length}</strong></div>
+      </div>
+      ${latestMarkup}`;
   };
   const correctAttendanceRecord=(record,status)=>{
     const before=record.status,now=new Date();record.corrections=record.corrections||[];record.corrections.push({at:now.toISOString(),from:before,to:status});
@@ -2200,14 +2206,14 @@
     $('#openPlayerProfile').addEventListener('click',()=>{controlUi.profilePage=0;renderProfile()});
     $('#openAcademicControl').addEventListener('click',renderAcademicHome);
     $('#openFreeSchedule').addEventListener('click',()=>{scheduleUi.day=defaultScheduleDay();scheduleUi.page=0;renderScheduleOverview()});
-    $('#openFreeExceptions').addEventListener('click',()=>{exceptionUi.index=0;renderScheduleExceptions()});
+    $('#openFreeAttendance').addEventListener('click',renderAttendance);
     $('#openAcademicTasks').addEventListener('click',()=>{controlUi.taskTab='tasks';renderAcademicTasks()});
     $('#openAdvancedSystem').addEventListener('click',renderAdvancedSystemHome);
     $('#openDataBackup').addEventListener('click',()=>{backupUi={pending:null,fileName:''};renderDataBackup()});
     $('#openSystemIntegrity').addEventListener('click',renderSystemIntegrity);
     $('#academicBack').addEventListener('click',renderControlHome);
     $('#profileBack').addEventListener('click',closeScheduleOverlay);
-    $('#attendanceBack').addEventListener('click',renderAcademicHome);
+    $('#attendanceBack').addEventListener('click',renderControlHome);
     $('#academicTasksBack').addEventListener('click',renderAcademicHome);
     $('#advancedSystemBack').addEventListener('click',renderAcademicHome);
     $('#dataBackupBack').addEventListener('click',()=>{backupUi={pending:null,fileName:''};renderRecoverySystem()});
