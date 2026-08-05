@@ -1,4 +1,4 @@
-const CACHE='ascend-discipline-v39-simplified-player-profile';
+const CACHE='ascend-discipline-v40-evening-schedule-update';
 const ASSETS=[
   './',
   './index.html',

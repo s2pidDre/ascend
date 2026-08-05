@@ -79,9 +79,9 @@
   const formatShortDate=value=>{const date=value instanceof Date?value:new Date(value);return Number.isNaN(date.getTime())?'Unknown':new Intl.DateTimeFormat(undefined,{month:'short',day:'numeric',year:'numeric'}).format(date)};
   const formatTime=time=>{const d=new Date();const[h,m]=time.split(':').map(Number);d.setHours(h,m,0,0);return formatClock(d)};
   const timeOnDate=(date,time)=>{const d=new Date(date);const[h,m]=time.split(':').map(Number);d.setHours(h,m,0,0);return d};
-  const isSleepWindow=date=>{const minute=todayMinutes(date);return minute>=1320||minute<240};
+  const isSleepWindow=date=>{const minute=todayMinutes(date);return minute>=1380||minute<240};
   const isEarlyWakeWindow=date=>{const minute=todayMinutes(date);return minute>=240&&minute<300};
-  const nextWakeMoment=date=>{const wake=timeOnDate(date,'05:00');if(todayMinutes(date)>=1320)wake.setDate(wake.getDate()+1);return wake};
+  const nextWakeMoment=date=>{const wake=timeOnDate(date,'05:00');if(todayMinutes(date)>=1380)wake.setDate(wake.getDate()+1);return wake};
   const show=id=>{
     if(activeScreenId===id)return;
     screens.forEach(screen=>{document.getElementById(screen).hidden=screen!==id});
@@ -218,7 +218,7 @@
       ]
     },
     {
-      id:'dinner',short:'DINNER',name:'Dinner Protocol',icon:'meal',start:'19:30',end:'20:00',xp:90,
+      id:'dinner',short:'DINNER',name:'Dinner Protocol',icon:'meal',start:'20:00',end:'20:30',xp:90,
       prep:'Prepare dinner before the fixed window so the evening schedule remains protected.',
       subtasks:()=>[
         {id:'dinner-prepare',title:'Prepare dinner',copy:variants('Prepare the evening meal without delaying the protocol.','Begin dinner preparation.'),icon:'list',type:'hold'},
@@ -228,7 +228,7 @@
       ]
     },
     {
-      id:'productivity',short:'WORK',name:'Productivity Protocol',icon:'work',start:'20:00',end:'21:00',xp:180,
+      id:'productivity',short:'WORK',name:'Productivity Protocol',icon:'work',start:'20:30',end:'22:00',xp:180,
       prep:'Prepare your workspace. Saved subjects, deadlines, unfinished tasks, and trading notes will synchronize here.',
       subtasks:()=>[
         {id:'environment-reset',title:'Environment Reset Dungeon',copy:variants('Clear the desk, remove distractions, and prepare your laptop, charger, notes, and water.','Restore the work environment before execution.'),icon:'grid',type:'timer',duration:10},
@@ -239,7 +239,7 @@
       ]
     },
     {
-      id:'shutdown',short:'SLEEP',name:'Shutdown Protocol',icon:'sleep',start:'21:00',end:'22:00',xp:120,
+      id:'shutdown',short:'SLEEP',name:'Shutdown Protocol',icon:'sleep',start:'22:00',end:'23:00',xp:120,
       prep:'The day is not cleared until work is closed, tomorrow is prepared, and bedtime is protected.',
       subtasks:()=>[
         {id:'close-day',title:'Close the day',copy:variants('Save all work, close school and trading apps, close unnecessary tabs, and turn on Do Not Disturb.','End all productive and entertainment activity.'),icon:'close',type:'hold'},
@@ -483,7 +483,7 @@
   const finalizeDay=(record,now=new Date(),force=false)=>{
     if(!record||record.status!=='active')return;
     const resolved=Object.values(record.protocols).every(protocol=>['cleared','failed'].includes(protocol.status));
-    const cutoff=recordMoment(record,'22:00');
+    const cutoff=recordMoment(record,'23:00');
     if(!force&&!resolved&&now<cutoff)return;
     Object.values(record.protocols).forEach(protocol=>{if(!['cleared','failed'].includes(protocol.status))failProtocol(record,protocol,'The daily cutoff was reached before completion.',false,{defer:true})});
     record.completedProtocols=Object.values(record.protocols).filter(protocol=>protocol.status==='cleared').length;
@@ -512,7 +512,7 @@
 
   const finalizePastDays=()=>{
     const today=currentKey();
-    Object.values(state.dayRecords).filter(record=>record.date<today&&record.status==='active').sort((a,b)=>a.date.localeCompare(b.date)).forEach(record=>finalizeDay(record,new Date(`${record.date}T22:00:00`),true));
+    Object.values(state.dayRecords).filter(record=>record.date<today&&record.status==='active').sort((a,b)=>a.date.localeCompare(b.date)).forEach(record=>finalizeDay(record,new Date(`${record.date}T23:00:00`),true));
   };
 
   const findCurrentProtocol=(record,now)=>{
@@ -688,7 +688,7 @@
     const minute=todayMinutes(now);
     if(!record.wakeCheckInAt&&minute>=300&&minute<360&&document.visibilityState==='visible')recordWakeCheckIn(record,now,'automatic-window');
     evaluateDeadlines(record,now);
-    if(now>=recordMoment(record,'22:00'))finalizeDay(record,now);
+    if(now>=recordMoment(record,'23:00'))finalizeDay(record,now);
     sweepNotifications(record,now);checkStoragePressure();
     return record;
   };
@@ -865,7 +865,7 @@
       if(attendance?.checkInAt&&untilEnd>0&&untilEnd<=5*60000)sendLocalNotification(`${S.dateKey(now)}:${entry.id}:dismissal`,`${entry.subject} ending soon`,'Prepare to confirm class dismissal and finalize attendance XP.');
       if(now>=end&&(!attendance||attendance.status==='unverified')&&now-end<=60*60000)sendLocalNotification(`${S.dateKey(now)}:${entry.id}:missed-checkin`,`${entry.subject} attendance unresolved`,'Open ASCEND and resolve the missed attendance confirmation.');
     });
-    if(record?.weeklyBoss&&record.weeklyBossPlan){const boss=record.protocols?.productivity,start=recordMoment(record,'20:00'),delta=start-now;if(boss?.status==='pending'&&delta>0&&delta<=lead)sendLocalNotification(`${record.date}:weekly-boss`, `Weekly Boss: ${record.weeklyBossPlan.title}`,record.weeklyBossPlan.copy)}
+    if(record?.weeklyBoss&&record.weeklyBossPlan){const boss=record.protocols?.productivity,start=recordMoment(record,'20:30'),delta=start-now;if(boss?.status==='pending'&&delta>0&&delta<=lead)sendLocalNotification(`${record.date}:weekly-boss`, `Weekly Boss: ${record.weeklyBossPlan.title}`,record.weeklyBossPlan.copy)}
     Object.values(record?.protocols||{}).filter(protocol=>protocol.status==='failed'&&protocol.completedAt&&now-new Date(protocol.completedAt)<=60*60000).forEach(protocol=>sendLocalNotification(`${record.date}:${protocol.id}:failed`,`${protocol.name} failed`,protocol.failureReason||'The fixed deadline passed.'));
   };
   const storageReport=async()=>{
@@ -1637,7 +1637,7 @@
     if(!developerRunSession)return null;const candidates=[];
     for(let offset=0;offset<3;offset+=1){
       const date=new Date(from);date.setDate(from.getDate()+offset);date.setHours(0,0,0,0);
-      [['04:00','Early Wake Window'],['05:00','Wake Protocol'],['22:00','Recovery Window']].forEach(([time,label])=>candidates.push({at:timeOnDate(date,time),label}));
+      [['04:00','Early Wake Window'],['05:00','Wake Protocol'],['23:00','Recovery Window']].forEach(([time,label])=>candidates.push({at:timeOnDate(date,time),label}));
       protocolBlueprints.forEach(config=>candidates.push({at:timeOnDate(date,config.start),label:config.name}));
       developerClassesForDate(date).forEach(entry=>candidates.push({at:timeOnDate(date,entry.start),label:`${entry.subject} Class`}));
     }
@@ -1663,7 +1663,7 @@
     if(session.mode==='lab')return{kind:'lab',...developerLabDefinition,status:'LAB READY',countdown:'SESSION ACTIVE',resultClass:'success',layout:'lab',actionDisabled:false};
     const dateKey=S.dateKey(now),minute=todayMinutes(now);
     if(isSleepWindow(now)){
-      const wake=nextWakeMoment(now);return{kind:'sleep',protocol:'RECOVERY WINDOW',window:'10:00 PM – 4:00 AM',type:'SYSTEM STANDBY',title:'Recovery Window',copy:'ASCEND remains in low-power recovery until the Early Wake window opens.',icon:'sleep',detail:`WAKE PROTOCOL · ${formatClock(wake)}`,status:'STANDBY',countdown:`${formatDuration(Math.max(0,wake-now))} UNTIL WAKE`,resultClass:'success',layout:'plain',action:null,note:'Advance or edit simulated time to watch the next system state appear.'};
+      const wake=nextWakeMoment(now);return{kind:'sleep',protocol:'RECOVERY WINDOW',window:'11:00 PM – 4:00 AM',type:'SYSTEM STANDBY',title:'Recovery Window',copy:'ASCEND remains in low-power recovery until the Early Wake window opens.',icon:'sleep',detail:`WAKE PROTOCOL · ${formatClock(wake)}`,status:'STANDBY',countdown:`${formatDuration(Math.max(0,wake-now))} UNTIL WAKE`,resultClass:'success',layout:'plain',action:null,note:'Advance or edit simulated time to watch the next system state appear.'};
     }
     session.earlyWakeConfirmed=session.earlyWakeConfirmed||{};
     if(isEarlyWakeWindow(now)&&!session.earlyWakeConfirmed[dateKey]){
@@ -1831,7 +1831,7 @@
     let streak=0;
     for(const day of sortedDayRecords()){
       if(day.status==='cleared')streak+=1;else if(day.status==='failed')streak=0;
-      if(streak>=threshold)return `${day.date}T22:00:00`;
+      if(streak>=threshold)return `${day.date}T23:00:00`;
     }
     return null;
   };
@@ -1841,7 +1841,7 @@
   };
   const firstFocusUnlockDate=()=>{
     const qualifying=sortedDayRecords().filter(day=>day.status==='cleared'&&Object.values(day.protocols||{}).every(protocol=>Number(protocol.focusBreaches||0)===0));
-    return qualifying[2]?`${qualifying[2].date}T22:00:00`:null;
+    return qualifying[2]?`${qualifying[2].date}T23:00:00`:null;
   };
   const achievementList=()=>{
     const academic=overallAcademicStats();const subjects=academic.subjects;
@@ -1851,12 +1851,12 @@
     const specialistDates=[...state.attendanceRecords.map(record=>record.updatedAt||record.checkInAt),...state.academicTasks.map(task=>task.completedAt||task.createdAt)].filter(Boolean).sort();const specialistSource=specialistDates[specialistDates.length-1]||null;
     const items=[
       {id:'discipline-initiate',title:'Discipline Initiate',unlocked:true,detail:'Activate the ASCEND System.',candidateAt:state.createdAt},
-      {id:'first-perfect-clear',title:'First Perfect Clear',unlocked:(state.player.perfectClears||0)>=1,detail:'Complete one Perfect Clear.',candidateAt:firstPerfect?`${firstPerfect.date}T22:00:00`:state.player.lastPerfectDate},
+      {id:'first-perfect-clear',title:'First Perfect Clear',unlocked:(state.player.perfectClears||0)>=1,detail:'Complete one Perfect Clear.',candidateAt:firstPerfect?`${firstPerfect.date}T23:00:00`:state.player.lastPerfectDate},
       {id:'seven-day-streak',title:'Seven-Day Streak',unlocked:(state.player.bestStreak||0)>=7,detail:'Maintain seven consecutive clear days.',candidateAt:firstStreakUnlockDate(7)},
       {id:'thirty-day-streak',title:'Thirty-Day Streak',unlocked:(state.player.bestStreak||0)>=30,detail:'Maintain thirty consecutive clear days.',candidateAt:firstStreakUnlockDate(30)},
       {id:'perfect-attendance',title:'Perfect Attendance',unlocked:academic.required>=5&&academic.attendanceRate===100,detail:'Maintain perfect verified attendance across five classes.',candidateAt:nthAttendanceDate(['early','present','late'],5)},
       {id:'early-arrival-specialist',title:'Early Arrival Specialist',unlocked:academic.counts.early>=5,detail:'Record five early class arrivals.',candidateAt:nthAttendanceDate(['early'],5)},
-      {id:'weekly-boss-slayer',title:'Weekly Boss Slayer',unlocked:Boolean(firstBoss),detail:'Defeat one Weekly Boss.',candidateAt:firstBoss?`${firstBoss.date}T22:00:00`:null},
+      {id:'weekly-boss-slayer',title:'Weekly Boss Slayer',unlocked:Boolean(firstBoss),detail:'Defeat one Weekly Boss.',candidateAt:firstBoss?`${firstBoss.date}T23:00:00`:null},
       {id:'focus-unbroken',title:'Focus Unbroken',unlocked:state.player.totalClearDays>=3&&firstFocusUnlockDate()!=null,detail:'Clear three days without a timed-task Focus Breach.',candidateAt:firstFocusUnlockDate()},
       {id:'subject-specialist',title:'Subject Specialist',unlocked:subjects.some(subject=>subject.level>=5),detail:'Reach Subject Level 5.',candidateAt:specialistSource}
     ];
