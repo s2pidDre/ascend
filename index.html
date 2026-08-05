@@ -79,7 +79,7 @@
 
   <main class="app-shell" id="appShell">
     <header class="topbar">
-      <button class="brand" id="systemBrand" type="button" aria-label="ASCEND System. Hold for Developer Test Mode.">
+      <button class="brand" id="systemBrand" type="button" aria-label="ASCEND System. Tap for Player Profile. Hold for Developer Test Mode.">
         <span class="brand-mark"><img class="brand-mark-image" src="assets/inapp-logo.png" alt="" aria-hidden="true" draggable="false"></span>
         <span class="brand-copy"><strong>ASCEND</strong><small>DISCIPLINE SYSTEM</small></span>
       </button>
@@ -101,7 +101,7 @@
         <span>Class window</span><strong>7:30 AM–7:30 PM</strong>
         <span>Final deadline</span><strong>10:00 PM</strong>
       </div>
-      <p class="setup-help">Hold the clock for 3 seconds to manage your class schedule from any screen. Hold ASCEND for 3 seconds to open Developer Test Mode. During an active protocol, keep holding ASCEND to 6 seconds for Emergency Override.</p>
+      <p class="setup-help">Tap ASCEND to open the Player Profile. Hold the clock for 3 seconds to manage your class schedule from any screen. Hold ASCEND for 3 seconds to open Developer Test Mode. During an active protocol, keep holding ASCEND to 6 seconds for Emergency Override.</p>
       <button class="system-button" id="activateButton" type="button"><span></span><b>Activate System</b></button>
     </section>
 
@@ -355,15 +355,15 @@
         <button class="ghost-button" id="academicBack" type="button">Back</button>
       </section>
 
-      <section class="profile-view" id="profileView" hidden>
-        <p class="eyebrow">HIDDEN PLAYER RECORD</p>
+      <section class="profile-view simplified-profile-view" id="profileView" hidden>
+        <p class="eyebrow">PLAYER RECORD</p>
         <h2>Player Profile</h2>
-        <div class="section-tabs six" id="profileTabs" aria-label="Profile sections"></div>
-        <div class="profile-content" id="profileContent"></div>
-        <div class="section-nav">
-          <button type="button" id="profilePrev" aria-label="Previous profile section"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-chevron-left"></use></svg></button><span id="profilePageLabel">Identity</span><button type="button" id="profileNext" aria-label="Next profile section"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-chevron-right"></use></svg></button>
+        <div class="section-tabs six" id="profileTabs" hidden aria-hidden="true"></div>
+        <div class="profile-content simplified-profile-content" id="profileContent"></div>
+        <div class="section-nav" hidden aria-hidden="true">
+          <button type="button" id="profilePrev" aria-label="Previous profile section"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-chevron-left"></use></svg></button><span id="profilePageLabel">Overview</span><button type="button" id="profileNext" aria-label="Next profile section"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-chevron-right"></use></svg></button>
         </div>
-        <button class="ghost-button" id="profileBack" type="button">Back</button>
+        <button class="ghost-button" id="profileBack" type="button">Close</button>
       </section>
 
       <section class="attendance-view" id="attendanceView" hidden>

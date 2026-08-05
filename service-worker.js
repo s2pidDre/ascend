@@ -1,4 +1,4 @@
-const CACHE='ascend-discipline-v38-remove-level-status-hold';
+const CACHE='ascend-discipline-v39-simplified-player-profile';
 const ASSETS=[
   './',
   './index.html',

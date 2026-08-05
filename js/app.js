@@ -21,7 +21,7 @@
   let clockSuppressClick=false;
   let escapeTimer=null;
   let scheduleUi={view:'home',day:new Date().getDay(),page:0,editId:null,isNew:false};
-  let controlUi={view:'home',profilePage:0,progressPage:0,directiveIndex:0,achievementPage:0,attendanceTab:'overall',subjectIndex:0,historyIndex:0,correction:false,taskTab:'tasks',taskIndex:0,ruleIndex:0,dependencyIndex:0,rollbackIndex:0,directDeveloper:false,developerAdvanced:false};
+  let controlUi={view:'home',profilePage:0,progressPage:0,directiveIndex:0,achievementPage:0,attendanceTab:'overall',subjectIndex:0,historyIndex:0,correction:false,taskTab:'tasks',taskIndex:0,ruleIndex:0,dependencyIndex:0,rollbackIndex:0,directDeveloper:false,directProfile:false,developerAdvanced:false};
   let developerRunSession=null;
   let developerReportPage=0;
   let developerClockTimer=null;
@@ -1898,35 +1898,44 @@
     const latest=S.listSnapshots()[0];if(!latest){showBreachWarning('NO SNAPSHOT','No automatic recovery snapshot is available.');return}
     try{state=S.restoreSnapshot(latest.id);state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'restore',message:`Latest automatic snapshot restored: ${latest.date}.`});save({silent:true});closeScheduleOverlay();activeScreenId=null;renderApp();showSystemNotice('restore','SNAPSHOT RESTORED',`Recovered local state from ${latest.date}.`,3200)}catch(error){showBreachWarning('RESTORE FAILED',error.message||'Snapshot could not be restored.')}
   };
-  const profilePages=['Overview','Attributes','Quests','Skills','Progress','Weekly'];
-  const progressPages=['Level & Rank','Discipline','Academics','Achievements'];
+  const profilePages=['Overview','Identity','Skills','Achievements','Weekly'];
+  const progressPages=[];
+  const latestUnlockedAchievement=items=>[...items].filter(item=>item.unlocked).sort((a,b)=>String(b.unlockedAt||'').localeCompare(String(a.unlockedAt||'')))[0]||items[0]||null;
   const renderProfile=()=>{
     setControlView('profileView');controlUi.profilePage=clamp(controlUi.profilePage,0,profilePages.length-1);
-    $('#profileTabs').innerHTML=profilePages.map((page,index)=>`<button type="button" data-profile-page="${index}" class="${index===controlUi.profilePage?'selected':''}">${page.slice(0,4)}</button>`).join('');
-    $('#profilePageLabel').textContent=profilePages[controlUi.profilePage];
-    const academic=overallAcademicStats(),achievements=achievementList();let unlockedTitles=achievements.filter(item=>item.unlocked).map(item=>item.title);if(skillUnlocked('title-forge'))unlockedTitles=[...new Set([...unlockedTitles,'System Pathfinder'])];
+    $('#profileTabs').innerHTML='';$('#profilePageLabel').textContent=profilePages[controlUi.profilePage];
+    const achievements=achievementList();let unlockedTitles=achievements.filter(item=>item.unlocked).map(item=>item.title);if(skillUnlocked('title-forge'))unlockedTitles=[...new Set([...unlockedTitles,'System Pathfinder'])];
     if(!unlockedTitles.includes(state.player.title)){state.player.title=unlockedTitles[0]||'Discipline Initiate';save({silent:true})}
+    const content=$('#profileContent'),activeEmblem=normalizeGlyph(state.player.emblem),required=clearDaysRequired(state.player.level),levelProgress=state.player.mastered?100:required?Math.round(state.player.levelClearDays/required*100):100;
     if(controlUi.profilePage===0){
-      const emblemOptions=[['apex','Apex'],['confirm','Shard'],['shine','Radiance'],['stretch','Flow'],['academic','Scholar'],['work','Core']],activeEmblem=normalizeGlyph(state.player.emblem);
-      $('#profileContent').innerHTML=`<div class="profile-identity"><div class="profile-emblem">${glyphMarkup(activeEmblem)}</div><div><span>PLAYER · LEVEL ${state.player.level} · ${state.player.rank}-RANK</span><strong>${escapeHtml(state.player.codename||state.player.name)}</strong><small>${escapeHtml(state.player.title)}</small></div></div><div class="profile-form"><label>Name<input id="profileNameEdit" type="text" maxlength="40" value="${escapeHtml(state.player.name)}"></label><label>Codename<input id="profileCodenameEdit" type="text" maxlength="24" value="${escapeHtml(state.player.codename||'')}"></label><label>Emblem<select id="profileEmblemEdit">${emblemOptions.map(([value,label])=>`<option value="${value}" ${value===activeEmblem?'selected':''}>${label}</option>`).join('')}</select></label><label>Title<select id="profileTitleEdit">${unlockedTitles.map(value=>`<option ${value===state.player.title?'selected':''}>${escapeHtml(value)}</option>`).join('')}</select></label></div><button class="custom-primary" type="button" data-profile-action="save-identity">Save Identity</button>`;
-    }else if(controlUi.profilePage===1){
-      const attributes=derivedAttributes();$('#profileContent').innerHTML=`<div class="attribute-grid">${attributes.map(item=>`<div class="attribute-row"><div class="attribute-core"><span>${escapeHtml(item.label)}</span><strong>${item.value}</strong><b>${attributeTier(item.value)}</b></div><i><b style="width:${item.value}%"></b></i><small>${escapeHtml(item.copy)}</small></div>`).join('')}</div>`;
-    }else if(controlUi.profilePage===2){
-      const quest=ensureDailyQuest(),progress=questProgress(quest),history=(state.quests.history||[]).slice(-3).reverse();
-      $('#profileContent').innerHTML=`<div class="daily-quest-card ${progress.done?'complete':''}"><span>DAILY QUEST · ${quest.date}</span><strong>${escapeHtml(quest.title)}</strong><p>${escapeHtml(quest.copy)}</p><div class="quest-progress"><i><b style="width:${progress.progress*100}%"></b></i><small>${progress.label}</small></div><div class="quest-reward"><span>REWARD</span><b>+${quest.xp} XP · +1 SKILL POINT</b></div><div class="quest-actions"><button type="button" data-profile-action="claim-quest" ${!progress.done||quest.claimed?'disabled':''}>${quest.claimed?'Reward Claimed':'Claim Reward'}</button><button type="button" data-profile-action="reroll-quest" ${!skillEquipped('quest-compass')||quest.rerolled||quest.claimed?'disabled':''}>Reroll</button></div></div><div class="quest-history"><span>RECENT QUESTS</span>${history.length?history.map(item=>`<div><strong>${escapeHtml(item.title)}</strong><small>${item.claimed?'CLAIMED':item.completed?'COMPLETED':'EXPIRED'}</small></div>`).join(''):'<small>No previous quest history.</small>'}</div>`;
-    }else if(controlUi.profilePage===3){
-      $('#profileContent').innerHTML=`<div class="skill-summary"><span>SKILL POINTS</span><strong>${state.skills.points}</strong><small>Equip up to two practical perks.</small></div><div class="skill-list">${skillDefinitions.map(skill=>{const unlocked=skillUnlocked(skill.id),equipped=skillEquipped(skill.id);return`<div class="skill-row ${unlocked?'unlocked':'locked'} ${equipped?'equipped':''}"><div>${glyphMarkup('skill')}</div><section><strong>${escapeHtml(skill.name)}</strong><small>${escapeHtml(skill.copy)}</small><em>${unlocked?(equipped?'EQUIPPED':'UNLOCKED'):`COST ${skill.cost}`}</em></section><button type="button" data-profile-action="${unlocked?'toggle-skill':'unlock-skill'}" data-skill-id="${skill.id}" ${!unlocked&&state.skills.points<skill.cost?'disabled':''}>${unlocked?(equipped?'Unequip':'Equip'):'Unlock'}</button></div>`}).join('')}</div>`;
-    }else if(controlUi.profilePage===4){
-      controlUi.progressPage=clamp(controlUi.progressPage,0,progressPages.length-1);let content='';
-      if(controlUi.progressPage===0){const required=clearDaysRequired(state.player.level),nextRank=state.player.pendingRank||eligibleRank(state.player.level,state.player.rank)||'S',progress=state.player.mastered?100:required?Math.round(state.player.levelClearDays/required*100):100,remaining=state.player.mastered?0:Math.max(0,required-state.player.levelClearDays);content=`<div class="progress-visual"><div class="level-progress-ring" style="--level-progress:${progress*3.6}deg"><span>LEVEL</span><strong>${state.player.level}</strong><small>${progress}%</small></div><div class="progress-visual-copy"><span>${state.player.mastered?'SYSTEM MASTERY':'NEXT LEVEL REQUIREMENT'}</span><strong>${state.player.mastered?'LEVEL 50 ACHIEVED':`${state.player.levelClearDays} / ${required} CLEAR DAYS`}</strong><small>${state.player.mastered?'Progression complete.':`${remaining} more clear day${remaining===1?'':'s'} required.`}</small></div></div><div class="progress-metrics"><div><span>LIFETIME XP</span><strong>${state.player.totalXp}</strong></div><div><span>NEXT RANK</span><strong>${state.player.pendingRank?`${state.player.pendingRank}-TRIAL`:nextRank}</strong></div></div>`}
-      if(controlUi.progressPage===1){const all=protocolBlueprints.map(config=>({config,stats:directiveStats(config.id)})),selected=all[clamp(controlUi.directiveIndex,0,all.length-1)],strongest=[...all].sort((a,b)=>b.stats.completionRate-a.stats.completionRate)[0],weakest=[...all].sort((a,b)=>a.stats.completionRate-b.stats.completionRate)[0];content=`<div class="stat-grid"><div><span>CURRENT STREAK</span><strong>${state.player.streak}</strong></div><div><span>BEST STREAK</span><strong>${state.player.bestStreak}</strong></div><div><span>PERFECT CLEARS</span><strong>${state.player.perfectClears||0}</strong></div><div><span>FAILURE DAYS</span><strong>${state.player.totalFailedDays||0}</strong></div></div><div class="profile-detail directive-detail"><span>${escapeHtml(selected.config.name.toUpperCase())}</span><strong>${selected.stats.completionRate}% CLEAR · ${selected.stats.onTimeRate}% ON TIME</strong><small>${selected.stats.clears} clears · Most missed: ${escapeHtml(selected.stats.mostMissed)}</small><div class="mini-nav"><button type="button" data-profile-action="directive-prev">${glyphMarkup('chevron-left')}</button><b>${controlUi.directiveIndex+1} / ${all.length}</b><button type="button" data-profile-action="directive-next">${glyphMarkup('chevron-right')}</button></div></div><div class="analysis-line"><span>STRONGEST</span><strong>${escapeHtml(strongest.config.name)}</strong><span>WEAKEST</span><strong>${escapeHtml(weakest.config.name)}</strong></div>`}
-      if(controlUi.progressPage===2){const highest=[...academic.subjects].sort((a,b)=>b.level-a.level||b.xp-a.xp)[0];content=`<div class="stat-grid"><div><span>ACADEMIC XP</span><strong>${academic.xp}</strong></div><div><span>ATTENDANCE</span><strong>${academic.attendanceRate}%</strong></div><div><span>PUNCTUALITY</span><strong>${academic.punctualityRate}%</strong></div><div><span>CLASS STREAK</span><strong>${academic.streaks.current}</strong></div></div><div class="profile-detail"><span>HIGHEST SUBJECT</span><strong>${highest?`${escapeHtml(highest.subject.name)} · LV ${highest.level}`:'NO DATA'}</strong><small>${highest?`${highest.xp} XP · ${highest.completedTasks}/${highest.tasks.length} tasks completed`:'Schedule a class to create a subject record.'}</small></div><button class="custom-primary" type="button" data-profile-action="open-attendance">Open Attendance & Progress</button>`}
-      if(controlUi.progressPage===3){const pageSize=4,totalPages=Math.max(1,Math.ceil(achievements.length/pageSize));controlUi.achievementPage=clamp(controlUi.achievementPage,0,totalPages-1);const pageItems=achievements.slice(controlUi.achievementPage*pageSize,(controlUi.achievementPage+1)*pageSize),seen=new Set(state.player.achievementSeen||[]),newIds=pageItems.filter(item=>item.unlocked&&!seen.has(item.id)).map(item=>item.id);content=`<div class="achievement-summary"><span>UNLOCKED TITLES</span><strong>${achievements.filter(item=>item.unlocked).length} / ${achievements.length}</strong></div><div class="achievement-list">${pageItems.map(item=>`<div class="achievement-row ${item.unlocked?'unlocked':'locked'} ${item.unlocked&&!seen.has(item.id)?'new':''}"><div class="achievement-status">${glyphMarkup(item.unlocked?'success':'lock')}</div><div><strong>${escapeHtml(item.title)}</strong><small>${item.unlocked?`Unlocked ${formatShortDate(item.unlockedAt)}`:'Locked'}</small><em class="achievement-requirement">${escapeHtml(item.detail)}</em></div>${item.unlocked&&!seen.has(item.id)?'<b>NEW</b>':''}</div>`).join('')}</div><div class="mini-nav achievement-nav"><button type="button" data-profile-action="achievement-prev">${glyphMarkup('chevron-left')}</button><b>${controlUi.achievementPage+1} / ${totalPages}</b><button type="button" data-profile-action="achievement-next">${glyphMarkup('chevron-right')}</button></div>`;clearTimeout(achievementSeenTimer);if(newIds.length)achievementSeenTimer=setTimeout(()=>{state.player.achievementSeen=[...new Set([...(state.player.achievementSeen||[]),...newIds])];save({silent:true});document.querySelectorAll('.achievement-row.new').forEach(row=>row.classList.remove('new'))},1500)}
-      $('#profileContent').innerHTML=`<div class="progress-subtabs">${progressPages.map((page,index)=>`<button type="button" data-progress-page="${index}" class="${index===controlUi.progressPage?'selected':''}">${page}</button>`).join('')}</div>${content}`;
-    }else{
-      const latest=[...(state.weeklyDebriefs||[])].reverse()[0];
-      $('#profileContent').innerHTML=latest?`<div class="weekly-debrief"><span>${latest.start} — ${latest.end}</span><strong>WEEKLY DEBRIEF · ${latest.trend}</strong><div class="weekly-stat-grid"><div><small>COMPLETION</small><b>${latest.completionRate}%</b></div><div><small>ATTENDANCE</small><b>${latest.attendanceRate}%</b></div><div><small>BEST DAY</small><b>${escapeHtml(latest.bestDay)}</b></div><div><small>WEEKLY BOSS</small><b>${latest.bossCleared?'CLEARED':'NOT CLEARED'}</b></div></div><div class="weekly-insight"><span>MOST COMMON FAILURE</span><strong>${escapeHtml(latest.commonReason)}</strong><small>${escapeHtml(latest.recommendation)}</small>${skillEquipped('insight-lens')?`<em>${latest.tasksCompleted} academic tasks completed during this review window.</em>`:''}</div></div>`:'<div class="schedule-empty"><strong>No Completed Week Yet</strong><span>The first compact debrief appears after a completed calendar week with activity.</span></div>';
+      const attributes=derivedAttributes(),quest=ensureDailyQuest(),questState=questProgress(quest),latestAchievement=latestUnlockedAchievement(achievements),latestWeek=[...(state.weeklyDebriefs||[])].reverse()[0],equipped=(state.skills.equipped||[]).length,unlocked=(state.skills.unlocked||[]).length;
+      content.innerHTML=`<div class="simple-profile-home">
+        <div class="simple-profile-identity"><div class="profile-emblem">${glyphMarkup(activeEmblem)}</div><div><span>PLAYER · ${state.player.rank}-RANK</span><strong>${escapeHtml(state.player.codename||state.player.name)}</strong><small>${escapeHtml(state.player.name)} · ${escapeHtml(state.player.title)}</small></div><button type="button" data-profile-action="edit-identity">Edit</button></div>
+        <div class="simple-profile-stats"><div><span>LEVEL</span><strong>${state.player.level}</strong></div><div><span>RANK</span><strong>${state.player.rank}</strong></div><div><span>STREAK</span><strong>${state.player.streak}</strong></div></div>
+        <div class="simple-profile-progress"><div><span>${state.player.mastered?'SYSTEM MASTERY':'LEVEL PROGRESS'}</span><strong>${state.player.mastered?'COMPLETE':`${state.player.levelClearDays} / ${required} CLEAR DAYS`}</strong></div><i><b style="width:${levelProgress}%"></b></i><small>${Number(state.player.totalXp||0).toLocaleString()} lifetime XP · ${levelProgress}% toward next level</small></div>
+        <div class="simple-attribute-grid">${attributes.map(item=>`<div><span>${escapeHtml(item.label)}</span><strong>${item.value}</strong><small>${attributeTier(item.value)}</small></div>`).join('')}</div>
+        <div class="simple-daily-quest ${questState.done?'complete':''}"><div><span>DAILY QUEST</span><strong>${escapeHtml(quest.title)}</strong><small>${escapeHtml(questState.label)}</small></div><i><b style="width:${questState.progress*100}%"></b></i>${questState.done&&!quest.claimed?'<button type="button" data-profile-action="claim-quest">Claim</button>':`<em>${quest.claimed?'CLAIMED':`+${quest.xp} XP`}</em>`}</div>
+        <div class="simple-profile-links"><button type="button" data-profile-action="open-skills"><span>SKILLS</span><strong>${equipped} equipped</strong><small>${unlocked} unlocked</small></button><button type="button" data-profile-action="open-achievements"><span>ACHIEVEMENT</span><strong>${escapeHtml(latestAchievement?.title||'None Yet')}</strong><small>${achievements.filter(item=>item.unlocked).length} / ${achievements.length}</small></button><button type="button" data-profile-action="open-weekly"><span>WEEKLY</span><strong>${latestWeek?escapeHtml(latestWeek.trend):'Pending'}</strong><small>${latestWeek?`${latestWeek.completionRate}% clear`:'No debrief yet'}</small></button></div>
+      </div>`;
+      return;
     }
+    if(controlUi.profilePage===1){
+      const emblemOptions=[['apex','Apex'],['confirm','Shard'],['shine','Radiance'],['stretch','Flow'],['academic','Scholar'],['work','Core']];
+      content.innerHTML=`<div class="simple-profile-detail"><div class="simple-detail-heading"><span>IDENTITY</span><strong>Edit Player Record</strong><small>Changes apply only to your visible profile identity.</small></div><div class="profile-form simple-identity-form"><label>Name<input id="profileNameEdit" type="text" maxlength="40" value="${escapeHtml(state.player.name)}"></label><label>Codename<input id="profileCodenameEdit" type="text" maxlength="24" value="${escapeHtml(state.player.codename||'')}"></label><label>Emblem<select id="profileEmblemEdit">${emblemOptions.map(([value,label])=>`<option value="${value}" ${value===activeEmblem?'selected':''}>${label}</option>`).join('')}</select></label><label>Title<select id="profileTitleEdit">${unlockedTitles.map(value=>`<option ${value===state.player.title?'selected':''}>${escapeHtml(value)}</option>`).join('')}</select></label></div><button class="custom-primary" type="button" data-profile-action="save-identity">Save Identity</button><button class="ghost-button" type="button" data-profile-action="profile-home">Back to Profile</button></div>`;
+      return;
+    }
+    if(controlUi.profilePage===2){
+      const equippedIds=new Set(state.skills.equipped||[]),unlockedIds=new Set(state.skills.unlocked||[]);
+      content.innerHTML=`<div class="simple-profile-detail"><div class="simple-detail-heading"><span>SKILLS & PERKS</span><strong>${state.skills.points} Skill Point${state.skills.points===1?'':'s'}</strong><small>Compact status only. Skill management stays outside the main profile.</small></div><div class="simple-skill-grid">${skillDefinitions.map(skill=>`<div class="${equippedIds.has(skill.id)?'equipped':unlockedIds.has(skill.id)?'unlocked':'locked'}"><span>${escapeHtml(skill.name)}</span><strong>${equippedIds.has(skill.id)?'EQUIPPED':unlockedIds.has(skill.id)?'UNLOCKED':`COST ${skill.cost}`}</strong><small>${escapeHtml(skill.copy)}</small></div>`).join('')}</div><button class="ghost-button" type="button" data-profile-action="profile-home">Back to Profile</button></div>`;
+      return;
+    }
+    if(controlUi.profilePage===3){
+      const unlocked=achievements.filter(item=>item.unlocked).sort((a,b)=>String(b.unlockedAt||'').localeCompare(String(a.unlockedAt||''))).slice(0,5);
+      content.innerHTML=`<div class="simple-profile-detail"><div class="simple-detail-heading"><span>ACHIEVEMENTS</span><strong>${achievements.filter(item=>item.unlocked).length} / ${achievements.length} Unlocked</strong><small>Your newest unlocked titles appear first.</small></div><div class="simple-achievement-list">${unlocked.length?unlocked.map(item=>`<div><span>${glyphMarkup('success')}</span><section><strong>${escapeHtml(item.title)}</strong><small>${item.unlockedAt?`Unlocked ${formatShortDate(item.unlockedAt)}`:'Unlocked'}</small></section></div>`).join(''):'<div class="schedule-empty"><strong>No Achievements Yet</strong><span>Clear directives and milestones to unlock titles.</span></div>'}</div><button class="ghost-button" type="button" data-profile-action="profile-home">Back to Profile</button></div>`;
+      return;
+    }
+    const latest=[...(state.weeklyDebriefs||[])].reverse()[0];
+    content.innerHTML=`<div class="simple-profile-detail"><div class="simple-detail-heading"><span>WEEKLY DEBRIEF</span><strong>${latest?escapeHtml(latest.trend):'No Completed Week'}</strong><small>${latest?`${latest.start} — ${latest.end}`:'A compact review appears after a completed calendar week.'}</small></div>${latest?`<div class="simple-week-grid"><div><span>COMPLETION</span><strong>${latest.completionRate}%</strong></div><div><span>ATTENDANCE</span><strong>${latest.attendanceRate}%</strong></div><div><span>BEST DAY</span><strong>${escapeHtml(latest.bestDay)}</strong></div><div><span>WEEKLY BOSS</span><strong>${latest.bossCleared?'CLEARED':'NOT CLEARED'}</strong></div></div><div class="simple-week-insight"><span>MOST COMMON FAILURE</span><strong>${escapeHtml(latest.commonReason)}</strong><small>${escapeHtml(latest.recommendation)}</small></div>`:'<div class="schedule-empty"><strong>Debrief Pending</strong><span>Complete a calendar week with activity to generate this record.</span></div>'}<button class="ghost-button" type="button" data-profile-action="profile-home">Back to Profile</button></div>`;
   };
   const attendanceTabs=[{id:'overall',label:'Overall'},{id:'subjects',label:'Subjects'},{id:'history',label:'History'}];
   const historyRecords=()=>[...state.attendanceRecords].sort((a,b)=>`${b.scheduledDate}T${b.scheduledStart}`.localeCompare(`${a.scheduledDate}T${a.scheduledStart}`));
@@ -2010,9 +2019,9 @@
   };
   const openControlOverlay=()=>{
     if(!$('#scheduleOverlay').hidden||!$('#emergencyOverlay').hidden||!$('#developerRunOverlay').hidden)return;
-    cancelHold();resetClockAccessVisual();controlUi.directDeveloper=false;$('#scheduleOverlay').hidden=false;renderControlHome();haptic('tap');
+    cancelHold();resetClockAccessVisual();controlUi.directDeveloper=false;controlUi.directProfile=false;$('#scheduleOverlay').hidden=false;renderControlHome();haptic('tap');
   };
-  const closeScheduleOverlay=()=>{$('#scheduleOverlay').hidden=true;cancelHold('schedule-delete');cancelHold('clock-schedule');resetClockAccessVisual();controlUi.correction=false;controlUi.directDeveloper=false;backupUi={pending:null,fileName:''};if($('#backupFileInput'))$('#backupFileInput').value='';renderApp();if(activeProtocolRecord())requestWakeLock()};
+  const closeScheduleOverlay=()=>{$('#scheduleOverlay').hidden=true;cancelHold('schedule-delete');cancelHold('clock-schedule');resetClockAccessVisual();controlUi.correction=false;controlUi.directDeveloper=false;controlUi.directProfile=false;backupUi={pending:null,fileName:''};if($('#backupFileInput'))$('#backupFileInput').value='';renderApp();if(activeProtocolRecord())requestWakeLock()};
   const renderScheduleOverview=()=>{
     setControlView('scheduleOverviewView');scheduleUi.day=Number(scheduleUi.day);const entries=scheduleEntriesForDay(scheduleUi.day);const totalPages=Math.max(1,Math.ceil(entries.length/schedulePageSize));scheduleUi.page=clamp(scheduleUi.page,0,totalPages-1);
     $('#scheduleWeekTabs').innerHTML=scheduleDays.map(day=>{const count=scheduleEntriesForDay(day.value).length;return`<button type="button" data-day="${day.value}" class="${day.value===scheduleUi.day?'selected':''}"><strong>${day.label}</strong><small>${count}</small></button>`}).join('');
@@ -2069,6 +2078,10 @@
     brand.style.setProperty('--brand-access-glow','8px');
     brand.style.setProperty('--brand-access-scale','1');
   };
+  const openProfileFromBrand=()=>{
+    if(!state.initialized||!$('#scheduleOverlay').hidden||!$('#emergencyOverlay').hidden||!$('#developerRunOverlay').hidden)return;
+    cancelHold();resetBrandAccessVisual();brandHoldStartedAt=0;brandHoldProtocolActive=false;brandHoldDeveloperReady=false;controlUi.directDeveloper=false;controlUi.directProfile=true;controlUi.profilePage=0;$('#scheduleOverlay').hidden=false;renderProfile();releaseWakeLock();haptic('tap');
+  };
   const openDeveloperFromBrand=()=>{
     if(!$('#emergencyOverlay').hidden)return;
     cancelHold();resetBrandAccessVisual();brandHoldStartedAt=0;brandHoldProtocolActive=false;brandHoldDeveloperReady=false;
@@ -2102,9 +2115,11 @@
   const finishBrandAccessHold=()=>{
     if(!brandHoldStartedAt)return;
     const elapsed=performance.now()-brandHoldStartedAt;
+    const openProfile=elapsed<=650;
     const openDeveloper=brandHoldProtocolActive&&elapsed>=3000&&elapsed<6000;
     cancelHold('brand-access');brandHoldStartedAt=0;brandHoldProtocolActive=false;brandHoldDeveloperReady=false;resetBrandAccessVisual();
-    if(openDeveloper)openDeveloperFromBrand();
+    if(openDeveloper){openDeveloperFromBrand();return}
+    if(openProfile)openProfileFromBrand();
   };
   const cancelBrandAccessHold=()=>{cancelHold('brand-access');brandHoldStartedAt=0;brandHoldProtocolActive=false;brandHoldDeveloperReady=false;resetBrandAccessVisual()};
   const armClockBackup=()=>{clockArmedUntil=Date.now()+6000;resetClockAccessVisual();$('#clockPanel').classList.add('backup-armed');showBreachWarning('OVERRIDE GESTURE ARMED','Hold the clock for 3 seconds to open Emergency Override.');setTimeout(()=>{if(Date.now()>=clockArmedUntil)$('#clockPanel').classList.remove('backup-armed')},6100)};
@@ -2191,7 +2206,7 @@
     $('#openDataBackup').addEventListener('click',()=>{backupUi={pending:null,fileName:''};renderDataBackup()});
     $('#openSystemIntegrity').addEventListener('click',renderSystemIntegrity);
     $('#academicBack').addEventListener('click',renderControlHome);
-    $('#profileBack').addEventListener('click',renderControlHome);
+    $('#profileBack').addEventListener('click',closeScheduleOverlay);
     $('#attendanceBack').addEventListener('click',renderAcademicHome);
     $('#academicTasksBack').addEventListener('click',renderAcademicHome);
     $('#advancedSystemBack').addEventListener('click',renderAcademicHome);
@@ -2277,10 +2292,15 @@
     $('#profileContent').addEventListener('click',event=>{
       const progressButton=event.target.closest('[data-progress-page]');if(progressButton){controlUi.progressPage=Number(progressButton.dataset.progressPage);renderProfile();return}
       const button=event.target.closest('[data-profile-action]');if(!button)return;const action=button.dataset.profileAction;
+      if(action==='profile-home'){controlUi.profilePage=0;renderProfile();return}
+      if(action==='edit-identity'){controlUi.profilePage=1;renderProfile();return}
+      if(action==='open-skills'){controlUi.profilePage=2;renderProfile();return}
+      if(action==='open-achievements'){controlUi.profilePage=3;renderProfile();return}
+      if(action==='open-weekly'){controlUi.profilePage=4;renderProfile();return}
       if(action==='save-identity'){
         const name=$('#profileNameEdit')?.value.trim(),codename=$('#profileCodenameEdit')?.value.trim()||'',emblem=normalizeGlyph($('#profileEmblemEdit')?.value||'apex'),title=$('#profileTitleEdit')?.value||'Discipline Initiate';
         if(!name){showBreachWarning('NAME REQUIRED','Player name cannot be empty.');return}
-        state.player.name=name;state.player.codename=codename;state.player.emblem=emblem;state.player.title=title;state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'profile',message:'Player identity updated.'});save();systemFeedback('clear','Profile saved.');renderProfile();return;
+        state.player.name=name;state.player.codename=codename;state.player.emblem=emblem;state.player.title=title;state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'profile',message:'Player identity updated.'});save();systemFeedback('clear','Profile saved.');controlUi.profilePage=0;renderProfile();return;
       }
       if(action==='claim-quest'){claimDailyQuest();return}
       if(action==='reroll-quest'){rerollDailyQuest();return}
