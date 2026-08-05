@@ -1,4 +1,4 @@
-const CACHE='ascend-discipline-v37-anytime-schedule-access';
+const CACHE='ascend-discipline-v38-remove-level-status-hold';
 const ASSETS=[
   './',
   './index.html',

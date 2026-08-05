@@ -1214,7 +1214,7 @@
     if(criticalConfirmationOwners.has(cancelled.owner)&&Number(cancelled.progress||0)>=.25)recordConfirmationAudit(cancelled.owner,'interrupted','Hold released or visibility changed before completion',cancelled.context);
   };
   const beginHold=(owner,duration,onProgress,onComplete)=>{
-    cancelHold();const started=performance.now(),checkpoints=[.25,.5,.75],checkpointOwners=new Set(['brand','schedule-access','emergency-exit','clock-backup']),context=confirmationContext(owner);let checkpointIndex=0;
+    cancelHold();const started=performance.now(),checkpoints=[.25,.5,.75],checkpointOwners=new Set(['brand','emergency-exit','clock-backup']),context=confirmationContext(owner);let checkpointIndex=0;
     document.body.classList.add('hold-active');document.body.dataset.holdOwner=owner;
     const frame=now=>{
       const progress=clamp((now-started)/duration,0,1);if(holdSession)holdSession.progress=progress;onProgress?.(progress);
@@ -2012,7 +2012,7 @@
     if(!$('#scheduleOverlay').hidden||!$('#emergencyOverlay').hidden||!$('#developerRunOverlay').hidden)return;
     cancelHold();resetClockAccessVisual();controlUi.directDeveloper=false;$('#scheduleOverlay').hidden=false;renderControlHome();haptic('tap');
   };
-  const closeScheduleOverlay=()=>{$('#scheduleOverlay').hidden=true;cancelHold('schedule-delete');cancelHold('schedule-access');cancelHold('clock-schedule');resetClockAccessVisual();$('#compactStatus').style.setProperty('--config-progress','0deg');controlUi.correction=false;controlUi.directDeveloper=false;backupUi={pending:null,fileName:''};if($('#backupFileInput'))$('#backupFileInput').value='';renderApp();if(activeProtocolRecord())requestWakeLock()};
+  const closeScheduleOverlay=()=>{$('#scheduleOverlay').hidden=true;cancelHold('schedule-delete');cancelHold('clock-schedule');resetClockAccessVisual();controlUi.correction=false;controlUi.directDeveloper=false;backupUi={pending:null,fileName:''};if($('#backupFileInput'))$('#backupFileInput').value='';renderApp();if(activeProtocolRecord())requestWakeLock()};
   const renderScheduleOverview=()=>{
     setControlView('scheduleOverviewView');scheduleUi.day=Number(scheduleUi.day);const entries=scheduleEntriesForDay(scheduleUi.day);const totalPages=Math.max(1,Math.ceil(entries.length/schedulePageSize));scheduleUi.page=clamp(scheduleUi.page,0,totalPages-1);
     $('#scheduleWeekTabs').innerHTML=scheduleDays.map(day=>{const count=scheduleEntriesForDay(day.value).length;return`<button type="button" data-day="${day.value}" class="${day.value===scheduleUi.day?'selected':''}"><strong>${day.label}</strong><small>${count}</small></button>`}).join('');
@@ -2181,7 +2181,6 @@
     ['pointerup','pointercancel','pointerleave'].forEach(type=>$('#classConfirmButton').addEventListener(type,()=>{cancelHold('class-confirm');$('#classConfirmFill').style.width='0%'}));
     $('#classScreen').addEventListener('click',event=>{const button=event.target.closest('[data-class-action]');if(button)handleClassAction(button.dataset.classAction)});
 
-    $('#compactStatus').style.setProperty('--config-progress','0deg');
     $('#scheduleClose').addEventListener('click',closeScheduleOverlay);
     $('#openPlayerProfile').addEventListener('click',()=>{controlUi.profilePage=0;renderProfile()});
     $('#openAcademicControl').addEventListener('click',renderAcademicHome);
