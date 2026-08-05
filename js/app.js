@@ -21,7 +21,7 @@
   let clockSuppressClick=false;
   let escapeTimer=null;
   let scheduleUi={view:'home',day:new Date().getDay(),page:0,editId:null,isNew:false};
-  let controlUi={view:'home',profilePage:0,progressPage:0,directiveIndex:0,achievementPage:0,attendanceTab:'overall',subjectIndex:0,historyIndex:0,correction:false,taskTab:'tasks',taskIndex:0,ruleIndex:0,dependencyIndex:0,rollbackIndex:0,directDeveloper:false,directProfile:false,developerAdvanced:false};
+  let controlUi={view:'home',profilePage:0,progressPage:0,directiveIndex:0,achievementPage:0,attendanceTab:'overall',subjectIndex:0,subjectAbsencePage:0,historyIndex:0,correction:false,taskTab:'tasks',taskIndex:0,ruleIndex:0,dependencyIndex:0,rollbackIndex:0,directDeveloper:false,directProfile:false,developerAdvanced:false};
   let developerRunSession=null;
   let developerReportPage=0;
   let developerClockTimer=null;
@@ -1931,7 +1931,7 @@
     const latest=[...(state.weeklyDebriefs||[])].reverse()[0];
     content.innerHTML=`<div class="simple-profile-detail"><div class="simple-detail-heading"><span>WEEKLY DEBRIEF</span><strong>${latest?escapeHtml(latest.trend):'No Completed Week'}</strong><small>${latest?`${latest.start} — ${latest.end}`:'A compact review appears after a completed calendar week.'}</small></div>${latest?`<div class="simple-week-grid"><div><span>COMPLETION</span><strong>${latest.completionRate}%</strong></div><div><span>ATTENDANCE</span><strong>${latest.attendanceRate}%</strong></div><div><span>BEST DAY</span><strong>${escapeHtml(latest.bestDay)}</strong></div><div><span>WEEKLY BOSS</span><strong>${latest.bossCleared?'CLEARED':'NOT CLEARED'}</strong></div></div><div class="simple-week-insight"><span>MOST COMMON FAILURE</span><strong>${escapeHtml(latest.commonReason)}</strong><small>${escapeHtml(latest.recommendation)}</small></div>`:'<div class="schedule-empty"><strong>Debrief Pending</strong><span>Complete a calendar week with activity to generate this record.</span></div>'}<button class="ghost-button" type="button" data-profile-action="profile-home">Back to Profile</button></div>`;
   };
-  const attendanceTabs=[{id:'overall',label:'Overall'},{id:'subjects',label:'Subjects'},{id:'history',label:'History'}];
+  const attendanceTabs=[{id:'overall',label:'Overview'},{id:'subjects',label:'Per Subject'}];
   const historyRecords=()=>[...state.attendanceRecords].sort((a,b)=>`${b.scheduledDate}T${b.scheduledStart}`.localeCompare(`${a.scheduledDate}T${a.scheduledStart}`));
   const currentWeekAttendance=()=>{
     const now=new Date(),weekday=now.getDay()||7,start=new Date(now);start.setHours(0,0,0,0);start.setDate(start.getDate()-(weekday-1));
@@ -1941,14 +1941,55 @@
     const attended=counts.early+counts.present+counts.late,required=attended+counts.absent;
     return{records,counts,attended,required,start,end};
   };
+  const attendanceDateLabel=value=>{
+    const date=new Date(`${value}T12:00:00`);
+    return Number.isNaN(date.getTime())?String(value||'Unknown date'):date.toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'});
+  };
+  const attendanceModeSwitch=active=>`<div class="attendance-mode-switch" role="group" aria-label="Attendance view"><button type="button" data-attendance-action="show-overall" class="${active==='overall'?'active':''}">Overview</button><button type="button" data-attendance-action="show-subjects" class="${active==='subjects'?'active':''}">Per Subject</button></div>`;
+  const attendanceAbsencePageSize=()=>window.innerHeight<=620?3:4;
   const renderAttendance=()=>{
-    setControlView('attendanceView');controlUi.attendanceTab='overall';controlUi.correction=false;
+    setControlView('attendanceView');controlUi.correction=false;
     const academic=overallAcademicStats(),week=currentWeekAttendance(),records=historyRecords(),latest=records[0]||null;
     $('#attendanceTabs').innerHTML='';$('#attendanceTabs').hidden=true;$('#attendanceNav').hidden=true;
+    const content=$('#attendanceContent');
+    if(controlUi.attendanceTab==='subjects'){
+      const subjects=academic.subjects;
+      if(!subjects.length){
+        content.innerHTML=`${attendanceModeSwitch('subjects')}<div class="schedule-empty attendance-empty"><strong>No Subjects Yet</strong><span>Add a class schedule or complete an attendance check first.</span></div>`;
+        return;
+      }
+      controlUi.subjectIndex=clamp(controlUi.subjectIndex,0,subjects.length-1);
+      const stats=subjects[controlUi.subjectIndex],absences=[...stats.records].filter(record=>record.status==='absent').sort((a,b)=>`${b.scheduledDate}T${b.scheduledStart}`.localeCompare(`${a.scheduledDate}T${a.scheduledStart}`));
+      const perPage=attendanceAbsencePageSize(),totalPages=Math.max(1,Math.ceil(absences.length/perPage));controlUi.subjectAbsencePage=clamp(controlUi.subjectAbsencePage,0,totalPages-1);
+      const pageStart=controlUi.subjectAbsencePage*perPage,pageAbsences=absences.slice(pageStart,pageStart+perPage);
+      const absenceList=pageAbsences.length?pageAbsences.map(record=>`<div class="subject-absence-record"><span>${escapeHtml(attendanceDateLabel(record.scheduledDate))}</span><strong>${formatTime(record.scheduledStart)}</strong></div>`).join(''):'<div class="subject-absence-empty"><strong>No Absences</strong><span>No absence dates are recorded for this subject.</span></div>';
+      $('#attendanceNav').hidden=subjects.length<=1;$('#attendancePageLabel').textContent=`${controlUi.subjectIndex+1} / ${subjects.length}`;
+      content.innerHTML=`
+        ${attendanceModeSwitch('subjects')}
+        <div class="subject-attendance-heading">
+          <span>SUBJECT ATTENDANCE</span>
+          <strong>${escapeHtml(stats.subject.name)}</strong>
+          <small>${escapeHtml(stats.subject.code||'No subject code')} · ${stats.required} required class${stats.required===1?'':'es'}</small>
+        </div>
+        <div class="subject-attendance-stats">
+          <div><span>ATTENDANCE</span><strong>${stats.attendanceRate}%</strong></div>
+          <div><span>REQUIRED</span><strong>${stats.required}</strong></div>
+          <div><span>ABSENT</span><strong>${stats.counts.absent}</strong></div>
+          <div><span>LATE</span><strong>${stats.counts.late}</strong></div>
+        </div>
+        <div class="subject-absence-panel">
+          <div class="subject-absence-heading"><div><span>ABSENCE HISTORY</span><strong>${absences.length} recorded</strong></div><small>${absences.length?`${pageStart+1}-${Math.min(pageStart+perPage,absences.length)} of ${absences.length}`:'No dates'}</small></div>
+          <div class="subject-absence-list">${absenceList}</div>
+          <div class="subject-absence-nav" ${totalPages<=1?'hidden':''}><button type="button" data-attendance-action="absence-prev" ${controlUi.subjectAbsencePage===0?'disabled':''} aria-label="Previous absence dates">${glyphMarkup('chevron-left')}</button><span>Dates ${controlUi.subjectAbsencePage+1} / ${totalPages}</span><button type="button" data-attendance-action="absence-next" ${controlUi.subjectAbsencePage>=totalPages-1?'disabled':''} aria-label="Next absence dates">${glyphMarkup('chevron-right')}</button></div>
+        </div>`;
+      return;
+    }
+    controlUi.attendanceTab='overall';
     const weekRate=week.required?Math.round(week.attended/week.required*100):0;
     const onTime=academic.counts.early+academic.counts.present;
-    const latestMarkup=latest?`<div class="attendance-latest-card"><div><span>LATEST RECORD</span><strong>${escapeHtml(latest.subjectName)}</strong><small>${escapeHtml(latest.scheduledDate)} · ${formatTime(latest.scheduledStart)}</small></div><b class="attendance-status-${escapeHtml(latest.status)}">${escapeHtml(latest.status.toUpperCase())}</b></div>`:'<div class="schedule-empty attendance-empty"><strong>No Attendance Records</strong><span>Your first completed class check-in will appear here.</span></div>';
-    $('#attendanceContent').innerHTML=`
+    const latestMarkup=latest?`<div class="attendance-latest-card"><div><span>LATEST RECORD</span><strong>${escapeHtml(latest.subjectName)}</strong><small>${escapeHtml(attendanceDateLabel(latest.scheduledDate))} · ${formatTime(latest.scheduledStart)}</small></div><b class="attendance-status-${escapeHtml(latest.status)}">${escapeHtml(latest.status.toUpperCase())}</b></div>`:'<div class="schedule-empty attendance-empty"><strong>No Attendance Records</strong><span>Your first completed class check-in will appear here.</span></div>';
+    content.innerHTML=`
+      ${attendanceModeSwitch('overall')}
       <div class="attendance-overview-stats">
         <div><span>ATTENDANCE</span><strong>${academic.attendanceRate}%</strong></div>
         <div><span>PUNCTUALITY</span><strong>${academic.punctualityRate}%</strong></div>
@@ -2206,7 +2247,7 @@
     $('#openPlayerProfile').addEventListener('click',()=>{controlUi.profilePage=0;renderProfile()});
     $('#openAcademicControl').addEventListener('click',renderAcademicHome);
     $('#openFreeSchedule').addEventListener('click',()=>{scheduleUi.day=defaultScheduleDay();scheduleUi.page=0;renderScheduleOverview()});
-    $('#openFreeAttendance').addEventListener('click',renderAttendance);
+    $('#openFreeAttendance').addEventListener('click',()=>{controlUi.attendanceTab='overall';controlUi.subjectIndex=0;controlUi.subjectAbsencePage=0;renderAttendance()});
     $('#openAcademicTasks').addEventListener('click',()=>{controlUi.taskTab='tasks';renderAcademicTasks()});
     $('#openAdvancedSystem').addEventListener('click',renderAdvancedSystemHome);
     $('#openDataBackup').addEventListener('click',()=>{backupUi={pending:null,fileName:''};renderDataBackup()});
@@ -2320,10 +2361,21 @@
     });
 
     $('#attendanceTabs').addEventListener('click',event=>{const button=event.target.closest('[data-attendance-tab]');if(!button)return;controlUi.attendanceTab=button.dataset.attendanceTab;controlUi.correction=false;renderAttendance()});
-    $('#attendancePrev').addEventListener('click',()=>{if(controlUi.attendanceTab==='subjects')controlUi.subjectIndex=Math.max(0,controlUi.subjectIndex-1);else if(controlUi.attendanceTab==='history')controlUi.historyIndex=Math.max(0,controlUi.historyIndex-1);renderAttendance()});
-    $('#attendanceNext').addEventListener('click',()=>{if(controlUi.attendanceTab==='subjects')controlUi.subjectIndex=Math.min(Math.max(0,subjectCatalog().length-1),controlUi.subjectIndex+1);else if(controlUi.attendanceTab==='history')controlUi.historyIndex=Math.min(Math.max(0,historyRecords().length-1),controlUi.historyIndex+1);renderAttendance()});
+    $('#attendancePrev').addEventListener('click',()=>{if(controlUi.attendanceTab==='subjects'){controlUi.subjectIndex=Math.max(0,controlUi.subjectIndex-1);controlUi.subjectAbsencePage=0}else if(controlUi.attendanceTab==='history')controlUi.historyIndex=Math.max(0,controlUi.historyIndex-1);renderAttendance()});
+    $('#attendanceNext').addEventListener('click',()=>{if(controlUi.attendanceTab==='subjects'){controlUi.subjectIndex=Math.min(Math.max(0,subjectCatalog().length-1),controlUi.subjectIndex+1);controlUi.subjectAbsencePage=0}else if(controlUi.attendanceTab==='history')controlUi.historyIndex=Math.min(Math.max(0,historyRecords().length-1),controlUi.historyIndex+1);renderAttendance()});
     $('#attendanceContent').addEventListener('click',event=>{
-      const action=event.target.closest('[data-attendance-action]');if(action?.dataset.attendanceAction==='correct'){controlUi.correction=true;renderAttendance();return}
+      const action=event.target.closest('[data-attendance-action]');
+      if(action){
+        const type=action.dataset.attendanceAction;
+        if(type==='show-overall'){controlUi.attendanceTab='overall';controlUi.subjectAbsencePage=0;renderAttendance();return}
+        if(type==='show-subjects'){controlUi.attendanceTab='subjects';controlUi.subjectIndex=clamp(controlUi.subjectIndex,0,Math.max(0,subjectCatalog().length-1));controlUi.subjectAbsencePage=0;renderAttendance();return}
+        if(type==='absence-prev'){controlUi.subjectAbsencePage=Math.max(0,controlUi.subjectAbsencePage-1);renderAttendance();return}
+        if(type==='absence-next'){
+          const subject=overallAcademicStats().subjects[controlUi.subjectIndex],total=Math.max(1,Math.ceil((subject?.records||[]).filter(record=>record.status==='absent').length/attendanceAbsencePageSize()));
+          controlUi.subjectAbsencePage=Math.min(total-1,controlUi.subjectAbsencePage+1);renderAttendance();return
+        }
+        if(type==='correct'){controlUi.correction=true;renderAttendance();return}
+      }
       const correction=event.target.closest('[data-correct-status]');if(correction){const record=historyRecords()[controlUi.historyIndex];if(record)correctAttendanceRecord(record,correction.dataset.correctStatus)}
     });
 

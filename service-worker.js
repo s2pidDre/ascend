@@ -1,4 +1,4 @@
-const CACHE='ascend-discipline-v41-simplified-attendance-overview';
+const CACHE='ascend-discipline-v42-subject-attendance-overview';
 const ASSETS=[
   './',
   './index.html',
