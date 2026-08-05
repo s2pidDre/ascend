@@ -83,7 +83,7 @@
         <span class="brand-mark"><img class="brand-mark-image" src="assets/inapp-logo.png" alt="" aria-hidden="true" draggable="false"></span>
         <span class="brand-copy"><strong>ASCEND</strong><small>DISCIPLINE SYSTEM</small></span>
       </button>
-      <button class="clock" id="clockPanel" type="button" aria-label="Current time">
+      <button class="clock" id="clockPanel" type="button" aria-label="Current time. Hold for hidden schedule access.">
         <strong id="clockTime">--:--:--</strong><span id="clockDate">---</span>
       </button>
     </header>
@@ -101,7 +101,7 @@
         <span>Class window</span><strong>7:30 AM–7:30 PM</strong>
         <span>Final deadline</span><strong>10:00 PM</strong>
       </div>
-      <p class="setup-help">During a Free Window, hold Level–Rank–Streak for 5 seconds to manage your class schedule. Hold ASCEND for 3 seconds to open Developer Test Mode. During an active protocol, keep holding to 6 seconds for Emergency Override.</p>
+      <p class="setup-help">Hold the clock for 3 seconds to manage your class schedule from any screen. Hold ASCEND for 3 seconds to open Developer Test Mode. During an active protocol, keep holding ASCEND to 6 seconds for Emergency Override.</p>
       <button class="system-button" id="activateButton" type="button"><span></span><b>Activate System</b></button>
     </section>
 
@@ -145,7 +145,7 @@
     </section>
 
     <section class="screen free-screen" id="freeScreen" hidden>
-      <div class="compact-status" id="compactStatus" aria-label="Hold to open Schedule Center">
+      <div class="compact-status" id="compactStatus" aria-label="Level, rank, and streak">
         <div><span>LEVEL</span><strong id="freeLevel">1</strong></div>
         <div><span>RANK</span><strong id="freeRank">E</strong></div>
         <div><span>STREAK</span><strong id="freeStreak">0</strong></div>
@@ -320,9 +320,9 @@
     <div class="schedule-panel system-panel">
       <section class="control-home-view schedule-only-home" id="controlHomeView">
         <div class="config-sigil glyph-frame" aria-hidden="true"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-calendar"></use></svg></div>
-        <p class="eyebrow">FREE WINDOW CONTROL</p>
+        <p class="eyebrow">HIDDEN SCHEDULE ACCESS</p>
         <h2>Schedule Center</h2>
-        <p class="schedule-hint">Manage your weekly classes and one-day schedule changes.</p>
+        <p class="schedule-hint">Manage your weekly classes and one-day schedule changes from any ASCEND state.</p>
         <div class="config-summary two-stat schedule-only-summary">
           <div><span>ACTIVE CLASSES</span><strong id="freeScheduleClassCount">0</strong></div>
           <div><span>ONE-DAY CHANGES</span><strong id="freeScheduleExceptionCount">0</strong></div>

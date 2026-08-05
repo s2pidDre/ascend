@@ -16,6 +16,9 @@
   let clockTapCount=0;
   let clockTapTimer=null;
   let clockArmedUntil=0;
+  let clockHoldStartedAt=0;
+  let clockHoldMode='';
+  let clockSuppressClick=false;
   let escapeTimer=null;
   let scheduleUi={view:'home',day:new Date().getDay(),page:0,editId:null,isNew:false};
   let controlUi={view:'home',profilePage:0,progressPage:0,directiveIndex:0,achievementPage:0,attendanceTab:'overall',subjectIndex:0,historyIndex:0,correction:false,taskTab:'tasks',taskIndex:0,ruleIndex:0,dependencyIndex:0,rollbackIndex:0,directDeveloper:false,developerAdvanced:false};
@@ -2000,11 +2003,16 @@
     save({silent:true});backupUi={pending:null,fileName:''};controlUi.correction=false;scheduleUi.editId=null;activeScreenId=null;
     closeScheduleOverlay();renderApp();showSystemNotice('restore','BACKUP RESTORED','Progress and local records were replaced safely.',2800);showBreachWarning('BACKUP RESTORED','Progress, schedules, attendance, tasks, settings, and milestones were restored.','clear');
   };
-  const openControlOverlay=()=>{
-    if(activeProtocolRecord()||classStateAt(new Date())||$('#freeScreen').hidden)return;
-    cancelHold();controlUi.directDeveloper=false;$('#scheduleOverlay').hidden=false;renderControlHome();haptic('tap');
+  const resetClockAccessVisual=()=>{
+    const clock=$('#clockPanel');if(!clock)return;
+    clock.classList.remove('schedule-arming');
+    clock.style.setProperty('--schedule-access-progress','0deg');
   };
-  const closeScheduleOverlay=()=>{$('#scheduleOverlay').hidden=true;cancelHold('schedule-delete');cancelHold('schedule-access');$('#compactStatus').style.setProperty('--config-progress','0deg');controlUi.correction=false;controlUi.directDeveloper=false;backupUi={pending:null,fileName:''};if($('#backupFileInput'))$('#backupFileInput').value='';if(activeProtocolRecord())requestWakeLock()};
+  const openControlOverlay=()=>{
+    if(!$('#scheduleOverlay').hidden||!$('#emergencyOverlay').hidden||!$('#developerRunOverlay').hidden)return;
+    cancelHold();resetClockAccessVisual();controlUi.directDeveloper=false;$('#scheduleOverlay').hidden=false;renderControlHome();haptic('tap');
+  };
+  const closeScheduleOverlay=()=>{$('#scheduleOverlay').hidden=true;cancelHold('schedule-delete');cancelHold('schedule-access');cancelHold('clock-schedule');resetClockAccessVisual();$('#compactStatus').style.setProperty('--config-progress','0deg');controlUi.correction=false;controlUi.directDeveloper=false;backupUi={pending:null,fileName:''};if($('#backupFileInput'))$('#backupFileInput').value='';renderApp();if(activeProtocolRecord())requestWakeLock()};
   const renderScheduleOverview=()=>{
     setControlView('scheduleOverviewView');scheduleUi.day=Number(scheduleUi.day);const entries=scheduleEntriesForDay(scheduleUi.day);const totalPages=Math.max(1,Math.ceil(entries.length/schedulePageSize));scheduleUi.page=clamp(scheduleUi.page,0,totalPages-1);
     $('#scheduleWeekTabs').innerHTML=scheduleDays.map(day=>{const count=scheduleEntriesForDay(day.value).length;return`<button type="button" data-day="${day.value}" class="${day.value===scheduleUi.day?'selected':''}"><strong>${day.label}</strong><small>${count}</small></button>`}).join('');
@@ -2099,7 +2107,28 @@
     if(openDeveloper)openDeveloperFromBrand();
   };
   const cancelBrandAccessHold=()=>{cancelHold('brand-access');brandHoldStartedAt=0;brandHoldProtocolActive=false;brandHoldDeveloperReady=false;resetBrandAccessVisual()};
-  const armClockBackup=()=>{clockArmedUntil=Date.now()+6000;$('#clockPanel').classList.add('backup-armed');showBreachWarning('OVERRIDE GESTURE ARMED','Hold the clock for 3 seconds to open Emergency Override.');setTimeout(()=>{if(Date.now()>=clockArmedUntil)$('#clockPanel').classList.remove('backup-armed')},6100)};
+  const armClockBackup=()=>{clockArmedUntil=Date.now()+6000;resetClockAccessVisual();$('#clockPanel').classList.add('backup-armed');showBreachWarning('OVERRIDE GESTURE ARMED','Hold the clock for 3 seconds to open Emergency Override.');setTimeout(()=>{if(Date.now()>=clockArmedUntil)$('#clockPanel').classList.remove('backup-armed')},6100)};
+  const startClockAccessHold=event=>{
+    if(!$('#scheduleOverlay').hidden||!$('#emergencyOverlay').hidden||!$('#developerRunOverlay').hidden)return;
+    if(event.button!==undefined&&event.button!==0)return;
+    event.preventDefault();clockHoldStartedAt=performance.now();clockHoldMode=Date.now()<=clockArmedUntil?'emergency':'schedule';
+    const clock=$('#clockPanel');clock.setPointerCapture?.(event.pointerId);
+    if(clockHoldMode==='schedule')clock.classList.add('schedule-arming');
+    beginHold(clockHoldMode==='emergency'?'clock-backup':'clock-schedule',3000,progress=>{
+      if(clockHoldMode==='schedule')clock.style.setProperty('--schedule-access-progress',`${progress*360}deg`);
+    },()=>{
+      const mode=clockHoldMode;clockHoldStartedAt=0;clockHoldMode='';clockSuppressClick=true;setTimeout(()=>{clockSuppressClick=false},500);resetClockAccessVisual();
+      if(mode==='emergency'){clockArmedUntil=0;clock.classList.remove('backup-armed');openEmergencyOverlay('clock-gesture')}else openControlOverlay();
+    });
+  };
+  const finishClockAccessHold=event=>{
+    if(!clockHoldStartedAt)return;
+    const elapsed=performance.now()-clockHoldStartedAt;
+    cancelHold(clockHoldMode==='emergency'?'clock-backup':'clock-schedule');clockHoldStartedAt=0;clockHoldMode='';resetClockAccessVisual();
+    if(elapsed>=450){clockSuppressClick=true;setTimeout(()=>{clockSuppressClick=false},500)}
+    try{$('#clockPanel').releasePointerCapture?.(event.pointerId)}catch(error){}
+  };
+  const cancelClockAccessHold=()=>{if(clockHoldMode)cancelHold(clockHoldMode==='emergency'?'clock-backup':'clock-schedule');clockHoldStartedAt=0;clockHoldMode='';resetClockAccessVisual()};
 
   const revealUpdatePrompt=worker=>{
     if(!worker||waitingServiceWorker===worker)return;waitingServiceWorker=worker;
@@ -2152,8 +2181,7 @@
     ['pointerup','pointercancel','pointerleave'].forEach(type=>$('#classConfirmButton').addEventListener(type,()=>{cancelHold('class-confirm');$('#classConfirmFill').style.width='0%'}));
     $('#classScreen').addEventListener('click',event=>{const button=event.target.closest('[data-class-action]');if(button)handleClassAction(button.dataset.classAction)});
 
-    $('#compactStatus').addEventListener('pointerdown',event=>{if($('#freeScreen').hidden||activeProtocolRecord()||classStateAt(new Date()))return;event.preventDefault();beginHold('schedule-access',5000,progress=>{$('#compactStatus').style.setProperty('--config-progress',`${progress*360}deg`)},()=>{$('#compactStatus').style.setProperty('--config-progress','0deg');openControlOverlay()})});
-    ['pointerup','pointercancel','pointerleave'].forEach(type=>$('#compactStatus').addEventListener(type,()=>{cancelHold('schedule-access');$('#compactStatus').style.setProperty('--config-progress','0deg')}));
+    $('#compactStatus').style.setProperty('--config-progress','0deg');
     $('#scheduleClose').addEventListener('click',closeScheduleOverlay);
     $('#openPlayerProfile').addEventListener('click',()=>{controlUi.profilePage=0;renderProfile()});
     $('#openAcademicControl').addEventListener('click',renderAcademicHome);
@@ -2296,9 +2324,10 @@
     $('#systemBrand').addEventListener('pointerdown',event=>{if(event.button!==undefined&&event.button!==0)return;event.preventDefault();$('#systemBrand').setPointerCapture?.(event.pointerId);startBrandAccessHold()});
     $('#systemBrand').addEventListener('pointerup',event=>{event.preventDefault();try{$('#systemBrand').releasePointerCapture?.(event.pointerId)}catch(error){}finishBrandAccessHold()});
     ['pointercancel','lostpointercapture'].forEach(type=>$('#systemBrand').addEventListener(type,cancelBrandAccessHold));
-    $('#clockPanel').addEventListener('click',()=>{clockTapCount+=1;clearTimeout(clockTapTimer);if(clockTapCount>=5){clockTapCount=0;armClockBackup();return}clockTapTimer=setTimeout(()=>{clockTapCount=0},1300)});
-    $('#clockPanel').addEventListener('pointerdown',event=>{if(Date.now()>clockArmedUntil)return;event.preventDefault();beginHold('clock-backup',3000,()=>{},()=>{clockArmedUntil=0;$('#clockPanel').classList.remove('backup-armed');openEmergencyOverlay('clock-gesture')})});
-    ['pointerup','pointercancel','pointerleave'].forEach(type=>$('#clockPanel').addEventListener(type,()=>cancelHold('clock-backup')));
+    $('#clockPanel').addEventListener('click',()=>{if(clockSuppressClick){clockSuppressClick=false;return}clockTapCount+=1;clearTimeout(clockTapTimer);if(clockTapCount>=5){clockTapCount=0;armClockBackup();return}clockTapTimer=setTimeout(()=>{clockTapCount=0},1300)});
+    $('#clockPanel').addEventListener('pointerdown',startClockAccessHold);
+    $('#clockPanel').addEventListener('pointerup',finishClockAccessHold);
+    ['pointercancel','lostpointercapture'].forEach(type=>$('#clockPanel').addEventListener(type,cancelClockAccessHold));
     $('#completeRecovery').addEventListener('click',completeRecoveryProtocol);
     $('#returnDirectiveButton').addEventListener('click',closeEmergencyOverlay);
     $('#confirmEmergencyButton').addEventListener('pointerdown',event=>{event.preventDefault();beginHold('emergency-exit',3000,progress=>{$('#emergencyExitFill').style.width=`${progress*100}%`},emergencyExit)});

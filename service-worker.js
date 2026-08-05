@@ -1,4 +1,4 @@
-const CACHE='ascend-discipline-v36-schedule-only-free-window';
+const CACHE='ascend-discipline-v37-anytime-schedule-access';
 const ASSETS=[
   './',
   './index.html',

@@ -3766,3 +3766,31 @@ body.orientation-blocked .developer-run-overlay{display:none!important}
     min-height:38px;
   }
 }
+
+/* Hidden schedule access: hold the clock from any ASCEND state. */
+.clock{
+  --schedule-access-progress:0deg;
+  touch-action:none;
+  -webkit-touch-callout:none;
+  user-select:none;
+  -webkit-user-select:none;
+}
+.clock::after{
+  content:"";
+  position:absolute;
+  inset:-5px -7px;
+  border-radius:7px;
+  padding:1px;
+  background:conic-gradient(var(--violet) var(--schedule-access-progress),transparent 0);
+  opacity:0;
+  pointer-events:none;
+  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+  -webkit-mask-composite:xor;
+  mask-composite:exclude;
+  transition:opacity .16s ease;
+}
+.clock.schedule-arming::after{opacity:.9}
+.clock.schedule-arming strong{
+  color:#e7dcff;
+  text-shadow:0 0 11px rgba(136,103,255,.72);
+}
