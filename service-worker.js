@@ -1,4 +1,4 @@
-const CACHE='ascend-discipline-v42-subject-attendance-overview';
+const CACHE='ascend-discipline-v43-dead-code-cleanup';
 const ASSETS=[
   './',
   './index.html',

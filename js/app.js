@@ -21,9 +21,8 @@
   let clockSuppressClick=false;
   let escapeTimer=null;
   let scheduleUi={view:'home',day:new Date().getDay(),page:0,editId:null,isNew:false};
-  let controlUi={view:'home',profilePage:0,progressPage:0,directiveIndex:0,achievementPage:0,attendanceTab:'overall',subjectIndex:0,subjectAbsencePage:0,historyIndex:0,correction:false,taskTab:'tasks',taskIndex:0,ruleIndex:0,dependencyIndex:0,rollbackIndex:0,directDeveloper:false,directProfile:false,developerAdvanced:false};
+  let controlUi={view:'home',profilePage:0,attendanceTab:'overall',subjectIndex:0,subjectAbsencePage:0,historyIndex:0,correction:false,taskTab:'tasks',taskIndex:0,ruleIndex:0,dependencyIndex:0,rollbackIndex:0,directDeveloper:false,directProfile:false};
   let developerRunSession=null;
-  let developerReportPage=0;
   let developerClockTimer=null;
   let conflictUi={index:0,issues:[]};
   const processedConfirmationTokens=new Set();
@@ -31,7 +30,6 @@
   let activeScreenId=null;
   let brandFlashTimer=null;
   let lastResultAnimationKey=null;
-  let achievementSeenTimer=null;
   let backupUi={pending:null,fileName:''};
   let noticeTimer=null;
   let noticeHideTimer=null;
@@ -526,7 +524,6 @@
     return protocolBlueprints.find(config=>minutes(config.start)>minute&&record.protocols[config.id].status==='pending')||null;
   };
 
-  const exceptionsForDate=()=>[];
   const classesForDate=date=>activeSchedule()
     .filter(entry=>Number(entry.day)===date.getDay())
     .map(entry=>({...entry}))
@@ -1418,20 +1415,7 @@
     quest.claimed=true;quest.claimedAt=new Date().toISOString();state.player.totalXp+=Number(quest.xp||25);state.skills.points=Number(state.skills.points||0)+1;
     state.logs.push({id:S.uid('log'),at:quest.claimedAt,type:'quest',message:`Daily Quest claimed: ${quest.title}. +${quest.xp} XP and +1 Skill Point.`});save();systemFeedback('clear','Daily Quest reward claimed.');renderProfile();
   };
-  const rerollDailyQuest=()=>{
-    const quest=ensureDailyQuest();if(!skillEquipped('quest-compass')||quest.rerolled||quest.claimed)return;
-    const alternatives=questTemplates().all.filter(item=>item.id!==quest.id),next=alternatives[(new Date().getDate()+alternatives.length)%alternatives.length];
-    state.quests.daily={...next,date:quest.date,createdAt:quest.createdAt,rerolled:true,claimed:false,baselineCompleted:completedTaskCount()};save();renderProfile();
-  };
-  const unlockSkill=id=>{
-    const definition=skillDefinitions.find(item=>item.id===id);if(!definition||skillUnlocked(id)||Number(state.skills.points||0)<definition.cost)return;
-    state.skills.points-=definition.cost;state.skills.unlocked.push(id);state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'skill',message:`Skill unlocked: ${definition.name}.`});save();renderProfile();
-  };
-  const toggleSkill=id=>{
-    if(!skillUnlocked(id))return;const equipped=state.skills.equipped||[];
-    if(equipped.includes(id))state.skills.equipped=equipped.filter(value=>value!==id);else{if(equipped.length>=2){showBreachWarning('SKILL SLOTS FULL','Unequip one skill before equipping another.');return}state.skills.equipped=[...equipped,id]}
-    save();renderProfile();
-  };
+
 
   const buildWeeklyDebrief=(startDate,endDate,key)=>{
     const start=S.dateKey(startDate),end=S.dateKey(endDate),days=Object.values(state.dayRecords).filter(day=>day.date>=start&&day.date<=end),records=state.attendanceRecords.filter(record=>record.scheduledDate>=start&&record.scheduledDate<=end&&record.finalized),tasks=state.academicTasks.filter(task=>String(task.completedAt||'').slice(0,10)>=start&&String(task.completedAt||'').slice(0,10)<=end);
@@ -1753,18 +1737,14 @@
       const {record,classMode,entry}=live;if(['approaching','checkin','resolve'].includes(classMode)){record.checkedInAt=now.toISOString();record.status=classMode==='approaching'?'early':classMode==='resolve'?'present':now-timeOnDate(now,entry.start)<=10*60000?'present':'late';if(classMode==='resolve'){record.finalized=true;record.dismissedAt=now.toISOString()}addDeveloperEvent('attendance',`${entry.subject} marked ${record.status}`);haptic('attendance');showSystemNotice('integrity','SIMULATED ATTENDANCE RECORDED',`${entry.subject} · ${record.status.toUpperCase()}`,1800)}else{record.finalized=true;record.dismissedAt=now.toISOString();addDeveloperEvent('attendance',`${entry.subject} dismissed`);haptic('dismissal');showSystemNotice('integrity','SIMULATED CLASS DISMISSED',`${entry.subject} finalized inside the sandbox.`,1800)}renderDeveloperRun();
     }
   };
-  const buildDeveloperReport=()=>[];
-  const renderDeveloperReportPage=()=>{};
   const previewDeveloperHaptic=()=>{if(!developerRunSession)return;const kind=$('#developerLabEvent').value;haptic(kind);addDeveloperEvent('haptic',`Previewed ${kind} vibration pattern`);showSystemNotice('integrity','HAPTIC PREVIEW',`${kind.toUpperCase()} pattern triggered.`,1600)};
   const sendDeveloperTestNotification=async()=>{if(!developerRunSession)return;const kind=$('#developerLabEvent').value;if(!('Notification' in window)){showBreachWarning('NOTIFICATIONS UNSUPPORTED','This browser cannot send a local test alert.');return}let permission=Notification.permission;if(permission==='default')permission=await Notification.requestPermission();if(permission!=='granted'){showBreachWarning('ALERT PERMISSION REQUIRED','Allow notifications before running the alert laboratory.');return}try{new Notification(`ASCEND TEST · ${kind.toUpperCase()}`,{body:'Developer Test Mode notification. Live schedule records are unchanged.',tag:`ascend-test-${Date.now()}`,icon:'assets/icon-192.png'});addDeveloperEvent('notification',`Sent ${kind} test notification`);showSystemNotice('alert','TEST ALERT SENT','The notification laboratory completed successfully.',1800)}catch(error){showBreachWarning('TEST ALERT FAILED',error.message||'Notification could not be created.')}};
   const exitDeveloperRun=(returnToPanel=false)=>{
-    stopDeveloperClock();cancelHold('developer-run');$('#developerRunFill').style.width='0%';const returnDirect=developerRunSession?.returnDirect??true,overlay=$('#developerRunOverlay');overlay.classList.remove('developer-run-visible');overlay.hidden=true;delete overlay.dataset.scenario;delete overlay.dataset.mode;$('#developerRunCard').classList.remove('developer-run-card-lab');$('#developerRunDetail').hidden=false;document.body.classList.remove('developer-test-running');developerRunSession=null;developerReportPage=0;
+    stopDeveloperClock();cancelHold('developer-run');$('#developerRunFill').style.width='0%';const returnDirect=developerRunSession?.returnDirect??true,overlay=$('#developerRunOverlay');overlay.classList.remove('developer-run-visible');overlay.hidden=true;delete overlay.dataset.scenario;delete overlay.dataset.mode;$('#developerRunCard').classList.remove('developer-run-card-lab');$('#developerRunDetail').hidden=false;document.body.classList.remove('developer-test-running');developerRunSession=null;
     if(returnToPanel){controlUi.directDeveloper=returnDirect;$('#scheduleOverlay').hidden=false;renderDeveloperTest();releaseWakeLock()}else{controlUi.directDeveloper=false;renderApp();if(activeProtocolRecord())requestWakeLock()}
   };
   const startDeveloperRunAction=event=>{if(!developerRunSession||!developerRunSession.currentState?.action||$('#developerRunAction').disabled)return;event?.preventDefault();beginHold('developer-run',1200,progress=>{$('#developerRunFill').style.width=`${progress*100}%`},completeDeveloperRun)};
   const runDeveloperTest=()=>launchDeveloperRun({mode:'live'});
-  const runQuickDeveloperTest=scenario=>launchDeveloperRun({mode:scenario==='lab'?'lab':'live'});
-  const toggleDeveloperAdvanced=()=>{};
   const resetDeveloperTest=()=>{state.system.developerTest={enabled:false,unlocked:true,scenario:'live',simulatedDate:null,runs:0,lastResult:null,sandboxMode:'profile',reports:[],labHistory:[]};save({silent:true});renderDeveloperTest();showSystemNotice('integrity','TEST HISTORY CLEARED','Developer sandbox history was reset.',1600)};
   const renderRecoverySystem=()=>{setControlView('recoverySystemView');const snapshots=S.listSnapshots(),rollbacks=S.listRollbackPoints();$('#recoverySystemSummary').innerHTML=`<div><span>SAFE MODE</span><strong>${state.system.safeMode?'ACTIVE':'STANDBY'}</strong></div><div><span>SNAPSHOTS</span><strong>${snapshots.length}</strong></div><div><span>ROLLBACKS</span><strong>${rollbacks.length}</strong></div><div><span>LAST BOOT</span><strong>${state.system.lastSuccessfulBoot?formatShortDate(state.system.lastSuccessfulBoot):'PENDING'}</strong></div>`;$('#toggleSafeMode').textContent=state.system.safeMode?'Exit Emergency Safe Mode':'Emergency Safe Mode'};
   const toggleSafeMode=()=>{state.system.safeMode=!state.system.safeMode;state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'integrity',message:`Emergency Safe Mode ${state.system.safeMode?'enabled':'disabled'}.`});save({silent:true});applySafeMode();renderRecoverySystem()};
@@ -1811,14 +1791,6 @@
     const counts={early:0,present:0,late:0,absent:0,cancelled:0,unverified:0};state.attendanceRecords.forEach(record=>{if(counts[record.status]!==undefined)counts[record.status]+=1});
     const attended=counts.early+counts.present+counts.late,required=attended+counts.absent;
     return{subjects,counts,attended,required,attendanceRate:required?Math.round(attended/required*100):0,punctualityRate:attended?Math.round((counts.early+counts.present)/attended*100):0,xp:subjects.reduce((sum,item)=>sum+item.xp,0),streaks:streakSummary(state.attendanceRecords)};
-  };
-  const directiveStats=id=>{
-    const records=Object.values(state.dayRecords).map(day=>({day,protocol:day.protocols?.[id]})).filter(item=>item.protocol);
-    const clears=records.filter(item=>item.protocol.status==='cleared'),failures=records.filter(item=>item.protocol.status==='failed');
-    const onTime=clears.filter(item=>protocolOnTime(item.day,item.protocol)).length;
-    const missed={};records.forEach(({protocol})=>protocol.steps?.filter(step=>step.status!=='completed').forEach(step=>{missed[step.title]=(missed[step.title]||0)+1}));
-    const mostMissed=Object.entries(missed).sort((a,b)=>b[1]-a[1])[0]?.[0]||'None recorded';
-    return{clears:clears.length,failures:failures.length,completionRate:records.length?Math.round(clears.length/records.length*100):0,onTimeRate:clears.length?Math.round(onTime/clears.length*100):0,mostMissed};
   };
   const sortedDayRecords=()=>Object.values(state.dayRecords).sort((a,b)=>String(a.date).localeCompare(String(b.date)));
   const firstStreakUnlockDate=threshold=>{
@@ -1893,11 +1865,9 @@
     try{state=S.restoreSnapshot(latest.id);state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'restore',message:`Latest automatic snapshot restored: ${latest.date}.`});save({silent:true});closeScheduleOverlay();activeScreenId=null;renderApp();showSystemNotice('restore','SNAPSHOT RESTORED',`Recovered local state from ${latest.date}.`,3200)}catch(error){showBreachWarning('RESTORE FAILED',error.message||'Snapshot could not be restored.')}
   };
   const profilePages=['Overview','Identity','Skills','Achievements','Weekly'];
-  const progressPages=[];
   const latestUnlockedAchievement=items=>[...items].filter(item=>item.unlocked).sort((a,b)=>String(b.unlockedAt||'').localeCompare(String(a.unlockedAt||'')))[0]||items[0]||null;
   const renderProfile=()=>{
     setControlView('profileView');controlUi.profilePage=clamp(controlUi.profilePage,0,profilePages.length-1);
-    $('#profileTabs').innerHTML='';$('#profilePageLabel').textContent=profilePages[controlUi.profilePage];
     const achievements=achievementList();let unlockedTitles=achievements.filter(item=>item.unlocked).map(item=>item.title);if(skillUnlocked('title-forge'))unlockedTitles=[...new Set([...unlockedTitles,'System Pathfinder'])];
     if(!unlockedTitles.includes(state.player.title)){state.player.title=unlockedTitles[0]||'Discipline Initiate';save({silent:true})}
     const content=$('#profileContent'),activeEmblem=normalizeGlyph(state.player.emblem),required=clearDaysRequired(state.player.level),levelProgress=state.player.mastered?100:required?Math.round(state.player.levelClearDays/required*100):100;
@@ -1931,7 +1901,6 @@
     const latest=[...(state.weeklyDebriefs||[])].reverse()[0];
     content.innerHTML=`<div class="simple-profile-detail"><div class="simple-detail-heading"><span>WEEKLY DEBRIEF</span><strong>${latest?escapeHtml(latest.trend):'No Completed Week'}</strong><small>${latest?`${latest.start} — ${latest.end}`:'A compact review appears after a completed calendar week.'}</small></div>${latest?`<div class="simple-week-grid"><div><span>COMPLETION</span><strong>${latest.completionRate}%</strong></div><div><span>ATTENDANCE</span><strong>${latest.attendanceRate}%</strong></div><div><span>BEST DAY</span><strong>${escapeHtml(latest.bestDay)}</strong></div><div><span>WEEKLY BOSS</span><strong>${latest.bossCleared?'CLEARED':'NOT CLEARED'}</strong></div></div><div class="simple-week-insight"><span>MOST COMMON FAILURE</span><strong>${escapeHtml(latest.commonReason)}</strong><small>${escapeHtml(latest.recommendation)}</small></div>`:'<div class="schedule-empty"><strong>Debrief Pending</strong><span>Complete a calendar week with activity to generate this record.</span></div>'}<button class="ghost-button" type="button" data-profile-action="profile-home">Back to Profile</button></div>`;
   };
-  const attendanceTabs=[{id:'overall',label:'Overview'},{id:'subjects',label:'Per Subject'}];
   const historyRecords=()=>[...state.attendanceRecords].sort((a,b)=>`${b.scheduledDate}T${b.scheduledStart}`.localeCompare(`${a.scheduledDate}T${a.scheduledStart}`));
   const currentWeekAttendance=()=>{
     const now=new Date(),weekday=now.getDay()||7,start=new Date(now);start.setHours(0,0,0,0);start.setDate(start.getDate()-(weekday-1));
@@ -1950,7 +1919,7 @@
   const renderAttendance=()=>{
     setControlView('attendanceView');controlUi.correction=false;
     const academic=overallAcademicStats(),week=currentWeekAttendance(),records=historyRecords(),latest=records[0]||null;
-    $('#attendanceTabs').innerHTML='';$('#attendanceTabs').hidden=true;$('#attendanceNav').hidden=true;
+    $('#attendanceNav').hidden=true;
     const content=$('#attendanceContent');
     if(controlUi.attendanceTab==='subjects'){
       const subjects=academic.subjects;
@@ -2294,8 +2263,6 @@
     $('#developerTimeSpeed').addEventListener('change',event=>setDeveloperSpeed(event.target.value));
     $('#previewDeveloperHaptic').addEventListener('click',previewDeveloperHaptic);
     $('#sendDeveloperNotification').addEventListener('click',sendDeveloperTestNotification);
-    $('#developerReportPrev').addEventListener('click',()=>{developerReportPage=Math.max(0,developerReportPage-1);renderDeveloperReportPage()});
-    $('#developerReportNext').addEventListener('click',()=>{developerReportPage=Math.min(Math.max(0,(developerRunSession?.reportPages?.length||1)-1),developerReportPage+1);renderDeveloperReportPage()});
     $('#recoverySystemBack').addEventListener('click',renderAdvancedSystemHome);
     $('#toggleSafeMode').addEventListener('click',toggleSafeMode);
     $('#openEmergencyRecovery').addEventListener('click',openEmergencyRecovery);
@@ -2333,11 +2300,7 @@
     $('#exceptionNext').addEventListener('click',()=>{exceptionUi.index=Math.min(Math.max(0,sortedExceptions().length-1),exceptionUi.index+1);renderScheduleExceptions()});
     $('#deleteScheduleException').addEventListener('click',deleteScheduleException);
 
-    $('#profileTabs').addEventListener('click',event=>{const button=event.target.closest('[data-profile-page]');if(!button)return;controlUi.profilePage=Number(button.dataset.profilePage);renderProfile()});
-    $('#profilePrev').addEventListener('click',()=>{controlUi.profilePage=(controlUi.profilePage-1+profilePages.length)%profilePages.length;renderProfile()});
-    $('#profileNext').addEventListener('click',()=>{controlUi.profilePage=(controlUi.profilePage+1)%profilePages.length;renderProfile()});
     $('#profileContent').addEventListener('click',event=>{
-      const progressButton=event.target.closest('[data-progress-page]');if(progressButton){controlUi.progressPage=Number(progressButton.dataset.progressPage);renderProfile();return}
       const button=event.target.closest('[data-profile-action]');if(!button)return;const action=button.dataset.profileAction;
       if(action==='profile-home'){controlUi.profilePage=0;renderProfile();return}
       if(action==='edit-identity'){controlUi.profilePage=1;renderProfile();return}
@@ -2350,17 +2313,8 @@
         state.player.name=name;state.player.codename=codename;state.player.emblem=emblem;state.player.title=title;state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'profile',message:'Player identity updated.'});save();systemFeedback('clear','Profile saved.');controlUi.profilePage=0;renderProfile();return;
       }
       if(action==='claim-quest'){claimDailyQuest();return}
-      if(action==='reroll-quest'){rerollDailyQuest();return}
-      if(action==='unlock-skill'){unlockSkill(button.dataset.skillId);return}
-      if(action==='toggle-skill'){toggleSkill(button.dataset.skillId);return}
-      if(action==='directive-prev'){controlUi.directiveIndex=(controlUi.directiveIndex-1+protocolBlueprints.length)%protocolBlueprints.length;renderProfile();return}
-      if(action==='directive-next'){controlUi.directiveIndex=(controlUi.directiveIndex+1)%protocolBlueprints.length;renderProfile();return}
-      if(action==='achievement-prev'){controlUi.achievementPage=Math.max(0,controlUi.achievementPage-1);renderProfile();return}
-      if(action==='achievement-next'){const total=Math.max(1,Math.ceil(achievementList().length/4));controlUi.achievementPage=Math.min(total-1,controlUi.achievementPage+1);renderProfile();return}
-      if(action==='open-attendance'){controlUi.attendanceTab='overall';renderAttendance()}
     });
 
-    $('#attendanceTabs').addEventListener('click',event=>{const button=event.target.closest('[data-attendance-tab]');if(!button)return;controlUi.attendanceTab=button.dataset.attendanceTab;controlUi.correction=false;renderAttendance()});
     $('#attendancePrev').addEventListener('click',()=>{if(controlUi.attendanceTab==='subjects'){controlUi.subjectIndex=Math.max(0,controlUi.subjectIndex-1);controlUi.subjectAbsencePage=0}else if(controlUi.attendanceTab==='history')controlUi.historyIndex=Math.max(0,controlUi.historyIndex-1);renderAttendance()});
     $('#attendanceNext').addEventListener('click',()=>{if(controlUi.attendanceTab==='subjects'){controlUi.subjectIndex=Math.min(Math.max(0,subjectCatalog().length-1),controlUi.subjectIndex+1);controlUi.subjectAbsencePage=0}else if(controlUi.attendanceTab==='history')controlUi.historyIndex=Math.min(Math.max(0,historyRecords().length-1),controlUi.historyIndex+1);renderAttendance()});
     $('#attendanceContent').addEventListener('click',event=>{
