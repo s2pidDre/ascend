@@ -455,7 +455,6 @@
       else record.rankTrialFailed=true;
       record.rankTrialResolved=true;
     }
-    const required=clearDaysRequired(state.player.level);
     if(state.player.level<state.player.maxLevel&&state.player.levelClearDays>=required){
       state.player.level+=1;state.player.levelClearDays=0;record.levelAdvanced=true;
       const target=eligibleRank(state.player.level,state.player.rank);if(target&&!state.player.pendingRank)state.player.pendingRank=target;
@@ -932,8 +931,6 @@
     releaseWakeLock();show('freeScreen');document.body.dataset.state='standby';currentClassContext=null;renderFreeDailyQuest();
     $('#freeLevel').textContent=state.player.level;$('#freeRank').textContent=state.player.rank;$('#freeStreak').textContent=state.player.streak;
     const required=clearDaysRequired(state.player.level);
-    $('#freeProgressText').textContent=state.player.mastered?'Mastery confirmed':`${state.player.levelClearDays} / ${required} clear days · ${record.completedProtocols}/${requiredProtocolCount} today`;
-    $('#disciplineState').textContent=state.player.pendingRank?`RANK-UP TRIAL · ${state.player.pendingRank}`:stageName(state.player.level);
 
     const nextClass=nextClassAt(now);
     const nextProtocol=findNextProtocol(record,now);
