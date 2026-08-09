@@ -1,4 +1,4 @@
-const CACHE='ascend-discipline-v44-settings-backup';
+const CACHE='ascend-discipline-v45-settings-layout';
 const ASSETS=[
   './',
   './index.html',
