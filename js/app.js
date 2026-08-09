@@ -31,6 +31,7 @@
   let brandFlashTimer=null;
   let lastResultAnimationKey=null;
   let backupUi={pending:null,fileName:''};
+  let settingsUi={pending:null,fileName:'',kind:''};
   let noticeTimer=null;
   let noticeHideTimer=null;
   let saveNoticeTimer=null;
@@ -72,7 +73,7 @@
   const clone=value=>JSON.parse(JSON.stringify(value));
   const minutes=time=>{const[h,m]=time.split(':').map(Number);return h*60+m};
   const todayMinutes=date=>date.getHours()*60+date.getMinutes()+date.getSeconds()/60;
-  const formatClock=date=>new Intl.DateTimeFormat(undefined,{hour:'numeric',minute:'2-digit'}).format(date);
+  const formatClock=date=>state.settings?.timeFormat==='24'?new Intl.DateTimeFormat(undefined,{hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(date):new Intl.DateTimeFormat(undefined,{hour:'numeric',minute:'2-digit',hour12:true}).format(date);
   const formatDate=date=>new Intl.DateTimeFormat(undefined,{weekday:'short',month:'short',day:'numeric'}).format(date);
   const formatShortDate=value=>{const date=value instanceof Date?value:new Date(value);return Number.isNaN(date.getTime())?'Unknown':new Intl.DateTimeFormat(undefined,{month:'short',day:'numeric',year:'numeric'}).format(date)};
   const formatTime=time=>{const d=new Date();const[h,m]=time.split(':').map(Number);d.setHours(h,m,0,0);return formatClock(d)};
@@ -1752,7 +1753,7 @@
   const closeEmergencyRecovery=()=>{$('#emergencyRecoveryOverlay').hidden=true};
   const synchronizeAdvancedSystems=()=>{const before=JSON.stringify({quest:state.quests?.daily?.date,rules:state.academicTasks.length,debriefs:state.weeklyDebriefs?.length,pending:state.timezone?.pending});ensureDailyQuest();const generated=generateRecurringTasks();ensureWeeklyDebrief();const changedTimezone=detectTimezoneChange();const watchdogDate=state.system.watchdog?.lastRun?S.dateKey(new Date(state.system.watchdog.lastRun)):'';if(watchdogDate!==S.dateKey())runDataConsistencyWatchdog(false);if(generated||changedTimezone||before!==JSON.stringify({quest:state.quests?.daily?.date,rules:state.academicTasks.length,debriefs:state.weeklyDebriefs?.length,pending:state.timezone?.pending}))save({silent:true})};
 
-  const controlViews=['controlHomeView','academicHomeView','profileView','attendanceView','systemIntegrityView','scheduleExceptionsView','dataBackupView','academicTasksView','conflictScanView','advancedSystemHomeView','updatesRollbackView','diagnosticsView','externalRemindersView','developerTestView','recoverySystemView','scheduleOverviewView','scheduleEditView'];
+  const controlViews=['controlHomeView','academicHomeView','profileView','settingsView','attendanceView','systemIntegrityView','scheduleExceptionsView','dataBackupView','academicTasksView','conflictScanView','advancedSystemHomeView','updatesRollbackView','diagnosticsView','externalRemindersView','developerTestView','recoverySystemView','scheduleOverviewView','scheduleEditView'];
   const setControlView=view=>{
     controlUi.view=view;
     controlViews.forEach(id=>{const node=document.getElementById(id);if(node)node.hidden=id!==view});
@@ -1874,7 +1875,7 @@
     if(controlUi.profilePage===0){
       const attributes=derivedAttributes(),quest=ensureDailyQuest(),questState=questProgress(quest),latestAchievement=latestUnlockedAchievement(achievements),latestWeek=[...(state.weeklyDebriefs||[])].reverse()[0],equipped=(state.skills.equipped||[]).length,unlocked=(state.skills.unlocked||[]).length;
       content.innerHTML=`<div class="simple-profile-home">
-        <div class="simple-profile-identity"><div class="profile-emblem">${glyphMarkup(activeEmblem)}</div><div><span>PLAYER · ${state.player.rank}-RANK</span><strong>${escapeHtml(state.player.codename||state.player.name)}</strong><small>${escapeHtml(state.player.name)} · ${escapeHtml(state.player.title)}</small></div><button type="button" data-profile-action="edit-identity">Edit</button></div>
+        <div class="simple-profile-identity"><div class="profile-emblem profile-settings-hold" data-settings-hold="true" aria-label="Hold for Settings">${glyphMarkup(activeEmblem)}</div><div><span>PLAYER · ${state.player.rank}-RANK</span><strong>${escapeHtml(state.player.codename||state.player.name)}</strong><small>${escapeHtml(state.player.name)} · ${escapeHtml(state.player.title)}</small></div><button type="button" data-profile-action="edit-identity">Edit</button></div>
         <div class="simple-profile-stats"><div><span>LEVEL</span><strong>${state.player.level}</strong></div><div><span>RANK</span><strong>${state.player.rank}</strong></div><div><span>STREAK</span><strong>${state.player.streak}</strong></div></div>
         <div class="simple-profile-progress"><div><span>${state.player.mastered?'SYSTEM MASTERY':'LEVEL PROGRESS'}</span><strong>${state.player.mastered?'COMPLETE':`${state.player.levelClearDays} / ${required} CLEAR DAYS`}</strong></div><i><b style="width:${levelProgress}%"></b></i><small>${Number(state.player.totalXp||0).toLocaleString()} lifetime XP · ${levelProgress}% toward next level</small></div>
         <div class="simple-attribute-grid">${attributes.map(item=>`<div><span>${escapeHtml(item.label)}</span><strong>${item.value}</strong><small>${attributeTier(item.value)}</small></div>`).join('')}</div>
@@ -1987,6 +1988,93 @@
     }
     state.logs.push({id:S.uid('log'),at:now.toISOString(),type:'attendance-correction',message:`${record.subjectName} corrected from ${before} to ${status}.`});save();controlUi.correction=false;renderAttendance();
   };
+  const SETTINGS_EXPORT_VERSION=1;
+  const progressExportKeys=['player','dayRecords','attendanceRecords','academicTasks','recurringTaskRules','tradingNotes','quests','skills','weeklyDebriefs'];
+  const settingsExportFilename=kind=>{
+    const now=new Date(),time=`${pad(now.getHours())}${pad(now.getMinutes())}`,label=kind==='full'?'full-backup':kind;
+    return `ascend-${label}-${S.dateKey(now)}-${time}.json`;
+  };
+  const downloadJson=(text,filename)=>{
+    const blob=new Blob([text],{type:'application/json'}),url=URL.createObjectURL(blob),link=document.createElement('a');
+    link.href=url;link.download=filename;link.hidden=true;document.body.appendChild(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1500);
+  };
+  const buildSettingsExport=kind=>{
+    if(kind==='full')return S.createBackup(state);
+    const data={};
+    if(kind==='progress')progressExportKeys.forEach(key=>{data[key]=clone(state[key])});
+    else if(kind==='schedule'){data.classSchedule=clone(state.classSchedule||[]);data.scheduleExceptions=clone(state.scheduleExceptions||[])}
+    else throw new Error('Unknown export type.');
+    return JSON.stringify({app:'ASCEND',exportType:kind,exportVersion:SETTINGS_EXPORT_VERSION,schemaVersion:S.schemaInfo().version,exportedAt:new Date().toISOString(),data},null,2);
+  };
+  const settingsProgressSummary=data=>{
+    const player=data.player||{},achievements=Object.keys(player.achievementUnlocks||{}).length;
+    return{title:`${player.codename||player.name||'Player'} · Level ${Number(player.level||1)} · ${player.rank||'E'}-Rank`,details:`${Object.keys(data.dayRecords||{}).length} days · ${(data.attendanceRecords||[]).length} attendance · ${(data.academicTasks||[]).length} tasks · ${achievements} achievements`};
+  };
+  const settingsScheduleSummary=data=>{
+    const classes=Array.isArray(data.classSchedule)?data.classSchedule:[],exceptions=Array.isArray(data.scheduleExceptions)?data.scheduleExceptions:[],subjects=new Set(classes.map(item=>String(item.subject||'').trim().toLowerCase()).filter(Boolean));
+    return{title:`${classes.length} class${classes.length===1?'':'es'} · ${subjects.size} subject${subjects.size===1?'':'s'}`,details:`${exceptions.length} schedule exception${exceptions.length===1?'':'s'} · Only schedule data will be replaced`};
+  };
+  const parseSettingsImport=(text,kind)=>{
+    if(kind==='full'){const imported=S.parseBackup(text),summary=S.summarize(imported);return{kind,state:imported,summary:{title:`${summary.playerName} · Level ${summary.level} · ${summary.rank}-Rank`,details:`${summary.days} days · ${summary.attendance} attendance · ${summary.tasks} tasks · ${summary.schedules} classes`}}}
+    let parsed;try{parsed=JSON.parse(text)}catch(error){throw new Error('The selected file is not valid JSON.')}
+    if(!parsed||parsed.app!=='ASCEND'||parsed.exportType!==kind||!parsed.data||typeof parsed.data!=='object')throw new Error(`Choose an ASCEND ${kind} backup created from Settings.`);
+    const data=parsed.data;
+    if(kind==='progress'){
+      if(!data.player||typeof data.player!=='object'||Array.isArray(data.player))throw new Error('The progress backup is missing the Player record.');
+      if(!data.dayRecords||typeof data.dayRecords!=='object'||Array.isArray(data.dayRecords))throw new Error('The progress backup is missing day records.');
+      ['attendanceRecords','academicTasks','recurringTaskRules','tradingNotes','weeklyDebriefs'].forEach(key=>{if(!Array.isArray(data[key]))throw new Error(`The progress backup has invalid ${key}.`)});
+      if(!data.quests||typeof data.quests!=='object'||!data.skills||typeof data.skills!=='object')throw new Error('The progress backup is missing quest or skill records.');
+      const merged=clone(state);progressExportKeys.forEach(key=>{merged[key]=clone(data[key])});const validated=S.normalizeCurrent(merged),validatedData={};progressExportKeys.forEach(key=>{validatedData[key]=clone(validated[key])});
+      return{kind,data:validatedData,summary:settingsProgressSummary(validatedData)};
+    }
+    if(!Array.isArray(data.classSchedule)||!Array.isArray(data.scheduleExceptions))throw new Error('The schedule backup is missing class or exception records.');
+    const merged=clone(state);merged.classSchedule=clone(data.classSchedule);merged.scheduleExceptions=clone(data.scheduleExceptions);const validated=S.normalizeCurrent(merged),validatedData={classSchedule:clone(validated.classSchedule),scheduleExceptions:clone(validated.scheduleExceptions)};
+    return{kind,data:validatedData,summary:settingsScheduleSummary(validatedData)};
+  };
+  const clearSettingsImport=()=>{
+    settingsUi={pending:null,fileName:'',kind:''};
+    ['settingsProgressFile','settingsScheduleFile','settingsFullFile'].forEach(id=>{const input=$(`#${id}`);if(input)input.value=''});
+    if(controlUi.view==='settingsView')renderSettings();
+  };
+  const renderSettings=()=>{
+    setControlView('settingsView');
+    const lead=$('#settingsNotificationLead'),timeFormat=$('#settingsTimeFormat'),preview=$('#settingsImportPreview');
+    if(lead)lead.value=state.settings.notifications?String(state.settings.notificationLeadMinutes||10):'off';
+    if(timeFormat)timeFormat.value=state.settings.timeFormat==='24'?'24':'12';
+    if(preview){preview.hidden=!settingsUi.pending;if(settingsUi.pending){const summary=settingsUi.pending.summary;$('#settingsImportType').textContent=`${settingsUi.kind.toUpperCase()} LOAD PREVIEW`;$('#settingsImportTitle').textContent=summary.title;$('#settingsImportDetails').textContent=summary.details;$('#settingsImportWarning').textContent=settingsUi.kind==='full'?'This replaces the complete local ASCEND state. A safety rollback is created first.':`This replaces only ${settingsUi.kind} data. Everything else stays unchanged, and a safety rollback is created first.`}}
+  };
+  const exportSettingsData=kind=>{
+    state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'backup',message:`Settings ${kind} backup exported.`});save({silent:true});
+    downloadJson(buildSettingsExport(kind),settingsExportFilename(kind));
+    systemFeedback('clear',`${kind} backup exported.`);showSystemNotice('backup','BACKUP COMPLETE',`${kind==='full'?'Complete':kind[0].toUpperCase()+kind.slice(1)} data downloaded successfully.`,2200);
+  };
+  const previewSettingsFile=async(file,kind)=>{
+    if(!file)return;if(file.size>10*1024*1024){showBreachWarning('BACKUP TOO LARGE','Choose an ASCEND backup smaller than 10 MB.');return}
+    try{settingsUi={pending:parseSettingsImport(await file.text(),kind),fileName:file.name,kind};renderSettings();haptic('tap')}catch(error){clearSettingsImport();showBreachWarning('BACKUP NOT ACCEPTED',error?.message||'The selected file could not be read.')}
+  };
+  const confirmSettingsImport=()=>{
+    if(!settingsUi.pending)return;
+    const kind=settingsUi.kind,fileName=settingsUi.fileName;
+    try{
+      S.createDailySnapshot(state,true);S.createPreUpdateRollback(clone(state),Number(state.version||S.schemaInfo().version),`Before Settings ${kind} import`);
+      if(kind==='full')state=settingsUi.pending.state;else{const merged=clone(state);if(kind==='progress')progressExportKeys.forEach(key=>{merged[key]=clone(settingsUi.pending.data[key])});else{merged.classSchedule=clone(settingsUi.pending.data.classSchedule);merged.scheduleExceptions=clone(settingsUi.pending.data.scheduleExceptions)}state=S.normalizeCurrent(merged)}
+      state.logs=Array.isArray(state.logs)?state.logs:[];state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'restore',message:`Settings ${kind} backup restored${fileName?`: ${fileName}`:''}.`});
+      if(kind==='schedule')invalidateExternalCalendar();
+      save({silent:true});settingsUi={pending:null,fileName:'',kind:''};controlUi.correction=false;scheduleUi.editId=null;activeScreenId=null;
+      if(kind==='full'){closeScheduleOverlay();renderApp()}else renderSettings();
+      showSystemNotice('restore','DATA RESTORED',`${kind==='full'?'Complete ASCEND data':kind[0].toUpperCase()+kind.slice(1)+' data'} restored safely.`,2800);
+    }catch(error){showBreachWarning('RESTORE FAILED',error?.message||'The selected data could not be restored.')}
+  };
+  const updateSettingsNotification=async value=>{
+    if(value==='off'){state.settings.notifications=false;save({silent:true});renderSettings();return}
+    const lead=clamp(Number(value||10),5,30);
+    if(!('Notification' in window)){showBreachWarning('ALERTS NOT SUPPORTED','This browser does not support local notifications.');renderSettings();return}
+    if(Notification.permission!=='granted'){
+      const permission=await Notification.requestPermission();if(permission!=='granted'){state.settings.notifications=false;showBreachWarning('ALERT PERMISSION DENIED','Enable notifications in browser or app settings first.');renderSettings();return}
+    }
+    state.settings.notifications=true;state.settings.notificationLeadMinutes=lead;invalidateExternalCalendar();save({silent:true});renderSettings();
+  };
+  const updateSettingsTimeFormat=value=>{state.settings.timeFormat=value==='24'?'24':'12';save({silent:true});updateClock();renderSettings()};
   const backupRecordTotal=summary=>summary.days+summary.attendance+summary.tasks+summary.schedules+(summary.exceptions||0)+summary.trading;
   const renderDataBackup=()=>{
     setControlView('dataBackupView');
@@ -2037,7 +2125,7 @@
     if(!$('#scheduleOverlay').hidden||!$('#emergencyOverlay').hidden||!$('#developerRunOverlay').hidden)return;
     cancelHold();resetClockAccessVisual();controlUi.directDeveloper=false;controlUi.directProfile=false;$('#scheduleOverlay').hidden=false;renderControlHome();haptic('tap');
   };
-  const closeScheduleOverlay=()=>{$('#scheduleOverlay').hidden=true;cancelHold('schedule-delete');cancelHold('clock-schedule');resetClockAccessVisual();controlUi.correction=false;controlUi.directDeveloper=false;controlUi.directProfile=false;backupUi={pending:null,fileName:''};if($('#backupFileInput'))$('#backupFileInput').value='';renderApp();if(activeProtocolRecord())requestWakeLock()};
+  const closeScheduleOverlay=()=>{$('#scheduleOverlay').hidden=true;cancelHold('schedule-delete');cancelHold('clock-schedule');cancelHold('profile-settings');resetClockAccessVisual();controlUi.correction=false;controlUi.directDeveloper=false;controlUi.directProfile=false;backupUi={pending:null,fileName:''};settingsUi={pending:null,fileName:'',kind:''};if($('#backupFileInput'))$('#backupFileInput').value='';['settingsProgressFile','settingsScheduleFile','settingsFullFile'].forEach(id=>{const input=$(`#${id}`);if(input)input.value=''});renderApp();if(activeProtocolRecord())requestWakeLock()};
   const renderScheduleOverview=()=>{
     setControlView('scheduleOverviewView');scheduleUi.day=Number(scheduleUi.day);const entries=scheduleEntriesForDay(scheduleUi.day);const totalPages=Math.max(1,Math.ceil(entries.length/schedulePageSize));scheduleUi.page=clamp(scheduleUi.page,0,totalPages-1);
     $('#scheduleWeekTabs').innerHTML=scheduleDays.map(day=>{const count=scheduleEntriesForDay(day.value).length;return`<button type="button" data-day="${day.value}" class="${day.value===scheduleUi.day?'selected':''}"><strong>${day.label}</strong><small>${count}</small></button>`}).join('');
@@ -2214,6 +2302,7 @@
 
     $('#scheduleClose').addEventListener('click',closeScheduleOverlay);
     $('#openPlayerProfile').addEventListener('click',()=>{controlUi.profilePage=0;renderProfile()});
+    $('#openSettings').addEventListener('click',()=>{settingsUi={pending:null,fileName:'',kind:''};renderSettings()});
     $('#openAcademicControl').addEventListener('click',renderAcademicHome);
     $('#openFreeSchedule').addEventListener('click',()=>{scheduleUi.day=defaultScheduleDay();scheduleUi.page=0;renderScheduleOverview()});
     $('#openFreeAttendance').addEventListener('click',()=>{controlUi.attendanceTab='overall';controlUi.subjectIndex=0;controlUi.subjectAbsencePage=0;renderAttendance()});
@@ -2223,6 +2312,20 @@
     $('#openSystemIntegrity').addEventListener('click',renderSystemIntegrity);
     $('#academicBack').addEventListener('click',renderControlHome);
     $('#profileBack').addEventListener('click',closeScheduleOverlay);
+    $('#settingsBack').addEventListener('click',()=>{settingsUi={pending:null,fileName:'',kind:''};controlUi.profilePage=0;renderProfile()});
+    $('#settingsSaveProgress').addEventListener('click',()=>exportSettingsData('progress'));
+    $('#settingsSaveSchedule').addEventListener('click',()=>exportSettingsData('schedule'));
+    $('#settingsSaveFull').addEventListener('click',()=>exportSettingsData('full'));
+    $('#settingsLoadProgress').addEventListener('click',()=>{const input=$('#settingsProgressFile');input.value='';input.click()});
+    $('#settingsLoadSchedule').addEventListener('click',()=>{const input=$('#settingsScheduleFile');input.value='';input.click()});
+    $('#settingsLoadFull').addEventListener('click',()=>{const input=$('#settingsFullFile');input.value='';input.click()});
+    $('#settingsProgressFile').addEventListener('change',event=>previewSettingsFile(event.target.files?.[0],'progress'));
+    $('#settingsScheduleFile').addEventListener('change',event=>previewSettingsFile(event.target.files?.[0],'schedule'));
+    $('#settingsFullFile').addEventListener('change',event=>previewSettingsFile(event.target.files?.[0],'full'));
+    $('#settingsConfirmImport').addEventListener('click',confirmSettingsImport);
+    $('#settingsCancelImport').addEventListener('click',clearSettingsImport);
+    $('#settingsNotificationLead').addEventListener('change',event=>updateSettingsNotification(event.target.value));
+    $('#settingsTimeFormat').addEventListener('change',event=>updateSettingsTimeFormat(event.target.value));
     $('#attendanceBack').addEventListener('click',renderControlHome);
     $('#academicTasksBack').addEventListener('click',renderAcademicHome);
     $('#advancedSystemBack').addEventListener('click',renderAcademicHome);
@@ -2300,6 +2403,14 @@
     $('#exceptionNext').addEventListener('click',()=>{exceptionUi.index=Math.min(Math.max(0,sortedExceptions().length-1),exceptionUi.index+1);renderScheduleExceptions()});
     $('#deleteScheduleException').addEventListener('click',deleteScheduleException);
 
+    $('#profileContent').addEventListener('pointerdown',event=>{
+      const target=event.target.closest('[data-settings-hold]');if(!target||event.button!==undefined&&event.button!==0)return;
+      event.preventDefault();target.setPointerCapture?.(event.pointerId);target.classList.add('settings-arming');
+      beginHold('profile-settings',2000,progress=>target.style.setProperty('--settings-hold-progress',String(progress)),()=>{target.classList.remove('settings-arming');target.style.setProperty('--settings-hold-progress','0');$('#openSettings').click()});
+    });
+    $('#profileContent').addEventListener('pointerup',event=>{const target=event.target.closest('[data-settings-hold]');if(!target)return;try{target.releasePointerCapture?.(event.pointerId)}catch(error){}cancelHold('profile-settings');target.classList.remove('settings-arming');target.style.setProperty('--settings-hold-progress','0')});
+    $('#profileContent').addEventListener('pointercancel',event=>{const target=event.target.closest('[data-settings-hold]');if(!target)return;cancelHold('profile-settings');target.classList.remove('settings-arming');target.style.setProperty('--settings-hold-progress','0')});
+    $('#profileContent').addEventListener('contextmenu',event=>{if(event.target.closest('[data-settings-hold]'))event.preventDefault()});
     $('#profileContent').addEventListener('click',event=>{
       const button=event.target.closest('[data-profile-action]');if(!button)return;const action=button.dataset.profileAction;
       if(action==='profile-home'){controlUi.profilePage=0;renderProfile();return}

@@ -332,6 +332,7 @@
           <button class="system-button compact-button secondary-system-button" id="openFreeAttendance" type="button"><b>Attendance Overview</b></button>
         </div>
         <button id="openPlayerProfile" type="button" hidden aria-hidden="true" tabindex="-1">Player Profile</button>
+        <button id="openSettings" type="button" hidden aria-hidden="true" tabindex="-1">Settings</button>
         <button id="openAcademicControl" type="button" hidden aria-hidden="true" tabindex="-1">Academic Control Center</button>
         <button class="ghost-button" id="scheduleClose" type="button">Close</button>
       </section>
@@ -360,6 +361,46 @@
         <h2>Player Profile</h2>
         <div class="profile-content simplified-profile-content" id="profileContent"></div>
         <button class="ghost-button" id="profileBack" type="button">Close</button>
+      </section>
+      <section class="settings-view" id="settingsView" hidden>
+        <p class="eyebrow">SYSTEM PREFERENCES</p>
+        <h2>Settings</h2>
+        <div class="settings-scroll">
+          <section class="settings-group">
+            <div class="settings-group-heading"><span>DATA</span><small>Save or restore only what you choose.</small></div>
+            <div class="settings-data-row">
+              <div><strong>Progress</strong><small>Player progress, attendance, tasks, quests, skills, and weekly records.</small></div>
+              <div class="settings-inline-actions"><button type="button" id="settingsSaveProgress">Save</button><button type="button" id="settingsLoadProgress">Load</button></div>
+            </div>
+            <div class="settings-data-row">
+              <div><strong>Schedule</strong><small>Weekly classes and one-day schedule exceptions only.</small></div>
+              <div class="settings-inline-actions"><button type="button" id="settingsSaveSchedule">Save</button><button type="button" id="settingsLoadSchedule">Load</button></div>
+            </div>
+            <div class="settings-data-row">
+              <div><strong>Everything</strong><small>Complete ASCEND backup, including progress, schedule, and settings.</small></div>
+              <div class="settings-inline-actions"><button type="button" id="settingsSaveFull">Save</button><button type="button" id="settingsLoadFull">Load</button></div>
+            </div>
+            <input id="settingsProgressFile" type="file" accept="application/json,.json" hidden>
+            <input id="settingsScheduleFile" type="file" accept="application/json,.json" hidden>
+            <input id="settingsFullFile" type="file" accept="application/json,.json" hidden>
+          </section>
+
+          <section class="settings-group settings-preferences">
+            <div class="settings-group-heading"><span>SCHEDULE & REMINDERS</span><small>Only controls that change everyday behavior.</small></div>
+            <label class="settings-select-row"><span><strong>Notification Timing</strong><small>Local class and schedule warning.</small></span><select id="settingsNotificationLead"><option value="off">Off</option><option value="5">5 min before</option><option value="10">10 min before</option><option value="15">15 min before</option><option value="20">20 min before</option><option value="30">30 min before</option></select></label>
+            <label class="settings-select-row"><span><strong>Time Format</strong><small>Applies across ASCEND time displays.</small></span><select id="settingsTimeFormat"><option value="12">12-hour</option><option value="24">24-hour</option></select></label>
+          </section>
+
+          <section class="settings-import-preview" id="settingsImportPreview" hidden>
+            <span id="settingsImportType">IMPORT PREVIEW</span>
+            <strong id="settingsImportTitle">Ready to restore</strong>
+            <small id="settingsImportDetails">Selected data will be validated before replacement.</small>
+            <p id="settingsImportWarning">A safety rollback is created automatically before anything is replaced.</p>
+            <div class="settings-import-actions"><button class="danger-button" id="settingsConfirmImport" type="button"><b>Confirm Load</b></button><button class="ghost-button" id="settingsCancelImport" type="button">Cancel</button></div>
+          </section>
+        </div>
+        <p class="settings-safety-note">Imports replace only the selected data. A safety rollback is created automatically first.</p>
+        <button class="ghost-button" id="settingsBack" type="button">Back to Profile</button>
       </section>
 
       <section class="attendance-view simplified-attendance-view" id="attendanceView" hidden>

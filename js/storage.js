@@ -49,7 +49,7 @@
     quests:{daily:null,history:[]},
     skills:{points:0,unlocked:[],equipped:[]},
     weeklyDebriefs:[],
-    settings:{sound:true,haptics:true,keepAwake:true,notifications:false,notificationLeadMinutes:10,externalCalendarConfirmed:false,externalCalendarExportedAt:null,externalCalendarHorizonDays:60},
+    settings:{sound:true,haptics:true,keepAwake:true,notifications:false,notificationLeadMinutes:10,timeFormat:'12',externalCalendarConfirmed:false,externalCalendarExportedAt:null,externalCalendarHorizonDays:60},
     integrity:{clockStatus:'trusted',rewardHold:false,lastWallTime:null,lastVerifiedAt:null,lastFlag:null,lastSessionDelta:0},
     timezone:{name:timezoneName(),offset:timezoneOffset(),confirmedAt:nowIso(),pending:null,history:[]},
     recovery:{active:false,status:'idle',sourceDate:null,reason:null,action:null,protectedDate:null,protectedProtocolId:null,completedAt:null},
@@ -148,6 +148,7 @@
     state.settings.keepAwake=typeof rawSettings.keepAwake==='boolean'?rawSettings.keepAwake:base.settings.keepAwake;
     state.settings.notifications=typeof rawSettings.notifications==='boolean'?rawSettings.notifications:base.settings.notifications;
     state.settings.notificationLeadMinutes=Math.min(30,Math.max(5,Number(rawSettings.notificationLeadMinutes||10)));
+    state.settings.timeFormat=rawSettings.timeFormat==='24'?'24':'12';
     state.settings.externalCalendarConfirmed=Boolean(rawSettings.externalCalendarConfirmed);
     state.settings.externalCalendarExportedAt=rawSettings.externalCalendarExportedAt||null;
     state.settings.externalCalendarHorizonDays=Math.min(90,Math.max(30,Number(rawSettings.externalCalendarHorizonDays||60)));

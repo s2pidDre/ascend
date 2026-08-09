@@ -1,4 +1,4 @@
-const CACHE='ascend-discipline-v43-dead-code-cleanup';
+const CACHE='ascend-discipline-v44-settings-backup';
 const ASSETS=[
   './',
   './index.html',

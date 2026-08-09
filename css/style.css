@@ -4318,3 +4318,130 @@ body.orientation-blocked .developer-run-overlay{display:none!important}
   flex:1 1 auto;
   min-height:0;
 }
+
+
+/* Hidden Settings surface: opened only by a two-second hold on the Profile emblem. */
+.profile-settings-hold{
+  --settings-hold-progress:0;
+  position:relative;
+  cursor:default;
+  touch-action:none;
+  -webkit-touch-callout:none;
+  user-select:none;
+  transition:filter .12s ease,box-shadow .12s ease;
+}
+.profile-settings-hold.settings-arming{
+  filter:brightness(calc(1 + (var(--settings-hold-progress) * .34)));
+  box-shadow:inset 0 0 18px rgba(75,199,255,.08),0 0 calc(5px + (var(--settings-hold-progress) * 13px)) rgba(136,103,255,.55);
+}
+.settings-view{
+  display:flex;
+  flex:1 1 auto;
+  flex-direction:column;
+  justify-content:flex-start;
+  gap:clamp(6px,1vh,9px);
+  min-height:0;
+  overflow:hidden;
+}
+.settings-view>.eyebrow,.settings-view>h2{margin:0}
+.settings-scroll{
+  width:100%;
+  min-height:0;
+  flex:1 1 auto;
+  display:grid;
+  align-content:start;
+  gap:7px;
+  overflow-y:auto;
+  overscroll-behavior:contain;
+  scrollbar-width:thin;
+}
+.settings-group{
+  display:grid;
+  gap:5px;
+  padding:8px;
+  border:1px solid rgba(75,199,255,.2);
+  background:rgba(3,13,31,.7);
+  text-align:left;
+}
+.settings-group-heading{display:grid;gap:2px;margin-bottom:1px}
+.settings-group-heading span{color:var(--blue);font-size:.46rem;font-weight:900;letter-spacing:.13em}
+.settings-group-heading small{color:#6f89a7;font-size:.43rem;line-height:1.25}
+.settings-data-row{
+  min-width:0;
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto;
+  align-items:center;
+  gap:8px;
+  padding:7px 0;
+  border-top:1px solid rgba(75,199,255,.11);
+}
+.settings-data-row>div:first-child{min-width:0;display:grid;gap:2px}
+.settings-data-row strong,.settings-select-row strong{color:#e9f8ff;font-size:.54rem}
+.settings-data-row small,.settings-select-row small{color:#6f89a7;font-size:.4rem;line-height:1.25}
+.settings-inline-actions{display:grid;grid-template-columns:repeat(2,52px);gap:4px}
+.settings-inline-actions button{
+  min-height:30px;
+  padding:0 6px;
+  border:1px solid rgba(75,199,255,.28);
+  background:rgba(75,199,255,.06);
+  color:#cfefff;
+  font-size:.42rem;
+  font-weight:900;
+  letter-spacing:.08em;
+  text-transform:uppercase;
+}
+.settings-inline-actions button:last-child{border-color:rgba(136,103,255,.32);background:rgba(136,103,255,.07);color:#d8d0ff}
+.settings-preferences{gap:0}
+.settings-select-row{
+  min-width:0;
+  display:grid;
+  grid-template-columns:minmax(0,1fr) minmax(112px,132px);
+  align-items:center;
+  gap:8px;
+  padding:8px 0;
+  border-top:1px solid rgba(75,199,255,.11);
+}
+.settings-select-row>span{min-width:0;display:grid;gap:2px}
+.settings-select-row select{
+  width:100%;
+  min-width:0;
+  height:32px;
+  padding:0 7px;
+  border:1px solid rgba(75,199,255,.27);
+  background:rgba(2,9,23,.94);
+  color:#e9f8ff;
+  font-size:.48rem;
+  outline:none;
+  border-radius:0;
+}
+.settings-import-preview{
+  display:grid;
+  gap:4px;
+  padding:9px;
+  border:1px solid rgba(255,185,86,.32);
+  background:rgba(255,185,86,.045);
+  text-align:left;
+}
+.settings-import-preview[hidden]{display:none}
+.settings-import-preview>span{color:#ffc46d;font-size:.43rem;font-weight:900;letter-spacing:.12em}
+.settings-import-preview>strong{color:#fff2df;font-size:.61rem}
+.settings-import-preview>small{color:#a9947c;font-size:.45rem;line-height:1.28}
+.settings-import-preview>p{margin:2px 0 0;color:#8f806d;font-size:.43rem;line-height:1.3}
+.settings-import-actions{display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-top:2px}
+.settings-import-actions .danger-button,.settings-import-actions .ghost-button{min-height:32px;font-size:.44rem;padding:4px 6px}
+.settings-safety-note{margin:0;color:#657f9d;font-size:.4rem;line-height:1.25;text-align:center}
+@media(max-height:760px){
+  .settings-view{gap:5px}
+  .settings-scroll{gap:5px}
+  .settings-group{padding:6px;gap:3px}
+  .settings-data-row{padding:5px 0}
+  .settings-select-row{padding:5px 0}
+  .settings-inline-actions button,.settings-select-row select{min-height:29px;height:29px}
+  .settings-safety-note{font-size:.36rem}
+}
+@media(max-width:390px){
+  .settings-data-row{grid-template-columns:minmax(0,1fr) 98px;gap:6px}
+  .settings-inline-actions{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .settings-select-row{grid-template-columns:minmax(0,1fr) 112px;gap:6px}
+  .settings-data-row small,.settings-select-row small{font-size:.37rem}
+}
