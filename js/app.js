@@ -1757,6 +1757,8 @@
   const setControlView=view=>{
     controlUi.view=view;
     controlViews.forEach(id=>{const node=document.getElementById(id);if(node)node.hidden=id!==view});
+    const schedulePanel=document.querySelector('#scheduleOverlay .schedule-panel');
+    if(schedulePanel)schedulePanel.classList.toggle('settings-active',view==='settingsView');
   };
   const subjectCatalog=()=>{
     const map=new Map();

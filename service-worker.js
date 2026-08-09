@@ -1,4 +1,4 @@
-const CACHE='ascend-discipline-v45-settings-layout';
+const CACHE='ascend-discipline-v46-settings-deadspace-fix';
 const ASSETS=[
   './',
   './index.html',

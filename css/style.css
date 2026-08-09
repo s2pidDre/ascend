@@ -4321,8 +4321,9 @@ body.orientation-blocked .developer-run-overlay{display:none!important}
 
 
 /* Hidden Settings surface: opened only by a two-second hold on the Profile emblem. */
-.schedule-panel:has(#settingsView:not([hidden])){
+.schedule-panel.settings-active{
   height:auto;
+  max-height:100%;
 }
 .profile-settings-hold{
   --settings-hold-progress:0;
@@ -4344,13 +4345,14 @@ body.orientation-blocked .developer-run-overlay{display:none!important}
   justify-content:flex-start;
   gap:clamp(6px,1vh,9px);
   min-height:0;
+  max-height:100%;
   overflow:hidden;
 }
 .settings-view>.eyebrow,.settings-view>h2{margin:0}
 .settings-scroll{
   width:100%;
   min-height:0;
-  flex:1 1 auto;
+  flex:0 1 auto;
   display:grid;
   align-content:start;
   gap:7px;
@@ -4442,6 +4444,7 @@ body.orientation-blocked .developer-run-overlay{display:none!important}
   text-align:left;
 }
 #settingsBack{
+  flex:0 0 auto;
   min-height:36px;
   padding:6px 10px;
   font-size:.5rem;
