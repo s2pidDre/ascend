@@ -2256,6 +2256,18 @@
     const prompt=$('#updatePrompt');if(prompt){prompt.hidden=false;void prompt.offsetWidth;prompt.classList.add('update-show')}
     showSystemNotice('update','SYSTEM UPDATE READY','Refresh when you are ready to load the newest build.',3000);
   };
+  const requestPersistentStorage=async()=>{
+    if(!navigator.storage?.persist||!navigator.storage?.persisted)return false;
+    if(safeSession.get('ascend-persistence-attempted')){
+      try{return await navigator.storage.persisted()}catch(error){return false}
+    }
+    safeSession.set('ascend-persistence-attempted','1');
+    try{
+      if(await navigator.storage.persisted())return true;
+      return await navigator.storage.persist();
+    }catch(error){return false}
+  };
+
   const setupServiceWorker=()=>{
     if(!('serviceWorker' in navigator))return;
     navigator.serviceWorker.register('./service-worker.js').then(registration=>{
@@ -2288,7 +2300,7 @@
     window.addEventListener('blur',()=>cancelHold());
     document.addEventListener('pointerup',()=>cancelHold());
     document.addEventListener('pointercancel',()=>cancelHold());
-    $('#activateButton').addEventListener('click',()=>{const name=$('#playerName').value.trim();if(!name){$('#playerName').focus();return}state.player.name=name;state.initialized=true;state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'system',message:'Discipline System activated at Level 1.'});save();renderApp()});
+    $('#activateButton').addEventListener('click',()=>{const name=$('#playerName').value.trim();if(!name){$('#playerName').focus();return}state.player.name=name;state.initialized=true;state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'system',message:'Discipline System activated at Level 1.'});save();requestPersistentStorage();renderApp()});
     $('#earlyWakeButton').addEventListener('pointerdown',event=>{event.preventDefault();beginHold('early-wake',2000,progress=>{$('#earlyWakeFill').style.width=`${progress*100}%`},confirmEarlyWake)});
     ['pointerup','pointercancel','pointerleave'].forEach(type=>$('#earlyWakeButton').addEventListener(type,()=>cancelHold('early-wake')));
     $('#notYetButton').addEventListener('click',()=>{earlyWakeDismissedSession=true;haptic('tap');renderApp()});
@@ -2523,7 +2535,7 @@
   };
   const emergencyBoot=beginBootGuard();
   synchronizeAdvancedSystems();advancedSyncDate=S.dateKey();applySafeMode();
-  wireEvents();updateOrientationGuard();checkClockIntegrity();renderApp();dismissLaunchSplash();setupServiceWorker();
+  wireEvents();updateOrientationGuard();checkClockIntegrity();renderApp();dismissLaunchSplash();setupServiceWorker();if(state.initialized)requestPersistentStorage();
   bootCompletionTimer=setTimeout(completeBootGuard,2600);
   if(emergencyBoot||state.system?.recoveredFrom==='startup-guard')setTimeout(openEmergencyRecovery,700);
   if(state.timezone?.pending)setTimeout(showTimezoneOverlay,900);
