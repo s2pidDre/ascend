@@ -153,6 +153,9 @@
 
       <div class="free-core system-panel">
         <img class="free-watermark" src="assets/inapp-logo.png" alt="" aria-hidden="true" draggable="false">
+        <button class="free-quest-trigger" id="freeQuestOpen" type="button" aria-haspopup="dialog" aria-controls="dailyQuestOverlay">
+          <span>QUEST</span><strong id="freeQuestMini">0 / 1</strong>
+        </button>
         <section class="state-zone state-zone-upper free-upper" aria-label="Next scheduled state">
           <p class="eyebrow" id="freeEyebrow">FREE WINDOW</p>
           <span class="directive-kicker" id="freeKicker">NEXT DIRECTIVE</span>
@@ -168,16 +171,6 @@
         </section>
       </div>
 
-      <aside class="free-daily-quest" id="freeDailyQuest" aria-label="Daily quest">
-        <div class="free-daily-quest-copy">
-          <span>DAILY QUEST</span>
-          <strong id="freeQuestTitle">Complete the Sequence</strong>
-          <small id="freeQuestStatus">0 / 1</small>
-        </div>
-        <i class="free-daily-quest-progress" aria-hidden="true"><b id="freeQuestFill"></b></i>
-        <button type="button" id="freeQuestClaim" hidden>Claim</button>
-        <em id="freeQuestReward">+30 XP</em>
-      </aside>
     </section>
 
     <section class="screen class-screen" id="classScreen" hidden>
@@ -756,6 +749,22 @@
         <span class="hold-fill" id="emergencyExitFill"></span><b>Hold to Exit Protocol</b>
       </button>
       <button class="ghost-button" id="returnDirectiveButton" type="button">Return to Directive</button>
+    </div>
+  </div>
+
+  <div class="daily-quest-overlay modal-overlay" id="dailyQuestOverlay" hidden>
+    <div class="daily-quest-panel system-panel" role="dialog" aria-modal="true" aria-labelledby="dailyQuestHeading">
+      <div class="config-sigil glyph-frame" aria-hidden="true"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-quest"></use></svg></div>
+      <p class="eyebrow">DAILY QUEST</p>
+      <h2 id="dailyQuestHeading">Complete the Sequence</h2>
+      <p id="dailyQuestCopy">Clear every required protocol today.</p>
+      <div class="daily-quest-progress" aria-hidden="true"><b id="dailyQuestFill"></b></div>
+      <div class="daily-quest-meta">
+        <span id="dailyQuestStatus">0 / 1</span>
+        <strong id="dailyQuestReward">+30 XP · +1 SKILL POINT</strong>
+      </div>
+      <button class="system-button compact-button" id="dailyQuestClaim" type="button" hidden><b>Claim Reward</b></button>
+      <button class="ghost-button" id="closeDailyQuest" type="button">Close</button>
     </div>
   </div>
 

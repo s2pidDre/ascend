@@ -83,6 +83,8 @@
   const nextWakeMoment=date=>{const wake=timeOnDate(date,'05:00');if(todayMinutes(date)>=1380)wake.setDate(wake.getDate()+1);return wake};
   const show=id=>{
     if(activeScreenId===id)return;
+    const questOverlay=document.getElementById('dailyQuestOverlay');
+    if(id!=='freeScreen'&&questOverlay)questOverlay.hidden=true;
     screens.forEach(screen=>{document.getElementById(screen).hidden=screen!==id});
     const screen=document.getElementById(id);
     screen?.classList.remove('screen-enter');
@@ -872,7 +874,7 @@
   };
   const syncRecoveryOverlay=()=>{
     const overlay=$('#recoveryOverlay');if(!overlay)return;
-    const canShow=Boolean(state.recovery?.active)&&!activeProtocolRecord()&&!classStateAt(new Date())&&$('#scheduleOverlay').hidden&&$('#emergencyOverlay').hidden;
+    const canShow=Boolean(state.recovery?.active)&&!activeProtocolRecord()&&!classStateAt(new Date())&&$('#scheduleOverlay').hidden&&$('#emergencyOverlay').hidden&&$('#dailyQuestOverlay').hidden;
     overlay.hidden=!canShow;
     if(canShow){const config=blueprint(state.recovery.protectedProtocolId)||blueprint('wake');$('#recoveryProtectedProtocol').textContent=config.name;releaseWakeLock()}
   };
@@ -915,9 +917,16 @@
 
   const renderFreeDailyQuest=()=>{
     const quest=ensureDailyQuest(),progress=questProgress(quest),canClaim=progress.done&&!quest.claimed;
-    $('#freeQuestTitle').textContent=quest.title;$('#freeQuestStatus').textContent=progress.label;$('#freeQuestFill').style.width=`${progress.progress*100}%`;
-    $('#freeDailyQuest').classList.toggle('complete',progress.done);$('#freeQuestClaim').hidden=!canClaim;$('#freeQuestReward').hidden=canClaim;$('#freeQuestReward').textContent=quest.claimed?'CLAIMED':`+${quest.xp} XP`;
+    $('#freeQuestMini').textContent=quest.claimed?'DONE':canClaim?'READY':progress.label;
+    $('#dailyQuestHeading').textContent=quest.title;
+    $('#dailyQuestCopy').textContent=quest.copy;
+    $('#dailyQuestStatus').textContent=quest.claimed?'CLAIMED':progress.label;
+    $('#dailyQuestFill').style.width=`${progress.progress*100}%`;
+    $('#dailyQuestReward').textContent=quest.claimed?'REWARD CLAIMED':`+${quest.xp} XP · +1 SKILL POINT`;
+    $('#dailyQuestClaim').hidden=!canClaim;
   };
+  const openDailyQuest=()=>{renderFreeDailyQuest();$('#dailyQuestOverlay').hidden=false};
+  const closeDailyQuest=()=>{$('#dailyQuestOverlay').hidden=true};
 
   const renderFree=(record,now)=>{
     releaseWakeLock();show('freeScreen');document.body.dataset.state='standby';currentClassContext=null;renderFreeDailyQuest();
@@ -2304,7 +2313,10 @@
     $('#earlyWakeButton').addEventListener('pointerdown',event=>{event.preventDefault();beginHold('early-wake',2000,progress=>{$('#earlyWakeFill').style.width=`${progress*100}%`},confirmEarlyWake)});
     ['pointerup','pointercancel','pointerleave'].forEach(type=>$('#earlyWakeButton').addEventListener(type,()=>cancelHold('early-wake')));
     $('#notYetButton').addEventListener('click',()=>{earlyWakeDismissedSession=true;haptic('tap');renderApp()});
-    $('#freeQuestClaim').addEventListener('click',claimDailyQuest);
+    $('#freeQuestOpen').addEventListener('click',openDailyQuest);
+    $('#dailyQuestClaim').addEventListener('click',claimDailyQuest);
+    $('#closeDailyQuest').addEventListener('click',closeDailyQuest);
+    $('#dailyQuestOverlay').addEventListener('click',event=>{if(event.target===$('#dailyQuestOverlay'))closeDailyQuest()});
 
     $('#actionButton').addEventListener('click',beginAction);
     $('#actionButton').addEventListener('pointerdown',event=>{const protocol=activeProtocolRecord(),task=currentStep(protocol);if(!task||task.type!=='hold'||$('#actionButton').disabled)return;event.preventDefault();beginHold('action',task.holdDuration||1800,progress=>{$('#holdFill').style.width=`${progress*100}%`},completeSubtask)});
@@ -2494,6 +2506,7 @@
       if(!$('#developerRunOverlay').hidden){exitDeveloperRun(false);return;}
       if(!$('#recoveryOverlay').hidden)return;
       if(!$('#emergencyRecoveryOverlay').hidden){closeEmergencyRecovery();return}
+      if(!$('#dailyQuestOverlay').hidden){closeDailyQuest();return}
       if(!$('#timezoneOverlay').hidden){$('#timezoneOverlay').hidden=true;return}
       if(!$('#emergencyOverlay').hidden){closeEmergencyOverlay();return}
       if(!$('#scheduleOverlay').hidden){closeScheduleOverlay();return}
@@ -2502,7 +2515,7 @@
     document.addEventListener('keyup',event=>{if(event.key==='Escape'&&escapeTimer){clearTimeout(escapeTimer);escapeTimer=null}});
     document.addEventListener('visibilitychange',()=>{
       if(document.hidden){
-        const overlaysClosed=$('#emergencyOverlay').hidden&&$('#scheduleOverlay').hidden&&$('#developerRunOverlay').hidden;
+        const overlaysClosed=$('#emergencyOverlay').hidden&&$('#scheduleOverlay').hidden&&$('#developerRunOverlay').hidden&&$('#dailyQuestOverlay').hidden;
         hiddenFocusContext=overlaysClosed?activeTimedFocusContext():null;
         lastVisibilityLoss=hiddenFocusContext?hiddenFocusContext.startedAt:null;
         releaseWakeLock();

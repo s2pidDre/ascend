@@ -1,5 +1,5 @@
 const CACHE_PREFIX='ascend-discipline-';
-const CACHE=`${CACHE_PREFIX}v48-profile-v2`;
+const CACHE=`${CACHE_PREFIX}v49-quest-footer-fix`;
 const APP_SHELL=[
   './',
   './index.html',
