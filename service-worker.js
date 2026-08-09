@@ -1,5 +1,5 @@
 const CACHE_PREFIX='ascend-discipline-';
-const CACHE=`${CACHE_PREFIX}v47-offline-first`;
+const CACHE=`${CACHE_PREFIX}v48-profile-v2`;
 const APP_SHELL=[
   './',
   './index.html',
