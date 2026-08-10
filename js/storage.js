@@ -6,7 +6,7 @@
   const SNAPSHOT_KEY='ascend_discipline_protocol_snapshots_v1';
   const ROLLBACK_KEY='ascend_discipline_protocol_rollbacks_v1';
   const LEGACY_KEYS=['ascend_discipline_protocol_v6','ascend_discipline_protocol_v5','ascend_discipline_protocol_v4','ascend_strict_system_v3','ascend_automatic_year_system_v2','ascend_personal_growth_system_v1'];
-  const VERSION=21;
+  const VERSION=22;
   const BACKUP_VERSION=5;
   const ROUTINE_LOG_LIMIT=420;
   const SNAPSHOT_LIMIT=7;
@@ -245,7 +245,21 @@
     heldAttendanceIds.forEach(id=>{const record=state.attendanceRecords.find(item=>item.id===id);if(record&&!record.profileXpAppliedAt){legacyHeldXpReopened+=Math.max(0,Number(record.xpAwarded||0)-Number(record.profileXpAppliedAmount||0));record.profileXpAppliedAmount=0}});
     if(state.quests?.daily?.id==='clean-timeline')state.quests.daily=null;
     if(fromVersion<21)state.settings.externalCalendarConfirmed=false;
-    const migration={id:uid('migration'),at:nowIso(),fromVersion,toVersion:VERSION,label:'Workout directive and legacy reward cleanup'};
+    if(fromVersion<22){
+      Object.values(state.dayRecords||{}).forEach(day=>{
+        const workout=day?.protocols?.workout;if(!workout||!['pending','active'].includes(workout.status))return;
+        workout.start='08:00';workout.end='09:30';
+        const steps=Array.isArray(workout.steps)?workout.steps:[];
+        workout.steps=steps.filter(step=>step?.id!=='workout-enter');
+        if(!workout.steps.some(step=>step?.id==='workout-shower')){
+          const confirmIndex=workout.steps.findIndex(step=>step?.id==='workout-confirm');
+          const shower={id:'workout-shower',title:'Shower & Recover',copy:['Shower, change into clean clothes, hydrate, and finish your immediate post-workout recovery.','Clean up after training and prepare for the rest of the day.'],icon:'bath',type:'hold',status:'pending',startedAt:null,completedAt:null};
+          if(confirmIndex>=0)workout.steps.splice(confirmIndex,0,shower);else workout.steps.push(shower);
+        }
+      });
+      state.settings.externalCalendarConfirmed=false;
+    }
+    const migration={id:uid('migration'),at:nowIso(),fromVersion,toVersion:VERSION,label:'Workout shower routine update'};
     state.system.migrationHistory.push(migration);
     state.logs.push({id:uid('log'),at:migration.at,type:'migration',message:`ASCEND data migrated from schema ${fromVersion||'legacy'} to ${VERSION}. A rollback point was retained.${currentDayXpRepair?` ${currentDayXpRepair} legacy current-day XP reopened for reconciliation.`:''}${legacyHeldXpReopened?` ${legacyHeldXpReopened} previously held XP reopened for immediate Profile synchronization.`:''}`});
     state.logs=pruneLogs(state.logs);return state;

@@ -199,14 +199,14 @@
       ]
     },
     {
-      id:'workout',short:'WORKOUT',name:'Workout Protocol',icon:'stretch',start:'08:00',end:'09:00',xp:150,
-      prep:'Prepare your training space after breakfast. The Workout Dungeon is active only on Tuesday, Wednesday, Friday, and Saturday when no class window conflicts.',
+      id:'workout',short:'WORKOUT',name:'Workout Protocol',icon:'stretch',start:'08:00',end:'09:30',xp:150,
+      prep:'Prepare after breakfast. Complete the Workout Dungeon, five-minute cooldown, shower, and final confirmation before 9:30 AM. The directive is active only on Tuesday, Wednesday, Friday, and Saturday when no class window conflicts.',
       subtasks:()=>[
-        {id:'workout-prepare',title:'Prepare',copy:variants('Change into training clothes, prepare water, and make the workout space ready.','Prepare your body, water, and training area before entering the dungeon.'),icon:'list',type:'hold'},
-        {id:'workout-enter',title:'Enter Dungeon',copy:variants('Start the workout only when you are ready to train without unnecessary delay.','Enter the Workout Dungeon and begin the session.'),icon:'confirm',type:'tap'},
+        {id:'workout-prepare',title:'Prepare',copy:variants('Change into training clothes, prepare water, and make the workout space ready.','Prepare your body, water, and training area before beginning the dungeon.'),icon:'list',type:'hold'},
         {id:'workout-dungeon',title:'Workout Dungeon',copy:variants('Train for at least fifteen minutes. End the dungeon whenever the workout is actually finished; forty-five minutes is the recommended upper target.','Complete a real 15–45 minute training session. Duration beyond fifteen minutes does not increase XP.'),icon:'stretch',type:'workout',minDuration:15,recommendedMax:45},
-        {id:'workout-cooldown',title:'5-Minute Cooldown Dungeon',copy:variants('Recover, hydrate, breathe, and stretch for five minutes.','Complete five minutes of controlled cooldown before final confirmation.'),icon:'water',type:'timer',duration:5,autoComplete:true},
-        {id:'workout-confirm',title:'Confirm Done',copy:variants('Confirm the workout and cooldown are complete.','Finish the Workout Protocol and record the clear.'),icon:'success',type:'tap'}
+        {id:'workout-cooldown',title:'5-Minute Cooldown Dungeon',copy:variants('Recover, hydrate, breathe, and stretch for five minutes.','Complete five minutes of controlled cooldown before showering.'),icon:'water',type:'timer',duration:5,autoComplete:true},
+        {id:'workout-shower',title:'Shower & Recover',copy:variants('Shower, change into clean clothes, hydrate, and finish your immediate post-workout recovery.','Clean up after training and prepare for the rest of the day.'),icon:'bath',type:'hold'},
+        {id:'workout-confirm',title:'Confirm Done',copy:variants('Confirm the workout, cooldown, and shower are complete.','Finish the Workout Protocol and record the clear.'),icon:'success',type:'tap'}
       ]
     },
     {
@@ -262,19 +262,49 @@
     });
     return entries.sort((a,b)=>minutes(a.start)-minutes(b.start));
   };
-  const workoutHasClassConflict=date=>effectiveScheduleForDate(date).some(entry=>{
-    const classPriorityStart=minutes(entry.start)-15;
-    return classPriorityStart<minutes('09:00')&&minutes(entry.end)>minutes('08:00');
-  });
+  const workoutHasClassConflict=date=>{
+    const workout=blueprint('workout');
+    return effectiveScheduleForDate(date).some(entry=>{
+      const classPriorityStart=minutes(entry.start)-15;
+      return classPriorityStart<minutes(workout.end)&&minutes(entry.end)>minutes(workout.start);
+    });
+  };
   const protocolEligibleForDate=(config,date)=>config.id!=='workout'||(WORKOUT_DAYS.has(date.getDay())&&!workoutHasClassConflict(date));
   const protocolConfigsForDate=date=>protocolBlueprints.filter(config=>protocolEligibleForDate(config,date));
   const protocolConfigsForRecord=record=>protocolBlueprints.filter(config=>Boolean(record?.protocols?.[config.id]));
   const requiredProtocolCountForRecord=record=>Object.keys(record?.protocols||{}).length;
-  const makeProtocolState=(config,weeklyBoss=false)=>({
+  const protocolStepsForDate=(config,date)=>{
+    const steps=config.subtasks(state.player.level);
+    if(config.id==='wake'&&protocolEligibleForDate(blueprint('workout'),date))return steps.filter(step=>step.id!=='bath');
+    return steps;
+  };
+  const makeProtocolState=(config,weeklyBoss=false,date=new Date())=>({
     id:config.id,name:config.name,start:config.start,end:config.end,xp:config.xp,
-    status:'pending',steps:config.subtasks(state.player.level).map(step=>({...step,status:'pending',startedAt:null,completedAt:null})),startedAt:null,completedAt:null,earnedXp:0,focusBreaches:0,hiddenMilliseconds:0,
+    status:'pending',steps:protocolStepsForDate(config,date).map(step=>({...step,status:'pending',startedAt:null,completedAt:null})),startedAt:null,completedAt:null,earnedXp:0,focusBreaches:0,hiddenMilliseconds:0,
     boss:weeklyBoss&&config.id==='productivity',resolutionKey:null
   });
+  const syncWorkoutStepShape=protocol=>{
+    if(!protocol||!['pending','active'].includes(protocol.status))return false;
+    const config=blueprint('workout'),existing=new Map((protocol.steps||[]).map(step=>[step.id,step]));
+    const desired=config.subtasks(state.player.level).map(step=>{
+      const previous=existing.get(step.id);
+      return previous?{...step,...previous,id:step.id,title:step.title,copy:step.copy,icon:step.icon,type:step.type,minDuration:step.minDuration,recommendedMax:step.recommendedMax,duration:step.duration,autoComplete:step.autoComplete}:{...step,status:'pending',startedAt:null,completedAt:null};
+    });
+    const before=(protocol.steps||[]).map(step=>step.id).join('|'),after=desired.map(step=>step.id).join('|');
+    const timingChanged=protocol.start!==config.start||protocol.end!==config.end;
+    if(before===after&&!timingChanged)return false;
+    protocol.steps=desired;protocol.start=config.start;protocol.end=config.end;protocol.name=config.name;protocol.xp=config.xp;return true;
+  };
+  const syncWakeBathForWorkout=record=>{
+    const wake=record?.protocols?.wake;if(!wake||!['pending','active'].includes(wake.status))return false;
+    const workoutRequired=Boolean(record.protocols?.workout),bathIndex=(wake.steps||[]).findIndex(step=>step.id==='bath');
+    if(workoutRequired&&bathIndex>=0){wake.steps.splice(bathIndex,1);return true}
+    if(!workoutRequired&&bathIndex<0){
+      const bath=blueprint('wake').subtasks(state.player.level).find(step=>step.id==='bath');
+      if(bath){wake.steps.push({...bath,status:'pending',startedAt:null,completedAt:null});return true}
+    }
+    return false;
+  };
   const syncConditionalProtocols=(record,now=new Date())=>{
     if(!record||record.status!=='active'||record.date!==S.dateKey(now))return false;
     const workout=record.protocols?.workout,eligible=protocolEligibleForDate(blueprint('workout'),now);let changed=false;
@@ -283,9 +313,11 @@
       state.logs.push({id:S.uid('log'),at:now.toISOString(),type:'schedule',message:'Workout Protocol suppressed because a class window takes priority.'});
     }
     if(!record.protocols?.workout&&eligible&&todayMinutes(now)<minutes('08:00')){
-      record.protocols.workout=makeProtocolState(blueprint('workout'),record.weeklyBoss);changed=true;
+      record.protocols.workout=makeProtocolState(blueprint('workout'),record.weeklyBoss,now);changed=true;
       state.logs.push({id:S.uid('log'),at:now.toISOString(),type:'protocol',message:'Workout Protocol added to today’s Tuesday/Wednesday/Friday/Saturday sequence.'});
     }
+    if(syncWorkoutStepShape(record.protocols?.workout))changed=true;
+    if(syncWakeBathForWorkout(record))changed=true;
     return changed;
   };
   const linkedSubjects=()=>{
@@ -344,7 +376,7 @@
     const weeklyBoss=isWeeklyBossDate(date);
     const weeklyBossPlan=weeklyBoss?buildWeeklyBossPlan(date):null;
     const rankTrialPlan=state.player.pendingRank?rankTrialPlanFor(state.player.pendingRank):null;
-    protocolConfigsForDate(date).forEach(config=>{protocols[config.id]=makeProtocolState(config,weeklyBoss)});
+    protocolConfigsForDate(date).forEach(config=>{protocols[config.id]=makeProtocolState(config,weeklyBoss,date)});
     const record={
       date:key,status:'active',createdAt:new Date().toISOString(),protocols,completedProtocols:0,failedProtocols:0,
       wakeCheckInAt:null,wakeStatus:null,totalXp:0,onTimePercentage:0,automaticReward:null,
@@ -1225,7 +1257,7 @@
     $('#subtaskTitle').textContent=task.title;$('#subtaskCopy').textContent=stepCopy(task);
     $('#completedSteps').textContent=`${protocol.steps.filter(step=>step.status==='completed').length} / ${protocol.steps.length} completed`;
     $('#protocolXp').textContent=`${Math.round(config.xp*(protocol.boss?1.35:1))} XP available`;
-    $('#focusNote').textContent=protocol.boss?(record.weeklyBossPlan?.copy||'Complete the adaptive Weekly Boss objective.'):config.id==='workout'?'15-minute minimum · 45-minute recommended target · class windows always take priority.':'Complete every required stage before the fixed deadline.';
+    $('#focusNote').textContent=protocol.boss?(record.weeklyBossPlan?.copy||'Complete the adaptive Weekly Boss objective.'):config.id==='workout'?'15–45 minute dungeon · 5-minute cooldown · shower and recovery · classes take priority.':'Complete every required stage before the fixed deadline.';
     if(task.type==='audit')renderAudit(protocol,task);
     else if(task.type==='planner')renderPlanner(protocol,task);
     else if(task.type==='academic')renderAcademic(protocol,task);
@@ -1706,7 +1738,7 @@
     if(mode==='sample'){
       sandbox.player={...sandbox.player,name:'Test Player',codename:'Sandbox',level:12,rank:'C',streak:4,totalXp:1850};
       sandbox.dayRecords={};sandbox.attendanceRecords=[];sandbox.academicTasks=[];sandbox.scheduleExceptions=[];
-      sandbox.classSchedule=Array.from({length:7},(_,day)=>({id:`sample-class-${day}`,subject:'Developer Test Class',code:'DEV 101',day,room:'Simulation Room',modality:'Onsite',start:'09:30',end:'11:00',active:true}));
+      sandbox.classSchedule=Array.from({length:7},(_,day)=>({id:`sample-class-${day}`,subject:'Developer Test Class',code:'DEV 101',day,room:'Simulation Room',modality:'Onsite',start:'10:30',end:'12:00',active:true}));
     }
     sandbox.system={...sandbox.system,developerSandbox:true};return sandbox;
   };
@@ -1730,8 +1762,13 @@
   const developerProtocolConfigsForDate=date=>protocolBlueprints.filter(config=>{
     if(config.id!=='workout')return true;
     if(!WORKOUT_DAYS.has(date.getDay()))return false;
-    return !developerClassesForDate(date).some(entry=>minutes(entry.start)-15<minutes('09:00')&&minutes(entry.end)>minutes('08:00'));
+    const workout=blueprint('workout');return !developerClassesForDate(date).some(entry=>minutes(entry.start)-15<minutes(workout.end)&&minutes(entry.end)>minutes(workout.start));
   });
+  const developerProtocolStepsForDate=(config,date)=>{
+    const steps=config.subtasks(developerRunSession?.sandbox?.player?.level||1);
+    if(config.id==='wake'&&developerProtocolConfigsForDate(date).some(item=>item.id==='workout'))return steps.filter(step=>step.id!=='bath');
+    return steps;
+  };
   const developerProtocolProgress=(date,config)=>{
     const session=developerRunSession,key=S.dateKey(date);session.protocolProgress=session.protocolProgress||{};session.protocolProgress[key]=session.protocolProgress[key]||{};
     if(!session.protocolProgress[key][config.id])session.protocolProgress[key][config.id]={stepIndex:config.id==='wake'?1:0,cleared:false,failed:false,timers:{}};
@@ -1780,7 +1817,7 @@
     let config=developerProtocolConfigsForDate(now).find(item=>minute>=minutes(item.start)&&minute<minutes(item.end));
     if(!config&&session.earlyWakeConfirmed[dateKey]&&minute>=240&&minute<360)config=blueprint('wake');
     if(config){
-      const progress=developerProtocolProgress(now,config),steps=config.subtasks(session.sandbox.player?.level||1),end=timeOnDate(now,config.end),timeLeft=Math.max(0,end-now);
+      const progress=developerProtocolProgress(now,config),steps=developerProtocolStepsForDate(config,now),end=timeOnDate(now,config.end),timeLeft=Math.max(0,end-now);
       if(!progress.cleared){
         if(progress.failed)return{kind:'protocol-failed',config,progress,protocol:config.name.toUpperCase(),window:`${formatTime(config.start)} – ${formatTime(config.end)}`,type:'PROTOCOL FAILED',title:`${config.name} Failed`,copy:'The simulated deadline passed before every required stage was completed.',icon:'failure',detail:`0 XP · ${progress.stepIndex} / ${steps.length} COMPLETED`,status:'FAILED',countdown:'00:00:00',resultClass:'failure',layout:'plain',action:null,note:'Reset the simulator or move to a new date to test a fresh sequence.'};
         if(progress.stepIndex>=steps.length){progress.cleared=true}
