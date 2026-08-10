@@ -1,5 +1,5 @@
 const CACHE_PREFIX='ascend-discipline-';
-const CACHE=`${CACHE_PREFIX}v51-immediate-profile-xp`;
+const CACHE=`${CACHE_PREFIX}v52-xp-audit-input-fix`;
 const APP_SHELL=[
   './',
   './index.html',

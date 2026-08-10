@@ -6,7 +6,7 @@
   const SNAPSHOT_KEY='ascend_discipline_protocol_snapshots_v1';
   const ROLLBACK_KEY='ascend_discipline_protocol_rollbacks_v1';
   const LEGACY_KEYS=['ascend_discipline_protocol_v6','ascend_discipline_protocol_v5','ascend_discipline_protocol_v4','ascend_strict_system_v3','ascend_automatic_year_system_v2','ascend_personal_growth_system_v1'];
-  const VERSION=17;
+  const VERSION=18;
   const BACKUP_VERSION=5;
   const ROUTINE_LOG_LIMIT=420;
   const SNAPSHOT_LIMIT=7;
@@ -227,9 +227,17 @@
   const migrateLegacy=raw=>{
     const fromVersion=Number(raw?.version||0);createPreUpdateRollback(raw,fromVersion,'Automatic pre-migration rollback');
     const state=normalizeCurrent(raw||{});
-    const migration={id:uid('migration'),at:nowIso(),fromVersion,toVersion:VERSION,label:'Immediate Profile XP and attendance XP integration'};
+    let currentDayXpRepair=0;
+    if(fromVersion<18){
+      const today=state.dayRecords?.[dateKey()];
+      if(today?.status==='failed')Object.values(today.protocols||{}).forEach(protocol=>{
+        const earned=Math.max(0,Number(protocol?.earnedXp||0)),applied=Math.max(0,Number(protocol?.profileXpAppliedAmount||0));
+        if(protocol?.status==='cleared'&&earned>0&&applied===earned&&!protocol.profileXpAppliedAt){protocol.profileXpAppliedAmount=0;protocol.profileXpHeld=0;currentDayXpRepair+=earned}
+      });
+    }
+    const migration={id:uid('migration'),at:nowIso(),fromVersion,toVersion:VERSION,label:'Current-day XP recovery and stable Task Audit input'};
     state.system.migrationHistory.push(migration);
-    state.logs.push({id:uid('log'),at:migration.at,type:'migration',message:`ASCEND data migrated from schema ${fromVersion||'legacy'} to ${VERSION}. A rollback point was retained.`});
+    state.logs.push({id:uid('log'),at:migration.at,type:'migration',message:`ASCEND data migrated from schema ${fromVersion||'legacy'} to ${VERSION}. A rollback point was retained.${currentDayXpRepair?` ${currentDayXpRepair} current-day cleared directive XP marked for Profile synchronization.`:''}`});
     state.logs=pruneLogs(state.logs);return state;
   };
 

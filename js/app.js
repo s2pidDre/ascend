@@ -48,6 +48,7 @@
   let advancedSyncDate='';
   let bootCompletionTimer=null;
   let timezonePromptShown=false;
+  let customFormEditing=false;
   const BOOT_GUARD_KEY='ascend_boot_guard_v1';
 
   const $=selector=>document.querySelector(selector);
@@ -999,6 +1000,21 @@
     if(step.auditState.index>=subjects.length)return null;
     return subjects[step.auditState.index];
   };
+  const defaultAuditDraft=()=>({title:'',deadline:'',difficulty:'Medium',workload:'30',note:''});
+  const auditDraftFor=step=>{
+    step.auditState=step.auditState||{index:0};
+    const draft=step.auditState.draft&&typeof step.auditState.draft==='object'?step.auditState.draft:{};
+    step.auditState.draft={...defaultAuditDraft(),...draft};
+    return step.auditState.draft;
+  };
+  const captureAuditDraft=()=>{
+    const protocol=activeProtocolRecord(),step=currentStep(protocol);if(!step||step.type!=='audit')return false;
+    const title=$('#auditTaskTitle'),deadline=$('#auditTaskDeadline'),difficulty=$('#auditTaskDifficulty'),workload=$('#auditTaskWorkload'),note=$('#auditTaskNote');
+    if(!title||!deadline||!difficulty||!workload||!note)return false;
+    step.auditState=step.auditState||{index:0};
+    step.auditState.draft={title:title.value,deadline:deadline.value,difficulty:difficulty.value||'Medium',workload:String(workload.value||'30'),note:note.value};
+    return true;
+  };
 
   const taskById=id=>state.academicTasks.find(task=>task.id===id)||null;
   const taskBlockers=task=>(task?.dependencyIds||[]).map(taskById).filter(Boolean).filter(item=>item.status!=='completed');
@@ -1049,15 +1065,16 @@
     const subjectTasks=state.academicTasks.filter(task=>task.status!=='completed'&&task.subjectKey===subject.key).sort((a,b)=>String(a.deadline||'9999').localeCompare(String(b.deadline||'9999')));
     const subjectPending=subjectTasks.length;
     const shownTask=subjectTasks[0];
+    const draft=auditDraftFor(step);
     $('#customTaskArea').innerHTML=`
       <div class="audit-head"><span>${step.auditState.index+1} / ${subjects.length}</span><strong>${escapeHtml(subject.name)}</strong><small>${subjectPending} pending</small></div>
       ${shownTask?`<div class="existing-task"><span>NEXT PENDING</span><strong>${escapeHtml(shownTask.title)}</strong><small>${shownTask.deadline||'No deadline'}</small><button type="button" data-custom="complete-existing" data-task-id="${shownTask.id}">Mark Completed</button></div>`:''}
       <div class="compact-form audit-form">
-        <label>Task<input id="auditTaskTitle" type="text" maxlength="80" placeholder="Required output"></label>
-        <label>Deadline<span class="time-shell"><input id="auditTaskDeadline" type="date"></span></label>
-        <label>Difficulty<select id="auditTaskDifficulty"><option value="Low">Low</option><option value="Medium" selected>Medium</option><option value="High">High</option></select></label>
-        <label>Workload<select id="auditTaskWorkload"><option value="15">15 minutes</option><option value="30" selected>30 minutes</option><option value="60">1 hour</option><option value="120">2 hours</option><option value="180">Multi-session</option></select></label>
-        <label>Note<input id="auditTaskNote" type="text" maxlength="70" placeholder="Optional"></label>
+        <label>Task<input id="auditTaskTitle" type="text" maxlength="80" placeholder="Required output" value="${escapeHtml(draft.title)}"></label>
+        <label>Deadline<span class="time-shell"><input id="auditTaskDeadline" type="date" value="${escapeHtml(draft.deadline)}"></span></label>
+        <label>Difficulty<select id="auditTaskDifficulty"><option value="Low" ${draft.difficulty==='Low'?'selected':''}>Low</option><option value="Medium" ${draft.difficulty==='Medium'?'selected':''}>Medium</option><option value="High" ${draft.difficulty==='High'?'selected':''}>High</option></select></label>
+        <label>Workload<select id="auditTaskWorkload"><option value="15" ${draft.workload==='15'?'selected':''}>15 minutes</option><option value="30" ${draft.workload==='30'?'selected':''}>30 minutes</option><option value="60" ${draft.workload==='60'?'selected':''}>1 hour</option><option value="120" ${draft.workload==='120'?'selected':''}>2 hours</option><option value="180" ${draft.workload==='180'?'selected':''}>Multi-session</option></select></label>
+        <label>Note<input id="auditTaskNote" type="text" maxlength="70" placeholder="Optional" value="${escapeHtml(draft.note)}"></label>
       </div>
       <div class="custom-actions two"><button type="button" data-custom="save-task">Save Task</button><button type="button" data-custom="next-subject">${step.auditState.index===subjects.length-1?'Finish Subject':'Next Subject'}</button></div>`;
   };
@@ -1293,11 +1310,11 @@
       const task=state.academicTasks.find(item=>item.id===button.dataset.taskId);if(task){const blockers=taskBlockers(task);if(blockers.length){showBreachWarning('TASK LOCKED',`Complete ${blockers[0].title} first.`);return}task.status='completed';task.completedAt=new Date().toISOString();save();showBreachWarning('TASK COMPLETED',task.title);renderApp()}return;
     }
     if(action==='save-task'){
-      const subject=currentAuditSubject(step);const title=$('#auditTaskTitle')?.value.trim();const deadline=$('#auditTaskDeadline')?.value;const difficulty=$('#auditTaskDifficulty')?.value||'Medium';const workload=Number($('#auditTaskWorkload')?.value||30);const note=$('#auditTaskNote')?.value.trim()||'';
+      captureAuditDraft();const subject=currentAuditSubject(step),draft=auditDraftFor(step);const title=String(draft.title||'').trim(),deadline=draft.deadline,difficulty=draft.difficulty||'Medium',workload=Number(draft.workload||30),note=String(draft.note||'').trim();
       if(!subject||!title||!deadline){showBreachWarning('TASK DATA INCOMPLETE','Task name and deadline are required.');return}
-      addAcademicTask(subject,title,deadline,difficulty,note,workload);showBreachWarning('TASK SAVED',`${subject.name}: ${title}`);renderApp();return;
+      step.auditState.draft=defaultAuditDraft();addAcademicTask(subject,title,deadline,difficulty,note,workload);showBreachWarning('TASK SAVED',`${subject.name}: ${title}`);renderApp();return;
     }
-    if(action==='next-subject'){step.auditState.index+=1;save();renderApp();return}
+    if(action==='next-subject'){step.auditState.draft=defaultAuditDraft();step.auditState.index+=1;save();renderApp();return}
     if(action==='plan-single'||action==='plan-multi'){
       step.planState={phase:'select',mode:action==='plan-single'?'single':'multi',index:0,selectedIds:[]};save();renderApp();return;
     }
@@ -2341,7 +2358,12 @@
     $('#actionButton').addEventListener('click',beginAction);
     $('#actionButton').addEventListener('pointerdown',event=>{const protocol=activeProtocolRecord(),task=currentStep(protocol);if(!task||task.type!=='hold'||$('#actionButton').disabled)return;event.preventDefault();beginHold('action',task.holdDuration||1800,progress=>{$('#holdFill').style.width=`${progress*100}%`},completeSubtask)});
     ['pointerup','pointercancel','pointerleave'].forEach(type=>$('#actionButton').addEventListener(type,()=>cancelHold('action')));
-    $('#customTaskArea').addEventListener('click',handleCustomAction);
+    const customTaskArea=$('#customTaskArea');
+    customTaskArea.addEventListener('click',handleCustomAction);
+    customTaskArea.addEventListener('focusin',event=>{if(event.target.matches('input,select,textarea'))customFormEditing=true});
+    customTaskArea.addEventListener('focusout',()=>setTimeout(()=>{customFormEditing=Boolean(customTaskArea.querySelector('input:focus,select:focus,textarea:focus'))},0));
+    customTaskArea.addEventListener('input',()=>captureAuditDraft());
+    customTaskArea.addEventListener('change',()=>{if(captureAuditDraft())save({silent:true})});
 
     $('#classConfirmButton').addEventListener('pointerdown',event=>{event.preventDefault();beginHold('class-confirm',1400,progress=>{$('#classConfirmFill').style.width=`${progress*100}%`},checkInClass)});
     ['pointerup','pointercancel','pointerleave'].forEach(type=>$('#classConfirmButton').addEventListener(type,()=>{cancelHold('class-confirm');$('#classConfirmFill').style.width='0%'}));
@@ -2563,7 +2585,7 @@
     updateClock();checkClockIntegrity();
     const currentDate=S.dateKey();if(currentDate!==advancedSyncDate){advancedSyncDate=currentDate;synchronizeAdvancedSystems();if(state.timezone?.pending&&!timezonePromptShown)setTimeout(showTimezoneOverlay,120)}
     if(state.initialized&&state.integrity?.clockStatus==='trusted'&&Date.now()-integrityHeartbeatAt>=60000){integrityHeartbeatAt=Date.now();state.integrity.lastWallTime=new Date().toISOString();S.save(state)}
-    if(orientationBlocked||holdSession||transitionLocked||!$('#scheduleOverlay').hidden||!$('#developerRunOverlay').hidden||state.system.safeMode)return;renderApp();
+    if(orientationBlocked||holdSession||transitionLocked||customFormEditing||!$('#scheduleOverlay').hidden||!$('#developerRunOverlay').hidden||state.system.safeMode)return;renderApp();
   };
   const emergencyBoot=beginBootGuard();
   synchronizeAdvancedSystems();advancedSyncDate=S.dateKey();applySafeMode();
