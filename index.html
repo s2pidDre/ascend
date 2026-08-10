@@ -273,7 +273,7 @@
       <div class="result-seal" id="resultSeal" hidden>PERFECT CLEAR</div>
 
       <div class="result-grid">
-        <div><span>Protocols</span><strong id="resultProtocols">5/5</strong></div>
+        <div><span>Protocols</span><strong id="resultProtocols">—</strong></div>
         <div><span>On time</span><strong id="resultOnTime">100%</strong></div>
         <div><span>XP earned</span><strong id="resultXp">0</strong></div>
         <div><span>Level · Rank</span><strong id="resultLevel">1 · E</strong></div>
@@ -417,26 +417,25 @@
         <button class="ghost-button" id="attendanceBack" type="button">Back</button>
       </section>
 
-      <section class="system-integrity-view" id="systemIntegrityView" hidden>
+      <section class="system-reliability-view" id="systemReliabilityView" hidden>
         <div class="config-sigil glyph-frame" aria-hidden="true"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-shield"></use></svg></div>
         <p class="eyebrow">SYSTEM RELIABILITY</p>
-        <h2>Integrity & Alerts</h2>
-        <div class="integrity-summary">
-          <div><span>CLOCK</span><strong id="integrityClockStatus">TRUSTED</strong></div>
-          <div><span>STORAGE</span><strong id="integrityStorageStatus">CHECKING</strong></div>
-          <div><span>SNAPSHOTS</span><strong id="integritySnapshotCount">0 / 7</strong></div>
-          <div><span>ALERTS</span><strong id="integrityNotificationStatus">OFF</strong></div>
+        <h2>Snapshots & Alerts</h2>
+        <div class="reliability-summary">
+          <div><span>TIMEZONE</span><strong id="reliabilityTimezoneStatus">LOCAL</strong></div>
+          <div><span>STORAGE</span><strong id="reliabilityStorageStatus">CHECKING</strong></div>
+          <div><span>SNAPSHOTS</span><strong id="reliabilitySnapshotCount">0 / 7</strong></div>
+          <div><span>ALERTS</span><strong id="reliabilityNotificationStatus">OFF</strong></div>
         </div>
-        <p class="integrity-copy" id="integrityCopy">Timeline checks and automatic recovery are active.</p>
-        <div class="integrity-actions">
-          <button class="danger-button" id="verifyClock" type="button" hidden><b>Verify Current Device Time</b></button>
+        <p class="reliability-copy" id="reliabilityCopy">Local recovery snapshots and alerts are available offline.</p>
+        <div class="reliability-actions">
           <button class="ghost-button" id="reviewTimezone" type="button">Review Timezone</button>
           <button class="system-button compact-button" id="toggleNotifications" type="button"><b>Enable Local Alerts</b></button>
           <button class="system-button compact-button secondary-system-button" id="toggleWakeLock" type="button"><b>Keep Screen Awake: On</b></button>
-          <button class="ghost-button" id="createIntegritySnapshot" type="button">Create Recovery Snapshot</button>
+          <button class="ghost-button" id="createRecoverySnapshot" type="button">Create Recovery Snapshot</button>
           <button class="ghost-button" id="restoreLatestSnapshot" type="button">Restore Latest Snapshot</button>
         </div>
-        <button class="ghost-button" id="systemIntegrityBack" type="button">Back</button>
+        <button class="ghost-button" id="systemReliabilityBack" type="button">Back</button>
       </section>
 
       <section class="schedule-exceptions-view" id="scheduleExceptionsView" hidden>
@@ -501,7 +500,7 @@
 
       <section class="conflict-scan-view" id="conflictScanView" hidden>
         <div class="config-sigil glyph-frame" aria-hidden="true"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-shield"></use></svg></div>
-        <p class="eyebrow">ACADEMIC INTEGRITY SCAN</p>
+        <p class="eyebrow">ACADEMIC CONFLICT SCAN</p>
         <h2>Conflict Detector</h2>
         <div class="conflict-summary" id="conflictSummary">
           <div><span>STATUS</span><strong>NOT SCANNED</strong></div>
@@ -520,7 +519,6 @@
         <p class="schedule-hint">Advanced reliability, testing, and recovery tools remain isolated from the main interface.</p>
         <div class="advanced-action-grid">
           <button type="button" data-advanced-view="updatesRollbackView"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-rollback"></use></svg><span>Updates & Rollback</span></button>
-          <button type="button" data-advanced-view="systemIntegrityView"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-timezone"></use></svg><span>Time Integrity</span></button>
           <button type="button" data-advanced-view="diagnosticsView"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-diagnostic"></use></svg><span>Diagnostics</span></button>
           <button type="button" data-advanced-view="externalRemindersView"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-bell"></use></svg><span>External Reminders</span></button>
           <button type="button" data-advanced-view="developerTestView" class="developer-entry"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-lab"></use></svg><span>Developer Test</span></button>
@@ -598,7 +596,7 @@
         <div class="recovery-system-summary" id="recoverySystemSummary"></div>
         <div class="control-actions">
           <button class="system-button compact-button" id="openDataBackup" type="button"><b>Backup & Restore</b></button>
-          <button class="system-button compact-button secondary-system-button" id="openSystemIntegrity" type="button"><b>Snapshots & Alerts</b></button>
+          <button class="system-button compact-button secondary-system-button" id="openSystemReliability" type="button"><b>Snapshots & Alerts</b></button>
           <button class="ghost-button" id="toggleSafeMode" type="button">Emergency Safe Mode</button>
           <button class="ghost-button" id="openEmergencyRecovery" type="button">Open Emergency Recovery</button>
         </div>
@@ -771,11 +769,11 @@
     <div class="timezone-panel system-panel">
       <div class="config-sigil glyph-frame" aria-hidden="true"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-timezone"></use></svg></div>
       <p class="eyebrow">TIMEZONE CHANGE DETECTED</p>
-      <h2>Confirm Timeline</h2>
+      <h2>Confirm Timezone</h2>
       <div class="timezone-comparison" id="timezoneComparison"></div>
       <p>Existing records keep their original timeline. Only future schedules follow the confirmed timezone.</p>
-      <button class="system-button compact-button" id="confirmTimezoneTravel" type="button"><b>Confirm Travel / Timezone Change</b></button>
-      <button class="danger-button" id="flagTimezoneClock" type="button"><b>This Was Not Travel</b></button>
+      <button class="system-button compact-button" id="confirmTimezoneTravel" type="button"><b>Use New Timezone</b></button>
+      <button class="ghost-button" id="keepPreviousTimezone" type="button"><b>Keep Previous Timezone</b></button>
       <button class="ghost-button" id="closeTimezoneOverlay" type="button">Close</button>
     </div>
   </div>

@@ -2056,20 +2056,20 @@ body.orientation-blocked .orientation-guard{visibility:visible!important}
 .sleep-lower{justify-content:center}
 
 /* Reliability, recovery, alerts, and one-day schedule exceptions. */
-.control-home-view,.academic-home-view,.profile-view,.attendance-view,.system-integrity-view,.schedule-exceptions-view,.data-backup-view,.schedule-overview-view,.schedule-edit-view{
+.control-home-view,.academic-home-view,.profile-view,.attendance-view,.system-reliability-view,.schedule-exceptions-view,.data-backup-view,.schedule-overview-view,.schedule-edit-view{
   display:flex;
   min-height:0;
   flex:1;
   flex-direction:column;
   gap:8px;
 }
-.system-integrity-view,.schedule-exceptions-view{justify-content:center}
-.integrity-summary{
+.system-reliability-view,.schedule-exceptions-view{justify-content:center}
+.reliability-summary{
   display:grid;
   grid-template-columns:1fr 1fr;
   gap:6px;
 }
-.integrity-summary>div{
+.reliability-summary>div{
   min-width:0;
   display:grid;
   gap:3px;
@@ -2077,14 +2077,14 @@ body.orientation-blocked .orientation-guard{visibility:visible!important}
   border:1px solid rgba(75,199,255,.2);
   background:rgba(3,13,31,.72);
 }
-.integrity-summary span{font-size:.46rem;letter-spacing:.11em;color:#6e88a6}
-.integrity-summary strong{font-size:.68rem;color:#e0f7ff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.reliability-summary span{font-size:.46rem;letter-spacing:.11em;color:#6e88a6}
+.reliability-summary strong{font-size:.68rem;color:#e0f7ff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .critical-text{color:var(--red)!important;text-shadow:0 0 10px rgba(255,83,108,.22)}
-.integrity-copy{margin:0;padding:7px 8px;border-left:2px solid rgba(75,199,255,.46);background:rgba(5,20,43,.54);color:#7994b2;font-size:.55rem;line-height:1.28;text-align:left}
-.integrity-actions{display:grid;grid-template-columns:1fr 1fr;gap:6px}
-.integrity-actions .danger-button,.integrity-actions .ghost-button{min-height:36px;font-size:.51rem;padding:5px 6px}
-.integrity-actions .danger-button{grid-column:1/-1}
-.integrity-actions .system-button{min-height:38px;font-size:.51rem;padding:5px 6px}
+.reliability-copy{margin:0;padding:7px 8px;border-left:2px solid rgba(75,199,255,.46);background:rgba(5,20,43,.54);color:#7994b2;font-size:.55rem;line-height:1.28;text-align:left}
+.reliability-actions{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.reliability-actions .danger-button,.reliability-actions .ghost-button{min-height:36px;font-size:.51rem;padding:5px 6px}
+.reliability-actions .danger-button{grid-column:1/-1}
+.reliability-actions .system-button{min-height:38px;font-size:.51rem;padding:5px 6px}
 .snapshot-strip{
   display:grid;
   gap:2px;
@@ -2152,10 +2152,10 @@ body.orientation-blocked .orientation-guard{visibility:visible!important}
 body.orientation-blocked .recovery-overlay{display:none!important}
 
 @media(max-height:760px){
-  .system-integrity-view,.schedule-exceptions-view{gap:5px}
-  .integrity-summary>div{padding:6px}
-  .integrity-actions{gap:4px}
-  .integrity-actions .system-button,.integrity-actions .danger-button,.integrity-actions .ghost-button{min-height:32px}
+  .system-reliability-view,.schedule-exceptions-view{gap:5px}
+  .reliability-summary>div{padding:6px}
+  .reliability-actions{gap:4px}
+  .reliability-actions .system-button,.reliability-actions .danger-button,.reliability-actions .ghost-button{min-height:32px}
   .exception-form{gap:4px}
   .exception-form input,.exception-form select{height:29px}
   .exception-record{min-height:47px;padding:6px}
@@ -2163,22 +2163,22 @@ body.orientation-blocked .recovery-overlay{display:none!important}
   .recovery-panel select{height:34px}
 }
 @media(max-height:620px){
-  .integrity-copy,.snapshot-strip small,.recovery-protection small{display:none}
-  .integrity-summary>div{padding:4px 5px}
-  .integrity-actions .system-button,.integrity-actions .danger-button,.integrity-actions .ghost-button{min-height:29px}
+  .reliability-copy,.snapshot-strip small,.recovery-protection small{display:none}
+  .reliability-summary>div{padding:4px 5px}
+  .reliability-actions .system-button,.reliability-actions .danger-button,.reliability-actions .ghost-button{min-height:29px}
   .exception-note-field{display:none!important}
   .recovery-panel>p:not(.eyebrow){font-size:.56rem}
   .recovery-protection{padding:5px}
 }
 @media(max-width:390px){
-  .integrity-actions{grid-template-columns:1fr}
-  .integrity-actions .danger-button{grid-column:auto}
+  .reliability-actions{grid-template-columns:1fr}
+  .reliability-actions .danger-button{grid-column:auto}
   .exception-form{grid-template-columns:1fr 1fr}
 }
 
 /* Hidden progression, task automation, safe updates, and recovery controls. */
 .schedule-panel{position:relative}
-.control-home-view,.academic-home-view,.profile-view,.attendance-view,.system-integrity-view,.schedule-exceptions-view,.data-backup-view,.academic-tasks-view,.conflict-scan-view,.advanced-system-home-view,.updates-rollback-view,.diagnostics-view,.external-reminders-view,.developer-test-view,.recovery-system-view,.schedule-overview-view,.schedule-edit-view{
+.control-home-view,.academic-home-view,.profile-view,.attendance-view,.system-reliability-view,.schedule-exceptions-view,.data-backup-view,.academic-tasks-view,.conflict-scan-view,.advanced-system-home-view,.updates-rollback-view,.diagnostics-view,.external-reminders-view,.developer-test-view,.recovery-system-view,.schedule-overview-view,.schedule-edit-view{
   display:flex;min-height:0;flex:1;flex-direction:column;gap:8px;overflow:hidden;
 }
 .section-tabs.six{grid-template-columns:repeat(6,1fr)}
@@ -2227,7 +2227,7 @@ body.safe-mode::before,body.safe-mode .energy-field,body.safe-mode .system-grid{
 body.orientation-blocked .modal-overlay{display:none!important}
 
 @media(max-height:760px){
-  .control-home-view,.academic-home-view,.profile-view,.attendance-view,.system-integrity-view,.schedule-exceptions-view,.data-backup-view,.academic-tasks-view,.conflict-scan-view,.advanced-system-home-view,.updates-rollback-view,.diagnostics-view,.external-reminders-view,.developer-test-view,.recovery-system-view,.schedule-overview-view,.schedule-edit-view{gap:5px}
+  .control-home-view,.academic-home-view,.profile-view,.attendance-view,.system-reliability-view,.schedule-exceptions-view,.data-backup-view,.academic-tasks-view,.conflict-scan-view,.advanced-system-home-view,.updates-rollback-view,.diagnostics-view,.external-reminders-view,.developer-test-view,.recovery-system-view,.schedule-overview-view,.schedule-edit-view{gap:5px}
   .advanced-shield-button{top:8px;right:8px;width:30px;height:30px;padding:6px}.advanced-action-grid>button{min-height:52px;padding:6px 8px}.advanced-action-grid>button:last-child{min-height:40px}
   .manager-form{padding:5px;gap:4px}.manager-form input,.manager-form select,.dependency-form select,.test-form select{height:28px}.weekday-field select{height:38px}.manager-record{padding:7px}.manager-record-actions button{min-height:28px}
   .diagnostic-row{padding:6px}.timezone-panel,.emergency-recovery-panel{padding:11px;gap:6px}

@@ -40,19 +40,13 @@
   let launchDismissed=false;
   let orientationBlocked=false;
   let exceptionUi={index:0};
-  let clockBaseline={wall:Date.now(),mono:performance.now()};
-  let clockAlertShown=false;
   let notificationSweepAt=0;
   let storageCheckAt=0;
-  let integrityHeartbeatAt=0;
   let advancedSyncDate='';
   let bootCompletionTimer=null;
   let timezonePromptShown=false;
   let customFormEditing=false;
   const BOOT_GUARD_KEY='ascend_boot_guard_v1';
-  // Temporary: keep integrity diagnostics active, but do not block progression rewards.
-  const INTEGRITY_REWARD_HOLD_ENABLED=false;
-  const rewardHoldActive=()=>INTEGRITY_REWARD_HOLD_ENABLED&&Boolean(state.integrity?.rewardHold);
 
   const $=selector=>document.querySelector(selector);
   const glyphNames=new Set(['apex','signal','sleep','wake','confirm','reset','water','shine','stretch','bath','meal','list','work','grid','trade','close','next','academic','success','failure','profile','data','lock','chevron-left','chevron-right','emergency','update','offline','save','shield','bell','calendar','recovery','clock','attribute','quest','skill','lab','diagnostic','timezone','rollback','recurring','dependency','weekly']);
@@ -95,7 +89,7 @@
     if(screen){void screen.offsetWidth;screen.classList.add('screen-enter')}
     activeScreenId=id;
   };
-  const noticeGlyphs={save:'save',backup:'data',restore:'confirm',offline:'offline',online:'signal',update:'update',installed:'success',integrity:'shield',snapshot:'data',alert:'bell',recovery:'recovery'};
+  const noticeGlyphs={save:'save',backup:'data',restore:'confirm',offline:'offline',online:'signal',update:'update',installed:'success',snapshot:'data',alert:'bell',recovery:'recovery',diagnostic:'diagnostic'};
   const showSystemNotice=(kind,title,copy,duration=2300)=>{
     const notice=$('#systemNotice');if(!notice)return;
     clearTimeout(noticeTimer);clearTimeout(noticeHideTimer);
@@ -113,7 +107,7 @@
       lastSaveNoticeAt=now;showSystemNotice('save','LOCAL DATA SAVED','Device record synchronized.',1500);
     },520);
   };
-  const save=(options={})=>{reconcileStateMachine();if(state.integrity?.clockStatus==='trusted')state.integrity.lastWallTime=new Date().toISOString();const saved=S.save(state);if(!options.silent)queueSaveNotice();return saved};
+  const save=(options={})=>{reconcileStateMachine();const saved=S.save(state);if(!options.silent)queueSaveNotice();return saved};
   const dismissLaunchSplash=()=>{
     const splash=$('#launchSplash');if(!splash||launchDismissed)return;
     const delay=Math.max(0,430-performance.now());
@@ -127,7 +121,6 @@
     if(orientationBlocked){cancelHold();releaseWakeLock()}else if(activeProtocolRecord())requestWakeLock();
   };
   const currentKey=()=>S.dateKey(new Date());
-  const requiredProtocolCount=5;
   const protocolTransitions={pending:new Set(['active','failed']),active:new Set(['cleared','failed']),cleared:new Set(),failed:new Set()};
   const stepTransitions={pending:new Set(['active','completed']),active:new Set(['completed']),completed:new Set()};
   const transitionProtocol=(protocol,next,meta={})=>{
@@ -161,23 +154,6 @@
     });
   };
   const recordMoment=(record,time)=>new Date(`${record.date}T${time}:00`);
-  const flagClockIntegrity=(reason,delta=0)=>{
-    state.integrity=state.integrity||{};
-    if(state.integrity.clockStatus==='flagged')return;
-    state.integrity.clockStatus='flagged';state.integrity.rewardHold=INTEGRITY_REWARD_HOLD_ENABLED;state.integrity.lastFlag={at:new Date().toISOString(),reason,delta:Math.round(delta)};
-    state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'integrity',message:`Clock integrity flagged: ${reason}. Reward hold is temporarily disabled.`});
-    S.save(state);
-    if(!clockAlertShown){clockAlertShown=true;showSystemNotice('integrity','TIME CHECK FLAGGED','Integrity monitoring remains active, but progression rewards continue normally.',3000)}
-  };
-  const checkClockIntegrity=()=>{
-    const now=Date.now(),expected=clockBaseline.wall+(performance.now()-clockBaseline.mono),drift=now-expected;
-    if(Math.abs(drift)>180000){flagClockIntegrity(drift<0?'Device clock moved backward during this session.':'Device clock jumped forward during this session.',drift);clockBaseline={wall:now,mono:performance.now()}}
-    const last=state.integrity?.lastWallTime?new Date(state.integrity.lastWallTime).getTime():0;
-    if(last&&now<last-120000)flagClockIntegrity('Current device time is earlier than the last trusted checkpoint.',now-last);
-    return state.integrity?.clockStatus!=='flagged';
-  };
-
-
   const stages=[
     {max:10,name:'COMPLIANCE'},
     {max:20,name:'CONSISTENCY'},
@@ -194,7 +170,7 @@
     const currentIndex=rankOrder.indexOf(currentRank||'E');
     return [...rankThresholds].reverse().find(item=>level>=item.level&&rankOrder.indexOf(item.rank)>currentIndex)?.rank||null;
   };
-  const focusIntegrity=protocol=>clamp(100-(protocol?.focusBreaches||0)*10-Math.floor((protocol?.hiddenMilliseconds||0)/300000)*2,50,100);
+  const focusScore=protocol=>clamp(100-(protocol?.focusBreaches||0)*10-Math.floor((protocol?.hiddenMilliseconds||0)/300000)*2,50,100);
   const isWeeklyBossDate=date=>date.getDay()===6;
   const variants=(...copy)=>copy;
 
@@ -220,6 +196,17 @@
         {id:'breakfast-eat',title:'Eat a proper breakfast',copy:variants('Finish the prepared meal. Do not intentionally skip it.','Complete the full morning meal.'),icon:'meal',type:'hold'},
         {id:'breakfast-water',title:'Drink one glass of water',copy:variants('Complete morning hydration with the meal.','Drink one full glass of water.'),icon:'water',type:'hold'},
         {id:'breakfast-quality',title:'Confirm nutrition standard',copy:variants('Confirm that the meal included protein and enough food to support healthy weight gain.','Protein and sufficient food are required.'),icon:'success',type:'tap'}
+      ]
+    },
+    {
+      id:'workout',short:'WORKOUT',name:'Workout Protocol',icon:'stretch',start:'08:00',end:'09:00',xp:150,
+      prep:'Prepare your training space after breakfast. The Workout Dungeon is active only on Tuesday, Wednesday, Friday, and Saturday when no class window conflicts.',
+      subtasks:()=>[
+        {id:'workout-prepare',title:'Prepare',copy:variants('Change into training clothes, prepare water, and make the workout space ready.','Prepare your body, water, and training area before entering the dungeon.'),icon:'list',type:'hold'},
+        {id:'workout-enter',title:'Enter Dungeon',copy:variants('Start the workout only when you are ready to train without unnecessary delay.','Enter the Workout Dungeon and begin the session.'),icon:'confirm',type:'tap'},
+        {id:'workout-dungeon',title:'Workout Dungeon',copy:variants('Train for at least fifteen minutes. End the dungeon whenever the workout is actually finished; forty-five minutes is the recommended upper target.','Complete a real 15–45 minute training session. Duration beyond fifteen minutes does not increase XP.'),icon:'stretch',type:'workout',minDuration:15,recommendedMax:45},
+        {id:'workout-cooldown',title:'5-Minute Cooldown Dungeon',copy:variants('Recover, hydrate, breathe, and stretch for five minutes.','Complete five minutes of controlled cooldown before final confirmation.'),icon:'water',type:'timer',duration:5,autoComplete:true},
+        {id:'workout-confirm',title:'Confirm Done',copy:variants('Confirm the workout and cooldown are complete.','Finish the Workout Protocol and record the clear.'),icon:'success',type:'tap'}
       ]
     },
     {
@@ -264,6 +251,43 @@
   };
   const subjectKey=value=>String(value||'').trim().toLowerCase();
   const activeSchedule=()=>state.classSchedule.filter(entry=>entry.active!==false);
+  const WORKOUT_DAYS=new Set([2,3,5,6]);
+  const effectiveScheduleForDate=date=>{
+    const key=S.dateKey(date),exceptions=(state.scheduleExceptions||[]).filter(item=>item.active!==false&&item.date===key);
+    if(exceptions.some(item=>item.type==='no-classes'))return[];
+    let entries=activeSchedule().filter(entry=>Number(entry.day)===date.getDay()).map(entry=>({...entry}));
+    exceptions.forEach(exception=>{
+      if(exception.type==='cancel')entries=entries.filter(entry=>entry.id!==exception.classId);
+      if(['reschedule','special'].includes(exception.type))entries=entries.map(entry=>entry.id===exception.classId?{...entry,start:exception.start||entry.start,end:exception.end||entry.end,exceptionType:exception.type}:entry);
+    });
+    return entries.sort((a,b)=>minutes(a.start)-minutes(b.start));
+  };
+  const workoutHasClassConflict=date=>effectiveScheduleForDate(date).some(entry=>{
+    const classPriorityStart=minutes(entry.start)-15;
+    return classPriorityStart<minutes('09:00')&&minutes(entry.end)>minutes('08:00');
+  });
+  const protocolEligibleForDate=(config,date)=>config.id!=='workout'||(WORKOUT_DAYS.has(date.getDay())&&!workoutHasClassConflict(date));
+  const protocolConfigsForDate=date=>protocolBlueprints.filter(config=>protocolEligibleForDate(config,date));
+  const protocolConfigsForRecord=record=>protocolBlueprints.filter(config=>Boolean(record?.protocols?.[config.id]));
+  const requiredProtocolCountForRecord=record=>Object.keys(record?.protocols||{}).length;
+  const makeProtocolState=(config,weeklyBoss=false)=>({
+    id:config.id,name:config.name,start:config.start,end:config.end,xp:config.xp,
+    status:'pending',steps:config.subtasks(state.player.level).map(step=>({...step,status:'pending',startedAt:null,completedAt:null})),startedAt:null,completedAt:null,earnedXp:0,focusBreaches:0,hiddenMilliseconds:0,
+    boss:weeklyBoss&&config.id==='productivity',resolutionKey:null
+  });
+  const syncConditionalProtocols=(record,now=new Date())=>{
+    if(!record||record.status!=='active'||record.date!==S.dateKey(now))return false;
+    const workout=record.protocols?.workout,eligible=protocolEligibleForDate(blueprint('workout'),now);let changed=false;
+    if(workout&&!eligible&&['pending','active'].includes(workout.status)){
+      delete record.protocols.workout;record.completedProtocols=Object.values(record.protocols).filter(item=>item.status==='cleared').length;record.failedProtocols=Object.values(record.protocols).filter(item=>item.status==='failed').length;changed=true;
+      state.logs.push({id:S.uid('log'),at:now.toISOString(),type:'schedule',message:'Workout Protocol suppressed because a class window takes priority.'});
+    }
+    if(!record.protocols?.workout&&eligible&&todayMinutes(now)<minutes('08:00')){
+      record.protocols.workout=makeProtocolState(blueprint('workout'),record.weeklyBoss);changed=true;
+      state.logs.push({id:S.uid('log'),at:now.toISOString(),type:'protocol',message:'Workout Protocol added to today’s Tuesday/Wednesday/Friday/Saturday sequence.'});
+    }
+    return changed;
+  };
   const linkedSubjects=()=>{
     const seen=new Set();
     return activeSchedule().filter(entry=>{
@@ -320,19 +344,12 @@
     const weeklyBoss=isWeeklyBossDate(date);
     const weeklyBossPlan=weeklyBoss?buildWeeklyBossPlan(date):null;
     const rankTrialPlan=state.player.pendingRank?rankTrialPlanFor(state.player.pendingRank):null;
-    protocolBlueprints.forEach(config=>{
-      const steps=config.subtasks(state.player.level).map(step=>({...step,status:'pending',startedAt:null,completedAt:null}));
-      protocols[config.id]={
-        id:config.id,name:config.name,start:config.start,end:config.end,xp:config.xp,
-        status:'pending',steps,startedAt:null,completedAt:null,earnedXp:0,focusBreaches:0,hiddenMilliseconds:0,
-        boss:weeklyBoss&&config.id==='productivity',resolutionKey:null
-      };
-    });
+    protocolConfigsForDate(date).forEach(config=>{protocols[config.id]=makeProtocolState(config,weeklyBoss)});
     const record={
       date:key,status:'active',createdAt:new Date().toISOString(),protocols,completedProtocols:0,failedProtocols:0,
       wakeCheckInAt:null,wakeStatus:null,totalXp:0,onTimePercentage:0,automaticReward:null,
       weeklyBoss,weeklyBossPlan,weeklyBossCleared:false,perfectClear:false,rankTrialActive:Boolean(rankTrialPlan),rankTrialPlan,rankAdvanced:false,rankTrialFailed:false,
-      rewardApplied:false,heldXp:0,integrityStatus:state.integrity?.clockStatus||'trusted',
+      rewardApplied:false,
       timezone:{name:state.timezone?.name||S.timezoneName(),offset:state.timezone?.offset??S.timezoneOffset()}
     };
     state.dayRecords[key]=record;
@@ -380,56 +397,50 @@
   };
 
   const calculateProtocolXp=(record,protocol)=>{
-    const integrity=focusIntegrity(protocol);
+    const focus=focusScore(protocol);
     const lateFactor=protocolOnTime(record,protocol)?1:.85;
-    return Math.round(protocol.xp*(integrity/100)*lateFactor*(protocol.boss?1.35:1));
+    return Math.round(protocol.xp*(focus/100)*lateFactor*(protocol.boss?1.35:1));
   };
   const creditProtocolProfileXp=(protocol,when=new Date())=>{
     if(!protocol||protocol.status!=='cleared')return 0;
     const target=Math.max(0,Number(protocol.earnedXp||0)),applied=Math.max(0,Number(protocol.profileXpAppliedAmount||0)),delta=Math.max(0,target-applied);
-    if(!delta){protocol.profileXpHeld=0;return 0}
-    if(rewardHoldActive()){protocol.profileXpHeld=delta;return 0}
-    state.player.totalXp=Math.max(0,Number(state.player.totalXp||0)+delta);protocol.profileXpAppliedAmount=target;protocol.profileXpAppliedAt=when.toISOString();protocol.profileXpHeld=0;return delta;
+    if(!delta)return 0;
+    state.player.totalXp=Math.max(0,Number(state.player.totalXp||0)+delta);protocol.profileXpAppliedAmount=target;protocol.profileXpAppliedAt=when.toISOString();return delta;
   };
   const syncAttendanceProfileXp=(record,when=new Date())=>{
     if(!record)return 0;
     const target=record.finalized?Math.max(0,Number(record.xpAwarded||0)):0,applied=Math.max(0,Number(record.profileXpAppliedAmount||0)),delta=target-applied;
-    if(delta>0&&rewardHoldActive()){record.profileXpHeld=delta;return 0}
-    if(!delta){record.profileXpHeld=0;return 0}
-    state.player.totalXp=Math.max(0,Number(state.player.totalXp||0)+delta);record.profileXpAppliedAmount=target;record.profileXpAppliedAt=when.toISOString();record.profileXpHeld=0;return delta;
+    if(!delta)return 0;
+    state.player.totalXp=Math.max(0,Number(state.player.totalXp||0)+delta);record.profileXpAppliedAmount=target;record.profileXpAppliedAt=when.toISOString();return delta;
   };
-  const PROFILE_XP_RECONCILIATION_VERSION=54;
+  const PROFILE_XP_RECONCILIATION_VERSION=55;
   const reconcileCurrentDayProfileXp=()=>{
     state.system=state.system||{};
     const previous=state.system.profileXpReconciliation||{};
     if(Number(previous.version||0)>=PROFILE_XP_RECONCILIATION_VERSION)return 0;
     const now=new Date(),date=S.dateKey(now),day=state.dayRecords?.[date];
-    let repairedMarkers=0,directiveXp=0,attendanceXp=0,heldXp=0;
+    let repairedMarkers=0,directiveXp=0,attendanceXp=0;
     if(day){
       const legacyWholeDayPaid=day.status==='cleared'&&Boolean(day.rewardApplied);
       Object.values(day.protocols||{}).forEach(protocol=>{
         if(protocol?.status!=='cleared')return;
         const target=Math.max(0,Number(protocol.earnedXp||0));if(!target)return;
         const applied=Math.max(0,Number(protocol.profileXpAppliedAmount||0));
-        const hasDirectCreditProof=Boolean(protocol.profileXpAppliedAt);
-        if(applied>=target&&!hasDirectCreditProof&&!legacyWholeDayPaid){protocol.profileXpAppliedAmount=0;protocol.profileXpHeld=0;repairedMarkers+=1}
+        if(applied>=target&&!protocol.profileXpAppliedAt&&!legacyWholeDayPaid){protocol.profileXpAppliedAmount=0;repairedMarkers+=1}
         directiveXp+=creditProtocolProfileXp(protocol,now);
-        heldXp+=Math.max(0,Number(protocol.profileXpHeld||0));
       });
     }
     state.attendanceRecords.filter(record=>record?.scheduledDate===date&&record.finalized).forEach(record=>{
       const target=Math.max(0,Number(record.xpAwarded||0));if(!target)return;
       const applied=Math.max(0,Number(record.profileXpAppliedAmount||0));
-      if(applied>=target&&!record.profileXpAppliedAt){record.profileXpAppliedAmount=0;record.profileXpHeld=0;repairedMarkers+=1}
+      if(applied>=target&&!record.profileXpAppliedAt){record.profileXpAppliedAmount=0;repairedMarkers+=1}
       attendanceXp+=syncAttendanceProfileXp(record,now);
-      heldXp+=Math.max(0,Number(record.profileXpHeld||0));
     });
     const recovered=directiveXp+attendanceXp;
-    state.system.profileXpReconciliation={version:PROFILE_XP_RECONCILIATION_VERSION,completedAt:now.toISOString(),date,repairedMarkers,recoveredDirectiveXp:directiveXp,recoveredAttendanceXp:attendanceXp,status:heldXp>0?'held':'complete'};
-    state.logs.push({id:S.uid('log'),at:now.toISOString(),type:'migration',message:`Profile XP reconciliation completed for ${date}.${repairedMarkers?` ${repairedMarkers} unproven legacy XP marker${repairedMarkers===1?'':'s'} repaired.`:''}${recovered?` ${recovered} XP added to Profile.`:''}${heldXp?` ${heldXp} XP remains held pending time verification.`:''}`});
+    state.system.profileXpReconciliation={version:PROFILE_XP_RECONCILIATION_VERSION,completedAt:now.toISOString(),date,repairedMarkers,recoveredDirectiveXp:directiveXp,recoveredAttendanceXp:attendanceXp,status:'complete'};
+    state.logs.push({id:S.uid('log'),at:now.toISOString(),type:'migration',message:`Profile XP reconciliation completed for ${date}.${repairedMarkers?` ${repairedMarkers} unproven legacy XP marker${repairedMarkers===1?'':'s'} repaired.`:''}${recovered?` ${recovered} XP added to Profile.`:''}`});
     save({silent:true});
-    if(recovered&&!rewardHoldActive())setTimeout(()=>showSystemNotice('restore','PROFILE XP RECOVERED',`+${recovered} XP synchronized from today.`,2800),250);
-    else if(heldXp)setTimeout(()=>showSystemNotice('integrity','XP FOUND · REWARD HOLD',`${heldXp} XP will release after device time is verified.`,3200),250);
+    if(recovered)setTimeout(()=>showSystemNotice('restore','PROFILE XP RECOVERED',`+${recovered} XP synchronized from today.`,2800),250);
     return recovered;
   };
   const pendingProfileXp=()=>Object.values(state.dayRecords||{}).some(day=>Object.values(day.protocols||{}).some(protocol=>protocol?.status==='cleared'&&Number(protocol.earnedXp||0)>Number(protocol.profileXpAppliedAmount||0)))||state.attendanceRecords.some(record=>(record.finalized?Number(record.xpAwarded||0):0)!==Number(record.profileXpAppliedAmount||0));
@@ -445,7 +456,7 @@
     const completedAt=new Date().toISOString();if(!transitionProtocol(protocol,'cleared',{at:completedAt}))return;protocol.completedAt=completedAt;protocol.resolutionKey=protocol.resolutionKey||`${record.date}:${protocol.id}:cleared`;protocol.earnedXp=calculateProtocolXp(record,protocol);
     record.completedProtocols+=1;
     const creditedXp=creditProtocolProfileXp(protocol,new Date(completedAt));
-    state.logs.push({id:S.uid('log'),at:protocol.completedAt,type:'clear',message:`${protocol.name} cleared for ${protocol.earnedXp} XP${creditedXp?' · added to Profile':rewardHoldActive()?' · held pending time verification':''}.`});
+    state.logs.push({id:S.uid('log'),at:protocol.completedAt,type:'clear',message:`${protocol.name} cleared for ${protocol.earnedXp} XP${creditedXp?' · added to Profile':''}.`});
     save();
     const config=blueprint(protocol.id);
     show('protocolResultScreen');
@@ -475,7 +486,7 @@
   const evaluateDeadlines=(record,now=new Date())=>{
     if(!record||record.status!=='active')return;
     let failed=0;
-    protocolBlueprints.forEach(config=>{
+    protocolConfigsForRecord(record).forEach(config=>{
       const protocol=record.protocols[config.id];
       if(!protocol||['cleared','failed'].includes(protocol.status))return;
       if(now>=recordMoment(record,config.end)&&failProtocol(record,protocol,'The fixed deadline passed before every subtask was completed.',true,{defer:true}))failed+=1;
@@ -485,8 +496,8 @@
 
   const calculateOnTimePercentage=record=>{
     let onTime=0;
-    protocolBlueprints.forEach(config=>{if(protocolOnTime(record,record.protocols[config.id]))onTime+=1});
-    return Math.round(onTime/protocolBlueprints.length*100);
+    const configs=protocolConfigsForRecord(record);configs.forEach(config=>{if(protocolOnTime(record,record.protocols[config.id]))onTime+=1});
+    return configs.length?Math.round(onTime/configs.length*100):0;
   };
 
   const chooseReward=record=>{
@@ -502,7 +513,7 @@
     Object.values(record.protocols).forEach(protocol=>creditProtocolProfileXp(protocol,now));
     state.player.streak+=1;state.player.bestStreak=Math.max(state.player.bestStreak,state.player.streak);
     state.player.totalClearDays+=1;state.player.levelClearDays+=1;state.player.failureScar=false;
-    record.totalXp=xp;record.heldXp=0;record.rewardApplied=true;record.rewardReleasedAt=now.toISOString();
+    record.totalXp=xp;record.rewardApplied=true;record.rewardReleasedAt=now.toISOString();
     if(record.perfectClear){state.player.perfectClears=(state.player.perfectClears||0)+1;state.player.lastPerfectDate=record.date}
     if(record.rankTrialActive&&!record.rankTrialResolved){
       state.player.rankTrialAttempts=(state.player.rankTrialAttempts||0)+1;
@@ -510,6 +521,7 @@
       else record.rankTrialFailed=true;
       record.rankTrialResolved=true;
     }
+    const required=clearDaysRequired(state.player.level);
     if(state.player.level<state.player.maxLevel&&state.player.levelClearDays>=required){
       state.player.level+=1;state.player.levelClearDays=0;record.levelAdvanced=true;
       const target=eligibleRank(state.player.level,state.player.rank);if(target&&!state.player.pendingRank)state.player.pendingRank=target;
@@ -529,24 +541,14 @@
     if(record.rankTrialActive){record.rankTrialFailed=true;record.rankTrialResolved=true;state.player.rankTrialAttempts=(state.player.rankTrialAttempts||0)+1}
     armRecoveryProtocol(record);
   };
-  const releaseHeldRewards=()=>{
-    if(rewardHoldActive())return 0;
+  const syncOutstandingProfileXp=()=>{
     const now=new Date();let directiveXp=0,attendanceXp=0;
-    // A held Daily Clear from an older build may contain legacy "applied" markers without proof of an actual Profile credit.
-    // Reopen only those held/unreleased days before synchronization so XP cannot remain stranded.
-    Object.values(state.dayRecords||{}).forEach(day=>{
-      if(day?.status!=='cleared'||day.rewardApplied||!Number(day.heldXp||0))return;
-      Object.values(day.protocols||{}).forEach(protocol=>{
-        const target=Math.max(0,Number(protocol?.earnedXp||0)),applied=Math.max(0,Number(protocol?.profileXpAppliedAmount||0));
-        if(protocol?.status==='cleared'&&target>0&&applied>=target&&!protocol.profileXpAppliedAt){protocol.profileXpAppliedAmount=0;protocol.profileXpHeld=target}
-      });
-    });
     Object.values(state.dayRecords||{}).forEach(day=>Object.values(day.protocols||{}).forEach(protocol=>{directiveXp+=creditProtocolProfileXp(protocol,now)}));
     state.attendanceRecords.forEach(record=>{attendanceXp+=syncAttendanceProfileXp(record,now)});
-    const held=Object.values(state.dayRecords||{}).filter(day=>day.status==='cleared'&&!day.rewardApplied).sort((a,b)=>a.date.localeCompare(b.date));
-    held.forEach(day=>applyClearedDayRewards(day,now));
-    if(held.length||directiveXp||attendanceXp){state.logs.push({id:S.uid('log'),at:now.toISOString(),type:'integrity',message:`Profile XP synchronized${directiveXp?` · ${directiveXp} directive XP`:''}${attendanceXp?` · ${attendanceXp} attendance XP`:''}${held.length?` · ${held.length} day reward${held.length===1?'':'s'} released`:''}.`});save({silent:true})}
-    return held.length+directiveXp+attendanceXp;
+    const unreleased=Object.values(state.dayRecords||{}).filter(day=>day.status==='cleared'&&!day.rewardApplied).sort((a,b)=>a.date.localeCompare(b.date));
+    unreleased.forEach(day=>applyClearedDayRewards(day,now));
+    if(unreleased.length||directiveXp||attendanceXp){state.logs.push({id:S.uid('log'),at:now.toISOString(),type:'system',message:`Profile XP synchronized${directiveXp?` · ${directiveXp} directive XP`:''}${attendanceXp?` · ${attendanceXp} attendance XP`:''}${unreleased.length?` · ${unreleased.length} Daily Clear reward${unreleased.length===1?'':'s'} finalized`:''}.`});save({silent:true})}
+    return unreleased.length+directiveXp+attendanceXp;
   };
   const finalizeDay=(record,now=new Date(),force=false)=>{
     if(!record||record.status!=='active')return;
@@ -556,21 +558,17 @@
     Object.values(record.protocols).forEach(protocol=>{if(!['cleared','failed'].includes(protocol.status))failProtocol(record,protocol,'The daily cutoff was reached before completion.',false,{defer:true})});
     record.completedProtocols=Object.values(record.protocols).filter(protocol=>protocol.status==='cleared').length;
     record.failedProtocols=Object.values(record.protocols).filter(protocol=>protocol.status==='failed').length;
-    const cleared=record.failedProtocols===0&&record.completedProtocols===requiredProtocolCount;
+    const requiredCount=requiredProtocolCountForRecord(record),cleared=record.failedProtocols===0&&record.completedProtocols===requiredCount;
     record.status=cleared?'cleared':'failed';record.finalizedAt=now.toISOString();record.baseXp=Object.values(record.protocols).reduce((sum,protocol)=>sum+Number(protocol.earnedXp||0),0);
     record.onTimePercentage=calculateOnTimePercentage(record);
     const totalBreaches=Object.values(record.protocols).reduce((sum,protocol)=>sum+Number(protocol.focusBreaches||0),0);
     record.perfectClear=cleared&&record.onTimePercentage===100&&totalBreaches===0;
     record.weeklyBossCleared=evaluateWeeklyBoss(record,cleared,totalBreaches);
-    if(cleared){
-      if(rewardHoldActive()){record.heldXp=Object.values(record.protocols).reduce((sum,protocol)=>sum+Math.max(0,Number(protocol.earnedXp||0)-Number(protocol.profileXpAppliedAmount||0)),0);record.totalXp=0;record.integrityStatus='held'}
-      else applyClearedDayRewards(record,now);
-    }else applyFailedDayOutcome(record);
-    state.logs.push({id:S.uid('log'),at:now.toISOString(),type:record.status,message:`Day ${record.status}. ${record.completedProtocols}/${requiredProtocolCount} protocols cleared.${record.perfectClear?' Perfect Clear achieved.':''}${record.weeklyBossCleared?' Weekly Boss defeated.':''}`});
+    if(cleared)applyClearedDayRewards(record,now);else applyFailedDayOutcome(record);
+    state.logs.push({id:S.uid('log'),at:now.toISOString(),type:record.status,message:`Day ${record.status}. ${record.completedProtocols}/${requiredCount} protocols cleared.${record.perfectClear?' Perfect Clear achieved.':''}${record.weeklyBossCleared?' Weekly Boss defeated.':''}`});
     save();
     if(cleared){
-      if(rewardHoldActive())showSystemNotice('integrity','CLEAR RECORDED · XP HELD','Verify device time to release progression rewards.',3600);
-      else if(record.rankAdvanced)systemFeedback('level',`${state.player.rank}-Rank achieved.`);
+      if(record.rankAdvanced)systemFeedback('level',`${state.player.rank}-Rank achieved.`);
       else if(record.levelAdvanced)systemFeedback('level',`Level ${state.player.level} reached.`);
       else if(record.weeklyBossCleared)systemFeedback('boss','Weekly Boss defeated.');
       else if(record.perfectClear)systemFeedback('clear','Perfect Clear.');
@@ -587,17 +585,14 @@
     const minute=todayMinutes(now);
     const wake=record.protocols.wake;
     if(record.wakeCheckInAt&&record.wakeStatus==='early'&&minute>=240&&minute<minutes(wake.end)&&wake.status==='active')return blueprint('wake');
-    return protocolBlueprints.find(config=>minute>=minutes(config.start)&&minute<minutes(config.end)&&['pending','active'].includes(record.protocols[config.id].status))||null;
+    return protocolConfigsForRecord(record).find(config=>minute>=minutes(config.start)&&minute<minutes(config.end)&&['pending','active'].includes(record.protocols[config.id].status))||null;
   };
   const findNextProtocol=(record,now)=>{
     const minute=todayMinutes(now);
-    return protocolBlueprints.find(config=>minutes(config.start)>minute&&record.protocols[config.id].status==='pending')||null;
+    return protocolConfigsForRecord(record).find(config=>minutes(config.start)>minute&&record.protocols[config.id].status==='pending')||null;
   };
 
-  const classesForDate=date=>activeSchedule()
-    .filter(entry=>Number(entry.day)===date.getDay())
-    .map(entry=>({...entry}))
-    .sort((a,b)=>minutes(a.start)-minutes(b.start));
+  const classesForDate=date=>effectiveScheduleForDate(date);
   const meetingKey=(entry,date=new Date())=>`${S.dateKey(date)}::${entry.id}`;
   const attendanceFor=(entry,date=new Date())=>state.attendanceRecords.find(record=>record.meetingKey===meetingKey(entry,date))||null;
   const nextClassAt=(date=new Date())=>classesForDate(date).find(entry=>minutes(entry.start)>todayMinutes(date)&&attendanceFor(entry,date)?.status!=='cancelled')||null;
@@ -606,7 +601,7 @@
     const record={
       id:S.uid('attendance'),meetingKey:meetingKey(entry,date),classId:entry.id,subjectKey:subjectKey(entry.subject),subjectName:entry.subject,code:entry.code||'',
       scheduledDate:S.dateKey(date),scheduledStart:entry.start,scheduledEnd:entry.end,room:entry.room||'',modality:entry.modality||'Onsite',
-      status:'unverified',checkInAt:null,dismissedAt:null,dismissalStatus:null,minutesLate:0,pendingXp:0,xpAwarded:0,profileXpAppliedAmount:0,profileXpAppliedAt:null,profileXpHeld:0,finalized:false,
+      status:'unverified',checkInAt:null,dismissedAt:null,dismissalStatus:null,minutesLate:0,pendingXp:0,xpAwarded:0,profileXpAppliedAmount:0,profileXpAppliedAt:null,finalized:false,
       ongoingUntil:null,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),corrections:[],
       timezone:{name:state.timezone?.name||S.timezoneName(),offset:state.timezone?.offset??S.timezoneOffset()}
     };
@@ -642,7 +637,7 @@
       record.updatedAt=when.toISOString();record.ongoingUntil=null;
     }
     const profileDelta=syncAttendanceProfileXp(record,when);
-    state.logs.push({id:S.uid('log'),at:when.toISOString(),type:'attendance',message:`${record.subjectName}: ${record.status}${record.finalized?` · ${record.xpAwarded} XP`:''}${profileDelta>0?' · added to Profile':profileDelta<0?' · Profile XP adjusted':rewardHoldActive()&&record.xpAwarded?' · XP held':''}.`});
+    state.logs.push({id:S.uid('log'),at:when.toISOString(),type:'attendance',message:`${record.subjectName}: ${record.status}${record.finalized?` · ${record.xpAwarded} XP`:''}${profileDelta>0?' · added to Profile':profileDelta<0?' · Profile XP adjusted':''}.`});
     save();
   };
   const syncUnverifiedMeetings=(now=new Date())=>{
@@ -743,16 +738,12 @@
 
   const updateCheckInAndEvaluation=()=>{
     if(!state.initialized)return null;
-    checkClockIntegrity();finalizePastDays();
+    finalizePastDays();
     reconcileCurrentDayProfileXp();
-    if(Object.values(state.dayRecords||{}).some(day=>day.status==='cleared'&&!day.rewardApplied)||pendingProfileXp()){
-      const xpBefore=Math.max(0,Number(state.player.totalXp||0));
-      releaseHeldRewards();
-      const xpReleased=Math.max(0,Number(state.player.totalXp||0)-xpBefore);
-      if(xpReleased>0)setTimeout(()=>showSystemNotice('restore','REWARD HOLD LIFTED',`+${xpReleased} XP released to Profile.`,3000),180);
-    }
+    if(Object.values(state.dayRecords||{}).some(day=>day.status==='cleared'&&!day.rewardApplied)||pendingProfileXp())syncOutstandingProfileXp();
     const now=new Date();
     const record=createDayRecord(now);
+    if(syncConditionalProtocols(record,now))save({silent:true});
     const minute=todayMinutes(now);
     if(!record.wakeCheckInAt&&minute>=300&&minute<360&&document.visibilityState==='visible')recordWakeCheckIn(record,now,'automatic-window');
     evaluateDeadlines(record,now);
@@ -856,7 +847,7 @@
       const cursor=new Date(now);cursor.setHours(0,0,0,0);
       for(let offset=0;offset<horizon;offset++){
         const date=new Date(cursor);date.setDate(cursor.getDate()+offset);const key=S.dateKey(date);
-        protocolBlueprints.forEach(config=>{
+        protocolConfigsForDate(date).forEach(config=>{
           const start=timeOnDate(date,config.start),end=timeOnDate(date,config.end);
           addCalendarEvent(lines,{uid:`ascend-protocol-${key}-${config.id}@local`,start,end,summary:`ASCEND · ${config.name}`,description:`Fixed ASCEND protocol from ${formatTime(config.start)} to ${formatTime(config.end)}. Open ASCEND and complete every required stage before the deadline.`,leadMinutes:lead,deadlineAlarm:true});events++;
         });
@@ -880,7 +871,7 @@
     const moments=[];if(!(start instanceof Date)||!(end instanceof Date)||end<=start)return moments;
     const cursor=new Date(start);cursor.setHours(0,0,0,0);const last=new Date(end);last.setHours(23,59,59,999);
     for(let date=new Date(cursor);date<=last;date.setDate(date.getDate()+1)){
-      protocolBlueprints.forEach(config=>{const moment=timeOnDate(date,config.start);if(moment>start&&moment<=end)moments.push({at:moment,label:config.name})});
+      protocolConfigsForDate(date).forEach(config=>{const moment=timeOnDate(date,config.start);if(moment>start&&moment<=end)moments.push({at:moment,label:config.name})});
       classesForDate(date).forEach(entry=>{const moment=timeOnDate(date,entry.start);if(moment>start&&moment<=end)moments.push({at:moment,label:`${entry.subject} class`})});
       if(moments.length>40)break;
     }
@@ -921,7 +912,7 @@
     if(Date.now()-notificationSweepAt<20000)return;notificationSweepAt=Date.now();checkReminderGap(now);
     if(!state.settings.notifications)return;
     const lead=notificationLeadMinutes()*60000;
-    protocolBlueprints.forEach(config=>{
+    protocolConfigsForRecord(record).forEach(config=>{
       const protocol=record?.protocols?.[config.id];if(!protocol||protocol.status!=='pending')return;
       const start=recordMoment(record,config.start),delta=start-now;
       if(delta>0&&delta<=lead)sendLocalNotification(`${record.date}:${config.id}:start`,`${config.name} starts soon`,`${Math.max(1,Math.ceil(delta/60000))} minute(s) remaining before the fixed start.`);
@@ -943,7 +934,7 @@
   };
   const checkStoragePressure=async(force=false)=>{
     if(!force&&Date.now()-storageCheckAt<60000)return;storageCheckAt=Date.now();const report=await storageReport();
-    if(report.ratio>=.8||report.localBytes>=4*1024*1024){const today=S.dateKey();if(state.system.lastStorageWarningAt!==today){state.system.lastStorageWarningAt=today;state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'integrity',message:'Local storage pressure warning issued.'});save({silent:true});showSystemNotice('integrity','STORAGE CAPACITY WARNING','Export a backup. Routine logs are being limited automatically.',4200)}}
+    if(report.ratio>=.8||report.localBytes>=4*1024*1024){const today=S.dateKey();if(state.system.lastStorageWarningAt!==today){state.system.lastStorageWarningAt=today;state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'system',message:'Local storage pressure warning issued.'});save({silent:true});showSystemNotice('alert','STORAGE CAPACITY WARNING','Export a backup. Routine logs are being limited automatically.',4200)}}
     return report;
   };
   const syncRecoveryOverlay=()=>{
@@ -1167,7 +1158,7 @@
     }
     const remaining=academicRemaining(step);
     if(remaining>0){
-      $('#customTaskArea').innerHTML=`<div class="academic-card active"><strong>${escapeHtml(title)}</strong><small>${escapeHtml(meta)}</small><b>${formatDuration(remaining).slice(3)}</b><em>FOCUS INTEGRITY · ${focusIntegrity(protocol)}%</em></div>`;return;
+      $('#customTaskArea').innerHTML=`<div class="academic-card active"><strong>${escapeHtml(title)}</strong><small>${escapeHtml(meta)}</small><b>${formatDuration(remaining).slice(3)}</b><em>FOCUS SCORE · ${focusScore(protocol)}%</em></div>`;return;
     }
     if(!task){
       $('#customTaskArea').innerHTML=`<div class="academic-card"><strong>MAINTENANCE COMPLETE</strong><small>Required time fulfilled.</small></div><button class="custom-primary" type="button" data-custom="finish-maintenance">Confirm Completion</button>`;return;
@@ -1186,7 +1177,7 @@
     }
     const remaining=tradingRemaining(step);
     if(remaining>0){
-      $('#customTaskArea').innerHTML=`<div class="academic-card active"><strong>MARKET REVIEW ACTIVE</strong><small>A no-trade decision is valid when no setup meets your rules.</small><b>${formatDuration(remaining).slice(3)}</b><em>FOCUS INTEGRITY · ${focusIntegrity(protocol)}%</em></div>`;return;
+      $('#customTaskArea').innerHTML=`<div class="academic-card active"><strong>MARKET REVIEW ACTIVE</strong><small>A no-trade decision is valid when no setup meets your rules.</small><b>${formatDuration(remaining).slice(3)}</b><em>FOCUS SCORE · ${focusScore(protocol)}%</em></div>`;return;
     }
     $('#customTaskArea').innerHTML=`
       <div class="compact-form trading-form">
@@ -1196,42 +1187,63 @@
       <button class="custom-primary" type="button" data-custom="save-trading">Save Trading Review</button>`;
   };
 
+  const workoutElapsed=step=>step?.startedAt?Math.max(0,Date.now()-new Date(step.startedAt).getTime()):0;
+  const renderWorkoutDungeon=(protocol,step)=>{
+    $('#actionButton').hidden=true;$('#subtaskTimer').hidden=true;$('#customTaskArea').hidden=false;
+    const minMs=Number(step.minDuration||15)*60000,maxMs=Number(step.recommendedMax||45)*60000;
+    if(step.status==='pending'){
+      $('#customTaskArea').innerHTML=`<div class="custom-message"><strong>WORKOUT DUNGEON</strong><p>Train for at least ${step.minDuration||15} minutes. End when the workout is actually finished. ${step.recommendedMax||45} minutes is the recommended upper target; extra time does not increase XP.</p><button type="button" data-custom="start-workout">Start Workout Dungeon</button></div>`;return;
+    }
+    const elapsed=workoutElapsed(step),minimumCleared=elapsed>=minMs,limitReached=elapsed>=maxMs;
+    const status=limitReached?'DUNGEON LIMIT REACHED':minimumCleared?'MINIMUM CLEARED':'MINIMUM RUN ACTIVE';
+    const copy=limitReached?'Finish the current set, then end the workout when ready.':minimumCleared?'You may end the workout whenever the planned session is complete.':`${formatDuration(Math.max(0,minMs-elapsed)).slice(3)} until the 15-minute minimum.`;
+    $('#customTaskArea').innerHTML=`<div class="academic-card active workout-dungeon-card"><strong>WORKOUT DUNGEON ACTIVE</strong><small>${escapeHtml(copy)}</small><b>${formatDuration(elapsed)}</b><em>${status}</em></div>${minimumCleared?'<button class="custom-primary" type="button" data-custom="end-workout">End Workout</button>':'<button class="danger-button compact-danger workout-early-exit" type="button" data-custom="exit-workout-early"><b>Exit Early · No Clear</b></button>'}`;
+  };
+  const advanceAutomaticProtocolSteps=protocol=>{
+    const task=currentStep(protocol);if(!task||task.type!=='timer'||!task.autoComplete||task.status!=='active'||!task.startedAt)return false;
+    if(Date.now()-new Date(task.startedAt).getTime()<Number(task.duration||0)*60000)return false;
+    if(!transitionStep(task,'completed',new Date().toISOString()))return false;
+    state.logs.push({id:S.uid('log'),at:task.completedAt,type:'subtask',message:`${task.title} completed automatically after ${task.duration} minutes.`});return true;
+  };
+
   const renderProtocol=(record,config)=>{
     requestWakeLock();show('protocolScreen');
     const protocol=startProtocol(record,config,new Date());
+    if(advanceAutomaticProtocolSteps(protocol))save({silent:true});
     const task=currentStep(protocol);
     if(!task){clearProtocol(record,protocol);return}
     const deadline=timeOnDate(new Date(),config.end);const deadlineMs=deadline-new Date();applyBodyState(record,protocol,task,deadlineMs);
     $('#protocolLabel').textContent=protocol.boss?`WEEKLY BOSS · ${record.weeklyBossPlan?.title||'PRODUCTIVITY'}`:config.name.toUpperCase();
     $('#protocolWindow').textContent=`${formatTime(config.start)} – ${formatTime(config.end)}`;
     const index=protocol.steps.indexOf(task);$('#stepCurrent').textContent=index+1;$('#stepTotal').textContent=protocol.steps.length;
-    const punctual=protocolOnTime(record,protocol);$('#punctualityBadge').textContent=task.type==='timer'||task.type==='academic'||task.type==='trading'?`FOCUS ${focusIntegrity(protocol)}%`:punctual?'ON TIME':'LATE';$('#punctualityBadge').classList.toggle('late',!punctual);
+    const punctual=protocolOnTime(record,protocol);$('#punctualityBadge').textContent=task.type==='timer'||task.type==='academic'||task.type==='trading'?`FOCUS ${focusScore(protocol)}%`:punctual?'ON TIME':'LATE';$('#punctualityBadge').classList.toggle('late',!punctual);
     $('#deadlineCountdown').textContent=`${formatDuration(deadlineMs)} LEFT`;
-    const customLayout=['audit','planner','academic','trading'].includes(task.type);
+    const customLayout=['audit','planner','academic','trading','workout'].includes(task.type);
     $('#focusCard').dataset.layout=customLayout?'custom':task.type==='timer'?'timed':'plain';
     $('#focusSigil').hidden=customLayout;
     setGlyph('focusIcon',task.icon||config.icon);$('#subtaskType').textContent=protocol.boss&&['execution-plan'].includes(task.id)?'WEEKLY BOSS DIRECTIVE':'CURRENT DIRECTIVE';
     $('#subtaskTitle').textContent=task.title;$('#subtaskCopy').textContent=stepCopy(task);
     $('#completedSteps').textContent=`${protocol.steps.filter(step=>step.status==='completed').length} / ${protocol.steps.length} completed`;
     $('#protocolXp').textContent=`${Math.round(config.xp*(protocol.boss?1.35:1))} XP available`;
-    $('#focusNote').textContent=protocol.boss?(record.weeklyBossPlan?.copy||'Complete the adaptive Weekly Boss objective.'):'Complete every required stage before the fixed deadline.';
+    $('#focusNote').textContent=protocol.boss?(record.weeklyBossPlan?.copy||'Complete the adaptive Weekly Boss objective.'):config.id==='workout'?'15-minute minimum · 45-minute recommended target · class windows always take priority.':'Complete every required stage before the fixed deadline.';
     if(task.type==='audit')renderAudit(protocol,task);
     else if(task.type==='planner')renderPlanner(protocol,task);
     else if(task.type==='academic')renderAcademic(protocol,task);
     else if(task.type==='trading')renderTrading(protocol,task);
+    else if(task.type==='workout')renderWorkoutDungeon(protocol,task);
     else renderStandardTask(record,protocol,task);
   };
 
   const renderResult=record=>{
     releaseWakeLock();show('resultScreen');document.body.dataset.state=record.status==='cleared'?'active':'critical';
     const cleared=record.status==='cleared';$('#resultEmblem').classList.toggle('failed',!cleared);setGlyph('resultEmblem',cleared?'success':'failure');
-    $('#resultEyebrow').textContent=cleared?(record.heldXp?'CLEAR RECORDED · REWARD HOLD':record.rankAdvanced?'RANK ADVANCED':record.perfectClear?'PERFECT CLEAR':record.weeklyBossCleared?'WEEKLY BOSS DEFEATED':'DAY CLEARED'):'DAY FAILED';
+    $('#resultEyebrow').textContent=cleared?(record.rankAdvanced?'RANK ADVANCED':record.perfectClear?'PERFECT CLEAR':record.weeklyBossCleared?'WEEKLY BOSS DEFEATED':'DAY CLEARED'):'DAY FAILED';
     $('#resultTitle').textContent=cleared?'Discipline Maintained':'Discipline Broken';
-    $('#resultMessage').textContent=cleared?(record.heldXp?'Clear recorded. Progression rewards are held until device time is verified.':'Every required protocol was completed before the daily cutoff.'):'At least one required protocol failed. The streak and Daily Clear were lost; XP from directives already cleared remains earned.';
-    $('#resultProtocols').textContent=`${record.completedProtocols}/${requiredProtocolCount}`;$('#resultOnTime').textContent=`${record.onTimePercentage}%`;$('#resultXp').textContent=record.heldXp?`${record.heldXp} HELD`:record.totalXp;$('#resultLevel').textContent=`${state.player.level} · ${state.player.rank}`;
-    const sealText=record.heldXp?'TIME VERIFICATION REQUIRED':record.rankAdvanced?`${state.player.rank}-RANK ACHIEVED`:record.perfectClear?'PERFECT CLEAR':record.rankTrialFailed?'RANK-UP TRIAL FAILED':record.weeklyBossCleared?'WEEKLY BOSS DEFEATED':'';
+    $('#resultMessage').textContent=cleared?'Every required protocol was completed before the daily cutoff.':'At least one required protocol failed. The streak and Daily Clear were lost; XP from directives already cleared remains earned.';
+    $('#resultProtocols').textContent=`${record.completedProtocols}/${requiredProtocolCountForRecord(record)}`;$('#resultOnTime').textContent=`${record.onTimePercentage}%`;$('#resultXp').textContent=record.totalXp;$('#resultLevel').textContent=`${state.player.level} · ${state.player.rank}`;
+    const sealText=record.rankAdvanced?`${state.player.rank}-RANK ACHIEVED`:record.perfectClear?'PERFECT CLEAR':record.rankTrialFailed?'RANK-UP TRIAL FAILED':record.weeklyBossCleared?'WEEKLY BOSS DEFEATED':'';
     $('#resultSeal').hidden=!sealText;$('#resultSeal').textContent=sealText;$('#resultSeal').classList.toggle('failed',record.rankTrialFailed);
-    $('#autoReward').hidden=!cleared||Boolean(record.heldXp);$('#rewardText').textContent=record.automaticReward||'';$('#masteryMessage').hidden=!state.player.mastered;
+    $('#autoReward').hidden=!cleared;$('#rewardText').textContent=record.automaticReward||'';$('#masteryMessage').hidden=!state.player.mastered;
     $('#tomorrowNote').textContent='Tomorrow begins again at 5:00 AM.';
     const animationKey=`${record.date}-${record.status}-${record.totalXp}-${record.rankAdvanced?'rank':''}-${record.levelAdvanced?'level':''}`;
     if(lastResultAnimationKey!==animationKey){
@@ -1255,8 +1267,9 @@
       return;
     }
     const config=findCurrentProtocol(record,now);
-    if(config){renderProtocol(record,config);return}
     const classState=classStateAt(now);
+    if(classState&&config?.id==='workout'){renderClassScreen(classState,now);return}
+    if(config){renderProtocol(record,config);return}
     if(classState){renderClassScreen(classState,now);return}
     renderFree(record,now);
   };
@@ -1290,7 +1303,7 @@
   };
   const recordConfirmationAudit=(owner,result,reason,context)=>{
     state.system.auditTrail=state.system.auditTrail||[];const entry={id:S.uid('audit'),at:new Date().toISOString(),type:'confirmation',owner,result,reason,token:context?.token||null,source:'live'};state.system.auditTrail.push(entry);state.system.auditTrail=state.system.auditTrail.slice(-240);
-    if(result!=='accepted')state.logs.push({id:S.uid('log'),at:entry.at,type:'integrity',message:`${owner} confirmation ${result}: ${reason}.`});S.save(state);
+    if(result!=='accepted')state.logs.push({id:S.uid('log'),at:entry.at,type:'system',message:`${owner} confirmation ${result}: ${reason}.`});S.save(state);
   };
   const validateConfirmation=(owner,startContext)=>{
     if(!criticalConfirmationOwners.has(owner))return{ok:true};
@@ -1357,6 +1370,18 @@
   const handleCustomAction=event=>{
     const button=event.target.closest('[data-custom]');if(!button||button.disabled)return;
     const action=button.dataset.custom;const protocol=activeProtocolRecord();const step=currentStep(protocol);if(!protocol||!step)return;
+    if(action==='start-workout'&&step.type==='workout'){
+      transitionStep(step,'active',new Date().toISOString());save();systemFeedback('start','Workout Dungeon started.',`workout-${protocol.id}-${step.startedAt}`);renderApp();return;
+    }
+    if(action==='end-workout'&&step.type==='workout'){
+      const elapsed=workoutElapsed(step),minimum=Number(step.minDuration||15)*60000;if(elapsed<minimum)return;
+      step.workoutEndedAt=new Date().toISOString();step.workoutDurationSeconds=Math.round(elapsed/1000);transitionStep(step,'completed',step.workoutEndedAt);
+      const cooldown=currentStep(protocol);if(cooldown?.id==='workout-cooldown'&&cooldown.status==='pending')transitionStep(cooldown,'active',step.workoutEndedAt);
+      state.logs.push({id:S.uid('log'),at:step.workoutEndedAt,type:'subtask',message:`Workout Dungeon completed after ${Math.round(elapsed/60000)} minute(s). Cooldown started.`});save();systemFeedback('clear','Workout complete. Cooldown started.');renderApp();return;
+    }
+    if(action==='exit-workout-early'&&step.type==='workout'){
+      const elapsed=workoutElapsed(step);step.workoutEndedAt=new Date().toISOString();step.workoutDurationSeconds=Math.round(elapsed/1000);transitionStep(step,'completed',step.workoutEndedAt);failProtocol(dayRecord(),protocol,'Workout Dungeon ended before the 15-minute minimum.',true);showBreachWarning('WORKOUT ENDED EARLY','Minimum dungeon duration was not reached. Workout receives 0 XP and does not clear.');renderApp();return;
+    }
     if(action==='finish-audit'){completeCustomStep();return}
     if(action==='complete-existing'){
       const task=state.academicTasks.find(item=>item.id===button.dataset.taskId);if(task){const blockers=taskBlockers(task);if(blockers.length){showBreachWarning('TASK LOCKED',`Complete ${blockers[0].title} first.`);return}task.status='completed';task.completedAt=new Date().toISOString();save();showBreachWarning('TASK COMPLETED',task.title);renderApp()}return;
@@ -1462,21 +1487,19 @@
   const completedTaskCount=()=>state.academicTasks.filter(task=>task.status==='completed').length;
   const derivedAttributes=()=>{
     const days=Object.values(state.dayRecords||{}),clears=days.filter(day=>day.status==='cleared').length,failures=days.filter(day=>day.status==='failed').length;
-    const protocols=days.flatMap(day=>Object.values(day.protocols||{})),focusValues=protocols.map(focusIntegrity),focus=focusValues.length?Math.round(focusValues.reduce((sum,value)=>sum+value,0)/focusValues.length):100;
+    const protocols=days.flatMap(day=>Object.values(day.protocols||{})),focusValues=protocols.map(focusScore),focus=focusValues.length?Math.round(focusValues.reduce((sum,value)=>sum+value,0)/focusValues.length):100;
     const academic=overallAcademicStats(),tasks=state.academicTasks||[],completed=tasks.filter(task=>task.status==='completed').length;
     const recovered=(state.logs||[]).filter(log=>log.type==='recovery').length;
     const discipline=clamp(Math.round(percent(clears,clears+failures)*.72+Math.min(28,(state.player.bestStreak||0)*4)),0,100);
     const endurance=clamp(Math.round(Math.min(55,(state.player.bestStreak||0)*5)+Math.min(45,clears*3)),0,100);
     const recovery=failures?clamp(Math.round(recovered/failures*85+Math.min(15,(state.player.streak||0)*3)),0,100):100;
     const academicControl=academic.required||tasks.length?clamp(Math.round(academic.attendanceRate*.35+academic.punctualityRate*.25+percent(completed,tasks.length)*.4),0,100):50;
-    const breaches=protocols.reduce((sum,item)=>sum+Number(item.focusBreaches||0),0),integrity=clamp((state.integrity.clockStatus==='flagged'?55:100)-Math.min(35,breaches*3),0,100);
     return[
       {id:'discipline',label:'Discipline',value:discipline,copy:'Reliable completion and clear-day consistency.'},
       {id:'focus',label:'Focus',value:focus,copy:'Uninterrupted execution during active protocols.'},
       {id:'endurance',label:'Endurance',value:endurance,copy:'Sustained performance across repeated days.'},
       {id:'recovery',label:'Recovery',value:recovery,copy:'Structured response after failed days.'},
-      {id:'academic',label:'Academic Control',value:academicControl,copy:'Attendance, punctuality, and task completion.'},
-      {id:'integrity',label:'Integrity',value:integrity,copy:'Trusted timeline and clean confirmation behavior.'}
+      {id:'academic',label:'Academic Control',value:academicControl,copy:'Attendance, punctuality, and task completion.'}
     ];
   };
 
@@ -1487,8 +1510,7 @@
       focus:{id:'no-breach',title:'Unbroken Focus',copy:'Clear the day without leaving ASCEND during an active timed task.',xp:35},
       endurance:{id:'wake-clear',title:'First Victory',copy:'Clear the Wake Protocol today.',xp:25},
       recovery:{id:'recovery-action',title:'Re-enter the Sequence',copy:'Complete an active Recovery Protocol.',xp:25},
-      academic:{id:'academic-task',title:'Academic Advance',copy:'Complete one pending academic task today.',xp:30},
-      integrity:{id:'clean-timeline',title:'Clean Timeline',copy:'Keep device time trusted and clear one protocol.',xp:25}
+      academic:{id:'academic-task',title:'Academic Advance',copy:'Complete one pending academic task today.',xp:30}
     };
     return{primary:templates[lowest],all:Object.values(templates)};
   };
@@ -1501,13 +1523,12 @@
     if(quest.id==='wake-clear')done=day?.protocols?.wake?.status==='cleared';
     if(quest.id==='recovery-action')done=(state.logs||[]).some(log=>log.type==='recovery'&&String(log.at||'').slice(0,10)===quest.date);
     if(quest.id==='academic-task')done=completedTaskCount()>Number(quest.baselineCompleted||0);
-    if(quest.id==='clean-timeline')done=state.integrity.clockStatus==='trusted'&&Object.values(day?.protocols||{}).some(protocol=>protocol.status==='cleared');
     if(quest.id==='attendance')done=todayAttendance.length>0;
     return{done,progress:done?1:0,label:done?'1 / 1':'0 / 1'};
   };
   const ensureDailyQuest=()=>{
     state.quests=state.quests||{daily:null,history:[]};const today=S.dateKey();const current=state.quests.daily;
-    if(current?.date===today)return current;
+    if(current?.date===today&&current.id!=='clean-timeline')return current;
     if(current){state.quests.history=state.quests.history||[];state.quests.history.push({...current,expiredAt:new Date().toISOString(),completed:questProgress(current).done});state.quests.history=state.quests.history.slice(-60)}
     const templates=questTemplates(),chosen=templates.primary;
     state.quests.daily={...chosen,date:today,createdAt:new Date().toISOString(),claimed:false,rerolled:false,baselineCompleted:completedTaskCount()};
@@ -1558,22 +1579,23 @@
   };
 
   const detectTimezoneChange=()=>{
-    state.timezone=state.timezone||{name:S.timezoneName(),offset:S.timezoneOffset(),history:[],pending:null};
+    state.timezone=state.timezone||{name:S.timezoneName(),offset:S.timezoneOffset(),history:[],pending:null,ignoredDevice:null};
     const name=S.timezoneName(),offset=S.timezoneOffset();if(state.timezone.name===name&&Number(state.timezone.offset)===offset)return false;
+    if(state.timezone.ignoredDevice?.name===name&&Number(state.timezone.ignoredDevice?.offset)===offset)return false;
     state.timezone.pending={fromName:state.timezone.name,fromOffset:Number(state.timezone.offset),toName:name,toOffset:offset,detectedAt:new Date().toISOString()};return true;
   };
   const timezoneOffsetLabel=value=>`${Number(value)>=0?'+':''}${Math.floor(Number(value)/60)}:${String(Math.abs(Number(value))%60).padStart(2,'0')}`;
   const showTimezoneOverlay=()=>{
     const overlay=$('#timezoneOverlay');if(!overlay)return;const pending=state.timezone?.pending;
     $('#timezoneComparison').innerHTML=pending?`<div><span>PREVIOUS</span><strong>${escapeHtml(pending.fromName)}</strong><small>UTC ${timezoneOffsetLabel(pending.fromOffset)}</small></div><div><span>CURRENT</span><strong>${escapeHtml(pending.toName)}</strong><small>UTC ${timezoneOffsetLabel(pending.toOffset)}</small></div>`:`<div><span>CURRENT TIMEZONE</span><strong>${escapeHtml(state.timezone.name)}</strong><small>UTC ${timezoneOffsetLabel(state.timezone.offset)}</small></div>`;
-    $('#confirmTimezoneTravel').hidden=!pending;$('#flagTimezoneClock').hidden=!pending;overlay.hidden=false;timezonePromptShown=true;
+    $('#confirmTimezoneTravel').hidden=!pending;$('#keepPreviousTimezone').hidden=!pending;overlay.hidden=false;timezonePromptShown=true;
   };
   const confirmTimezoneChange=()=>{
     const pending=state.timezone?.pending;if(!pending)return;
-    state.timezone.history.push({...pending,confirmedAt:new Date().toISOString()});state.timezone.name=pending.toName;state.timezone.offset=pending.toOffset;state.timezone.confirmedAt=new Date().toISOString();state.timezone.pending=null;invalidateExternalCalendar();
-    state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'integrity',message:`Timezone change confirmed: ${pending.fromName} to ${pending.toName}. Existing records retained their original timeline.`});save();$('#timezoneOverlay').hidden=true;renderSystemIntegrity();
+    state.timezone.history.push({...pending,confirmedAt:new Date().toISOString()});state.timezone.name=pending.toName;state.timezone.offset=pending.toOffset;state.timezone.confirmedAt=new Date().toISOString();state.timezone.pending=null;state.timezone.ignoredDevice=null;invalidateExternalCalendar();
+    state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'system',message:`Timezone change confirmed: ${pending.fromName} to ${pending.toName}. Existing records retained their original timezone.`});save();$('#timezoneOverlay').hidden=true;renderReliability();
   };
-  const rejectTimezoneChange=()=>{const pending=state.timezone?.pending;if(pending)flagClockIntegrity('Timezone changed without confirmed travel.',(pending.toOffset-pending.fromOffset)*60000);$('#timezoneOverlay').hidden=true;renderSystemIntegrity()};
+  const rejectTimezoneChange=()=>{const pending=state.timezone?.pending;if(pending){state.timezone.ignoredDevice={name:pending.toName,offset:pending.toOffset,ignoredAt:new Date().toISOString()};state.timezone.pending=null;state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'system',message:`Device timezone ${pending.toName} ignored; ASCEND kept ${pending.fromName}.`});save({silent:true})}$('#timezoneOverlay').hidden=true;renderReliability()};
 
   const readBootGuard=()=>{try{return JSON.parse(safeSession.get(BOOT_GUARD_KEY)||'null')}catch(error){return null}};
   const beginBootGuard=()=>{
@@ -1602,7 +1624,7 @@
     $('#conflictRecord').innerHTML=issue?`<span>${escapeHtml(issue.severity.toUpperCase())} · ${escapeHtml(issue.type.toUpperCase())}</span><strong>${escapeHtml(issue.title)}</strong><small>${escapeHtml(issue.copy)}</small>`:'<span>SCAN COMPLETE</span><strong>No academic conflicts detected</strong><small>Schedule, exceptions, dependencies, and recurring rules are consistent.</small>';
     $('#conflictNav').hidden=issues.length<=1;$('#conflictPageLabel').textContent=issues.length?`${conflictUi.index+1} / ${issues.length}`:'0 / 0';$('#conflictPrev').disabled=conflictUi.index===0;$('#conflictNext').disabled=conflictUi.index>=issues.length-1;
   };
-  const renderConflictScan=(run=true)=>{setControlView('conflictScanView');if(run){conflictUi.issues=scanAcademicConflicts();conflictUi.index=0;state.system.lastConflictScan={at:new Date().toISOString(),issues:conflictUi.issues.length};state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'integrity',message:`Academic conflict scan completed with ${conflictUi.issues.length} issue(s).`});save({silent:true})}renderConflictRecord()};
+  const renderConflictScan=(run=true)=>{setControlView('conflictScanView');if(run){conflictUi.issues=scanAcademicConflicts();conflictUi.index=0;state.system.lastConflictScan={at:new Date().toISOString(),issues:conflictUi.issues.length};state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'system',message:`Academic conflict scan completed with ${conflictUi.issues.length} issue(s).`});save({silent:true})}renderConflictRecord()};
 
   const runDataConsistencyWatchdog=(notify=true)=>{
     let issues=0,repairs=0;const repairNotes=[];
@@ -1611,7 +1633,7 @@
     const occurrenceSeen=new Set(),duplicateTaskIds=new Set();state.academicTasks.forEach(task=>{if(!task.sourceRuleId||!task.occurrenceDate)return;const key=`${task.sourceRuleId}|${task.occurrenceDate}`;if(occurrenceSeen.has(key)){issues+=1;repairs+=1;duplicateTaskIds.add(task.id)}else occurrenceSeen.add(key)});if(duplicateTaskIds.size)state.academicTasks=state.academicTasks.filter(task=>!duplicateTaskIds.has(task.id));
     const attendanceByMeeting=new Map();state.attendanceRecords.forEach(record=>{if(!record.meetingKey)return;const existing=attendanceByMeeting.get(record.meetingKey);if(!existing)attendanceByMeeting.set(record.meetingKey,record);else{issues+=1;const keep=(record.finalized&&!existing.finalized)||(String(record.updatedAt)>String(existing.updatedAt))?record:existing;attendanceByMeeting.set(record.meetingKey,keep)}});if(attendanceByMeeting.size&&attendanceByMeeting.size<state.attendanceRecords.filter(record=>record.meetingKey).length){const noKey=state.attendanceRecords.filter(record=>!record.meetingKey);state.attendanceRecords=[...noKey,...attendanceByMeeting.values()];repairs+=1;repairNotes.push('Removed duplicate attendance records')}
     ['totalXp','streak','bestStreak','totalClearDays','totalFailedDays','levelClearDays'].forEach(key=>{if(Number(state.player[key]||0)<0){issues+=1;repairs+=1;state.player[key]=0;repairNotes.push(`Corrected negative ${key}`)}});
-    state.system.watchdog={lastRun:new Date().toISOString(),issues,repairs,summary:issues?`${repairs} repair(s) from ${issues} issue(s)`:'All consistency checks passed'};state.system.auditTrail=state.system.auditTrail||[];state.system.auditTrail.push({id:S.uid('audit'),at:state.system.watchdog.lastRun,type:'watchdog',before:null,after:{issues,repairs},reason:repairNotes.slice(0,8).join('; ')||'No repair required',source:'automatic'});state.system.auditTrail=state.system.auditTrail.slice(-240);state.logs.push({id:S.uid('log'),at:state.system.watchdog.lastRun,type:'watchdog',message:`Data watchdog completed: ${issues} issue(s), ${repairs} repair(s).`});save({silent:true});if(notify)showSystemNotice(issues?'integrity':'save',issues?'CONSISTENCY REPAIRS COMPLETE':'DATA CONSISTENCY CLEAR',state.system.watchdog.summary,3200);return state.system.watchdog;
+    state.system.watchdog={lastRun:new Date().toISOString(),issues,repairs,summary:issues?`${repairs} repair(s) from ${issues} issue(s)`:'All consistency checks passed'};state.system.auditTrail=state.system.auditTrail||[];state.system.auditTrail.push({id:S.uid('audit'),at:state.system.watchdog.lastRun,type:'watchdog',before:null,after:{issues,repairs},reason:repairNotes.slice(0,8).join('; ')||'No repair required',source:'automatic'});state.system.auditTrail=state.system.auditTrail.slice(-240);state.logs.push({id:S.uid('log'),at:state.system.watchdog.lastRun,type:'watchdog',message:`Data watchdog completed: ${issues} issue(s), ${repairs} repair(s).`});save({silent:true});if(notify)showSystemNotice(issues?'alert':'save',issues?'CONSISTENCY REPAIRS COMPLETE':'DATA CONSISTENCY CLEAR',state.system.watchdog.summary,3200);return state.system.watchdog;
   };
 
   const renderAcademicTasks=()=>{setControlView('academicTasksView');renderTaskManager()};
@@ -1705,6 +1727,11 @@
     });
     return entries.sort((a,b)=>minutes(a.start)-minutes(b.start));
   };
+  const developerProtocolConfigsForDate=date=>protocolBlueprints.filter(config=>{
+    if(config.id!=='workout')return true;
+    if(!WORKOUT_DAYS.has(date.getDay()))return false;
+    return !developerClassesForDate(date).some(entry=>minutes(entry.start)-15<minutes('09:00')&&minutes(entry.end)>minutes('08:00'));
+  });
   const developerProtocolProgress=(date,config)=>{
     const session=developerRunSession,key=S.dateKey(date);session.protocolProgress=session.protocolProgress||{};session.protocolProgress[key]=session.protocolProgress[key]||{};
     if(!session.protocolProgress[key][config.id])session.protocolProgress[key][config.id]={stepIndex:config.id==='wake'?1:0,cleared:false,failed:false,timers:{}};
@@ -1719,7 +1746,7 @@
     for(let offset=0;offset<3;offset+=1){
       const date=new Date(from);date.setDate(from.getDate()+offset);date.setHours(0,0,0,0);
       [['04:00','Early Wake Window'],['05:00','Wake Protocol'],['23:00','Recovery Window']].forEach(([time,label])=>candidates.push({at:timeOnDate(date,time),label}));
-      protocolBlueprints.forEach(config=>candidates.push({at:timeOnDate(date,config.start),label:config.name}));
+      developerProtocolConfigsForDate(date).forEach(config=>candidates.push({at:timeOnDate(date,config.start),label:config.name}));
       developerClassesForDate(date).forEach(entry=>candidates.push({at:timeOnDate(date,entry.start),label:`${entry.subject} Class`}));
     }
     return candidates.filter(item=>item.at>from).sort((a,b)=>a.at-b.at)[0]||null;
@@ -1750,7 +1777,7 @@
     if(isEarlyWakeWindow(now)&&!session.earlyWakeConfirmed[dateKey]){
       const wake=timeOnDate(now,'05:00');return{kind:'early',protocol:'EARLY WAKE SIGN-IN',window:'4:00 AM – 5:00 AM',type:'CONSCIOUSNESS CHECK',title:'Are You Awake?',copy:'Confirming now records an early wake and begins the Wake Protocol inside the sandbox.',icon:'signal',detail:'EARLY START AVAILABLE',status:'AVAILABLE',countdown:`${formatDuration(Math.max(0,wake-now))} UNTIL 5:00 AM`,resultClass:'success',layout:'plain',action:'Hold to Confirm Awake',note:'This confirmation affects only isolated Developer Test data.'};
     }
-    let config=protocolBlueprints.find(item=>minute>=minutes(item.start)&&minute<minutes(item.end));
+    let config=developerProtocolConfigsForDate(now).find(item=>minute>=minutes(item.start)&&minute<minutes(item.end));
     if(!config&&session.earlyWakeConfirmed[dateKey]&&minute>=240&&minute<360)config=blueprint('wake');
     if(config){
       const progress=developerProtocolProgress(now,config),steps=config.subtasks(session.sandbox.player?.level||1),end=timeOnDate(now,config.end),timeLeft=Math.max(0,end-now);
@@ -1758,12 +1785,13 @@
         if(progress.failed)return{kind:'protocol-failed',config,progress,protocol:config.name.toUpperCase(),window:`${formatTime(config.start)} – ${formatTime(config.end)}`,type:'PROTOCOL FAILED',title:`${config.name} Failed`,copy:'The simulated deadline passed before every required stage was completed.',icon:'failure',detail:`0 XP · ${progress.stepIndex} / ${steps.length} COMPLETED`,status:'FAILED',countdown:'00:00:00',resultClass:'failure',layout:'plain',action:null,note:'Reset the simulator or move to a new date to test a fresh sequence.'};
         if(progress.stepIndex>=steps.length){progress.cleared=true}
         else{
-          const task=steps[progress.stepIndex],timerStart=progress.timers[task.id],timerRemaining=task.type==='timer'&&timerStart?Math.max(0,task.duration*60000-(now-new Date(timerStart))):null;
+          const task=steps[progress.stepIndex],timedTask=['timer','workout'].includes(task.type),requiredMinutes=task.type==='workout'?Number(task.minDuration||15):Number(task.duration||0),timerStart=progress.timers[task.id],timerRemaining=timedTask&&timerStart?Math.max(0,requiredMinutes*60000-(now-new Date(timerStart))):null;
+          if(task.type==='timer'&&task.autoComplete&&timerStart&&timerRemaining===0){progress.stepIndex+=1;addDeveloperEvent('completion',`${task.title} completed automatically`);return developerLiveStateAt(now)}
           const minutesLeft=timeLeft/60000,resultClass=minutesLeft<=5?'failure':minutesLeft<=10?'late':'success',status=minutesLeft<=5?'CRITICAL':minutesLeft<=10?'WARNING':'ON TIME';
-          let action=task.type==='timer'?(timerStart?(timerRemaining>0?'Dungeon in Progress':'Hold to Confirm Dungeon Clear'):'Hold to Start Dungeon'):(task.type==='tap'?'Hold to Confirm Complete':'Hold to Confirm');
-          const actionDisabled=task.type==='timer'&&Boolean(timerStart)&&timerRemaining>0;
-          const detail=task.type==='timer'?(timerStart?`${formatDuration(timerRemaining)} · ${timerRemaining>0?'DUNGEON ACTIVE':'TIME CLEARED'}`:`${task.duration}:00 REQUIRED TIME`):`STEP ${progress.stepIndex+1} / ${steps.length} · ${config.xp} XP AVAILABLE`;
-          return{kind:'protocol',config,progress,task,steps,protocol:config.name.toUpperCase(),window:`${formatTime(config.start)} – ${formatTime(config.end)}`,type:task.id==='execution-plan'&&config.id==='productivity'?'WEEKLY BOSS DIRECTIVE':'CURRENT DIRECTIVE',title:task.title,copy:developerStepCopy(task,now),icon:task.icon||config.icon,detail,status,countdown:`${formatDuration(timeLeft)} LEFT`,resultClass,layout:task.type==='timer'?'timed':'plain',action,actionDisabled,note:'Complete every required stage before the simulated fixed deadline.'};
+          let action=timedTask?(timerStart?(timerRemaining>0?'Dungeon in Progress':'Hold to Confirm Dungeon Clear'):'Hold to Start Dungeon'):(task.type==='tap'?'Hold to Confirm Complete':'Hold to Confirm');
+          const actionDisabled=timedTask&&Boolean(timerStart)&&timerRemaining>0;
+          const detail=timedTask?(timerStart?`${formatDuration(timerRemaining)} · ${timerRemaining>0?'DUNGEON ACTIVE':'TIME CLEARED'}`:`${requiredMinutes}:00 REQUIRED TIME`):`STEP ${progress.stepIndex+1} / ${steps.length} · ${config.xp} XP AVAILABLE`;
+          return{kind:'protocol',config,progress,task,steps,protocol:config.name.toUpperCase(),window:`${formatTime(config.start)} – ${formatTime(config.end)}`,type:task.id==='execution-plan'&&config.id==='productivity'?'WEEKLY BOSS DIRECTIVE':'CURRENT DIRECTIVE',title:task.title,copy:developerStepCopy(task,now),icon:task.icon||config.icon,detail,status,countdown:`${formatDuration(timeLeft)} LEFT`,resultClass,layout:timedTask?'timed':'plain',action,actionDisabled,note:'Complete every required stage before the simulated fixed deadline.'};
         }
       }
     }
@@ -1781,7 +1809,7 @@
   const reconcileDeveloperTimeline=(fromMs,toMs)=>{
     if(!developerRunSession||toMs<=fromMs)return;const from=new Date(fromMs),to=new Date(toMs),cursor=new Date(from);cursor.setHours(0,0,0,0);let days=0,lastFailure=null;
     while(cursor<=to&&days<14){
-      protocolBlueprints.forEach(config=>{const end=timeOnDate(cursor,config.end);if(end>from&&end<=to){const progress=developerProtocolProgress(cursor,config);if(!progress.cleared&&!progress.failed){progress.failed=true;lastFailure=config.name;addDeveloperEvent('deadline',`${config.name} failed at its simulated deadline`)}}});
+      developerProtocolConfigsForDate(cursor).forEach(config=>{const end=timeOnDate(cursor,config.end);if(end>from&&end<=to){const progress=developerProtocolProgress(cursor,config);if(!progress.cleared&&!progress.failed){progress.failed=true;lastFailure=config.name;addDeveloperEvent('deadline',`${config.name} failed at its simulated deadline`)}}});
       cursor.setDate(cursor.getDate()+1);days+=1;
     }
     if(lastFailure)showSystemNotice('alert','SIMULATED DEADLINE PASSED',`${lastFailure} was marked failed inside the sandbox.`,2100);
@@ -1828,19 +1856,19 @@
   const completeDeveloperRun=()=>{
     if(!developerRunSession)return;const live=developerRunSession.currentState,now=new Date(developerRunSession.simulatedAt);if(!live)return;
     if(live.kind==='lab'){addDeveloperEvent('resolution','Feedback laboratory session ended');exitDeveloperRun(true);return}
-    if(live.kind==='early'){developerRunSession.earlyWakeConfirmed[S.dateKey(now)]=true;const wake=developerProtocolProgress(now,blueprint('wake'));wake.stepIndex=Math.max(1,wake.stepIndex);addDeveloperEvent('state','Early wake confirmed');haptic('start');showSystemNotice('integrity','SIMULATED WAKE CONFIRMED','Wake Protocol opened inside isolated test data.',1800);renderDeveloperRun();return}
+    if(live.kind==='early'){developerRunSession.earlyWakeConfirmed[S.dateKey(now)]=true;const wake=developerProtocolProgress(now,blueprint('wake'));wake.stepIndex=Math.max(1,wake.stepIndex);addDeveloperEvent('state','Early wake confirmed');haptic('start');showSystemNotice('diagnostic','SIMULATED WAKE CONFIRMED','Wake Protocol opened inside isolated test data.',1800);renderDeveloperRun();return}
     if(live.kind==='protocol'){
-      const {progress,task,steps,config}=live;if(task.type==='timer'){
-        const started=progress.timers[task.id];if(!started){progress.timers[task.id]=now.toISOString();addDeveloperEvent('timer',`${task.title} started`);haptic('start');renderDeveloperRun();return}
-        if(now-new Date(started)<task.duration*60000)return;
+      const {progress,task,steps,config}=live;if(['timer','workout'].includes(task.type)){
+        const duration=task.type==='workout'?Number(task.minDuration||15):Number(task.duration||0),started=progress.timers[task.id];if(!started){progress.timers[task.id]=now.toISOString();addDeveloperEvent('timer',`${task.title} started`);haptic('start');renderDeveloperRun();return}
+        if(now-new Date(started)<duration*60000)return;
       }
-      progress.stepIndex+=1;addDeveloperEvent('completion',`${task.title} completed`);if(progress.stepIndex>=steps.length){progress.cleared=true;addDeveloperEvent('resolution',`${config.name} cleared`);haptic('clear');showSystemNotice('integrity','SIMULATED PROTOCOL CLEARED',`${config.name} completed inside the sandbox.`,1900)}else haptic('tap');renderDeveloperRun();return;
+      progress.stepIndex+=1;addDeveloperEvent('completion',`${task.title} completed`);if(progress.stepIndex>=steps.length){progress.cleared=true;addDeveloperEvent('resolution',`${config.name} cleared`);haptic('clear');showSystemNotice('diagnostic','SIMULATED PROTOCOL CLEARED',`${config.name} completed inside the sandbox.`,1900)}else haptic('tap');renderDeveloperRun();return;
     }
     if(live.kind==='class'){
-      const {record,classMode,entry}=live;if(['approaching','checkin','resolve'].includes(classMode)){record.checkedInAt=now.toISOString();record.status=classMode==='approaching'?'early':classMode==='resolve'?'present':now-timeOnDate(now,entry.start)<=10*60000?'present':'late';if(classMode==='resolve'){record.finalized=true;record.dismissedAt=now.toISOString()}addDeveloperEvent('attendance',`${entry.subject} marked ${record.status}`);haptic('attendance');showSystemNotice('integrity','SIMULATED ATTENDANCE RECORDED',`${entry.subject} · ${record.status.toUpperCase()}`,1800)}else{record.finalized=true;record.dismissedAt=now.toISOString();addDeveloperEvent('attendance',`${entry.subject} dismissed`);haptic('dismissal');showSystemNotice('integrity','SIMULATED CLASS DISMISSED',`${entry.subject} finalized inside the sandbox.`,1800)}renderDeveloperRun();
+      const {record,classMode,entry}=live;if(['approaching','checkin','resolve'].includes(classMode)){record.checkedInAt=now.toISOString();record.status=classMode==='approaching'?'early':classMode==='resolve'?'present':now-timeOnDate(now,entry.start)<=10*60000?'present':'late';if(classMode==='resolve'){record.finalized=true;record.dismissedAt=now.toISOString()}addDeveloperEvent('attendance',`${entry.subject} marked ${record.status}`);haptic('attendance');showSystemNotice('diagnostic','SIMULATED ATTENDANCE RECORDED',`${entry.subject} · ${record.status.toUpperCase()}`,1800)}else{record.finalized=true;record.dismissedAt=now.toISOString();addDeveloperEvent('attendance',`${entry.subject} dismissed`);haptic('dismissal');showSystemNotice('diagnostic','SIMULATED CLASS DISMISSED',`${entry.subject} finalized inside the sandbox.`,1800)}renderDeveloperRun();
     }
   };
-  const previewDeveloperHaptic=()=>{if(!developerRunSession)return;const kind=$('#developerLabEvent').value;haptic(kind);addDeveloperEvent('haptic',`Previewed ${kind} vibration pattern`);showSystemNotice('integrity','HAPTIC PREVIEW',`${kind.toUpperCase()} pattern triggered.`,1600)};
+  const previewDeveloperHaptic=()=>{if(!developerRunSession)return;const kind=$('#developerLabEvent').value;haptic(kind);addDeveloperEvent('haptic',`Previewed ${kind} vibration pattern`);showSystemNotice('diagnostic','HAPTIC PREVIEW',`${kind.toUpperCase()} pattern triggered.`,1600)};
   const sendDeveloperTestNotification=async()=>{if(!developerRunSession)return;const kind=$('#developerLabEvent').value;if(!('Notification' in window)){showBreachWarning('NOTIFICATIONS UNSUPPORTED','This browser cannot send a local test alert.');return}let permission=Notification.permission;if(permission==='default')permission=await Notification.requestPermission();if(permission!=='granted'){showBreachWarning('ALERT PERMISSION REQUIRED','Allow notifications before running the alert laboratory.');return}try{new Notification(`ASCEND TEST · ${kind.toUpperCase()}`,{body:'Developer Test Mode notification. Live schedule records are unchanged.',tag:`ascend-test-${Date.now()}`,icon:'assets/icon-192.png'});addDeveloperEvent('notification',`Sent ${kind} test notification`);showSystemNotice('alert','TEST ALERT SENT','The notification laboratory completed successfully.',1800)}catch(error){showBreachWarning('TEST ALERT FAILED',error.message||'Notification could not be created.')}};
   const exitDeveloperRun=(returnToPanel=false)=>{
     stopDeveloperClock();cancelHold('developer-run');$('#developerRunFill').style.width='0%';const returnDirect=developerRunSession?.returnDirect??true,overlay=$('#developerRunOverlay');overlay.classList.remove('developer-run-visible');overlay.hidden=true;delete overlay.dataset.scenario;delete overlay.dataset.mode;$('#developerRunCard').classList.remove('developer-run-card-lab');$('#developerRunDetail').hidden=false;document.body.classList.remove('developer-test-running');developerRunSession=null;
@@ -1848,14 +1876,14 @@
   };
   const startDeveloperRunAction=event=>{if(!developerRunSession||!developerRunSession.currentState?.action||$('#developerRunAction').disabled)return;event?.preventDefault();beginHold('developer-run',1200,progress=>{$('#developerRunFill').style.width=`${progress*100}%`},completeDeveloperRun)};
   const runDeveloperTest=()=>launchDeveloperRun({mode:'live'});
-  const resetDeveloperTest=()=>{state.system.developerTest={enabled:false,unlocked:true,scenario:'live',simulatedDate:null,runs:0,lastResult:null,sandboxMode:'profile',reports:[],labHistory:[]};save({silent:true});renderDeveloperTest();showSystemNotice('integrity','TEST HISTORY CLEARED','Developer sandbox history was reset.',1600)};
+  const resetDeveloperTest=()=>{state.system.developerTest={enabled:false,unlocked:true,scenario:'live',simulatedDate:null,runs:0,lastResult:null,sandboxMode:'profile',reports:[],labHistory:[]};save({silent:true});renderDeveloperTest();showSystemNotice('diagnostic','TEST HISTORY CLEARED','Developer sandbox history was reset.',1600)};
   const renderRecoverySystem=()=>{setControlView('recoverySystemView');const snapshots=S.listSnapshots(),rollbacks=S.listRollbackPoints();$('#recoverySystemSummary').innerHTML=`<div><span>SAFE MODE</span><strong>${state.system.safeMode?'ACTIVE':'STANDBY'}</strong></div><div><span>SNAPSHOTS</span><strong>${snapshots.length}</strong></div><div><span>ROLLBACKS</span><strong>${rollbacks.length}</strong></div><div><span>LAST BOOT</span><strong>${state.system.lastSuccessfulBoot?formatShortDate(state.system.lastSuccessfulBoot):'PENDING'}</strong></div>`;$('#toggleSafeMode').textContent=state.system.safeMode?'Exit Emergency Safe Mode':'Emergency Safe Mode'};
-  const toggleSafeMode=()=>{state.system.safeMode=!state.system.safeMode;state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'integrity',message:`Emergency Safe Mode ${state.system.safeMode?'enabled':'disabled'}.`});save({silent:true});applySafeMode();renderRecoverySystem()};
+  const toggleSafeMode=()=>{state.system.safeMode=!state.system.safeMode;state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'recovery',message:`Emergency Safe Mode ${state.system.safeMode?'enabled':'disabled'}.`});save({silent:true});applySafeMode();renderRecoverySystem()};
   const openEmergencyRecovery=()=>{$('#emergencyRecoveryOverlay').hidden=false;$('#emergencyRestoreSnapshot').disabled=!S.listSnapshots().length};
   const closeEmergencyRecovery=()=>{$('#emergencyRecoveryOverlay').hidden=true};
   const synchronizeAdvancedSystems=()=>{const before=JSON.stringify({quest:state.quests?.daily?.date,rules:state.academicTasks.length,debriefs:state.weeklyDebriefs?.length,pending:state.timezone?.pending});ensureDailyQuest();const generated=generateRecurringTasks();ensureWeeklyDebrief();const changedTimezone=detectTimezoneChange();const watchdogDate=state.system.watchdog?.lastRun?S.dateKey(new Date(state.system.watchdog.lastRun)):'';if(watchdogDate!==S.dateKey())runDataConsistencyWatchdog(false);if(generated||changedTimezone||before!==JSON.stringify({quest:state.quests?.daily?.date,rules:state.academicTasks.length,debriefs:state.weeklyDebriefs?.length,pending:state.timezone?.pending}))save({silent:true})};
 
-  const controlViews=['controlHomeView','academicHomeView','profileView','settingsView','attendanceView','systemIntegrityView','scheduleExceptionsView','dataBackupView','academicTasksView','conflictScanView','advancedSystemHomeView','updatesRollbackView','diagnosticsView','externalRemindersView','developerTestView','recoverySystemView','scheduleOverviewView','scheduleEditView'];
+  const controlViews=['controlHomeView','academicHomeView','profileView','settingsView','attendanceView','systemReliabilityView','scheduleExceptionsView','dataBackupView','academicTasksView','conflictScanView','advancedSystemHomeView','updatesRollbackView','diagnosticsView','externalRemindersView','developerTestView','recoverySystemView','scheduleOverviewView','scheduleEditView'];
   const setControlView=view=>{
     controlUi.view=view;
     controlViews.forEach(id=>{const node=document.getElementById(id);if(node)node.hidden=id!==view});
@@ -1940,30 +1968,24 @@
   const renderAcademicHome=()=>{
     setControlView('academicHomeView');const academic=overallAcademicStats();$('#scheduleHomeCount').textContent=activeSchedule().length;$('#academicHomeXp').textContent=academic.xp;
   };
-  const renderSystemIntegrity=async()=>{
-    setControlView('systemIntegrityView');
+  const renderReliability=async()=>{
+    setControlView('systemReliabilityView');
     const snapshots=S.listSnapshots();const report=await storageReport();const percent=Math.min(999,Math.round(report.ratio*100));
-    $('#integrityClockStatus').textContent=state.integrity.clockStatus==='flagged'?'FLAGGED':'TRUSTED';
-    $('#integrityClockStatus').classList.toggle('critical-text',state.integrity.clockStatus==='flagged');
-    $('#integrityStorageStatus').textContent=report.ratio>=.8?'HIGH':`${percent}%`;
-    $('#integritySnapshotCount').textContent=`${snapshots.length} / ${skillEquipped('archive-core')?10:7}`;
-    $('#integrityNotificationStatus').textContent=state.settings.notifications&&('Notification' in window)&&Notification.permission==='granted'?'ON':'OFF';
-    $('#integrityCopy').textContent=state.integrity.clockStatus==='flagged'?'Clock verification is flagged, but the progression reward hold is temporarily disabled.':`Timeline trusted · reward hold disabled · ${state.timezone?.name||S.timezoneName()} · UTC ${timezoneOffsetLabel(state.timezone?.offset??S.timezoneOffset())}.`;
+    $('#reliabilityTimezoneStatus').textContent=`UTC ${timezoneOffsetLabel(state.timezone?.offset??S.timezoneOffset())}`;
+    $('#reliabilityStorageStatus').textContent=report.ratio>=.8?'HIGH':`${percent}%`;
+    $('#reliabilitySnapshotCount').textContent=`${snapshots.length} / ${skillEquipped('archive-core')?10:7}`;
+    $('#reliabilityNotificationStatus').textContent=state.settings.notifications&&('Notification' in window)&&Notification.permission==='granted'?'ON':'OFF';
+    $('#reliabilityCopy').textContent=`Local recovery and alerts remain available offline · ${state.timezone?.name||S.timezoneName()}.`;
     $('#reviewTimezone').textContent=state.timezone?.pending?'Review Detected Timezone':'Review Timezone';
-    $('#verifyClock').hidden=state.integrity.clockStatus!=='flagged';
     $('#toggleNotifications b').textContent=state.settings.notifications?'Disable Local Alerts':'Enable Local Alerts';
     $('#toggleWakeLock b').textContent=`Keep Screen Awake: ${state.settings.keepAwake?'On':'Off'}`;
     $('#restoreLatestSnapshot').disabled=!snapshots.length;
-  };
-  const verifyDeviceClock=()=>{
-    state.integrity.clockStatus='trusted';state.integrity.rewardHold=false;state.integrity.lastFlag=null;state.integrity.lastVerifiedAt=new Date().toISOString();state.integrity.lastWallTime=new Date().toISOString();clockBaseline={wall:Date.now(),mono:performance.now()};clockAlertShown=false;
-    const released=releaseHeldRewards();state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'integrity',message:`Current device time verified. ${released} held reward(s) released.`});save({silent:true});showSystemNotice('integrity','DEVICE TIME VERIFIED',released?`${released} held reward(s) released.`:'Timeline trust restored.',3200);renderSystemIntegrity();
   };
   const toggleNotifications=async()=>{
     if(!('Notification' in window)){showBreachWarning('ALERTS NOT SUPPORTED','This browser does not support local notifications.');return}
     if(!state.settings.notifications){const permission=await Notification.requestPermission();if(permission!=='granted'){showBreachWarning('ALERT PERMISSION DENIED','Enable notifications in browser or app settings first.');return}state.settings.notifications=true}
     else state.settings.notifications=false;
-    state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'integrity',message:`Local alerts ${state.settings.notifications?'enabled':'disabled'}.`});save();renderSystemIntegrity();
+    state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'system',message:`Local alerts ${state.settings.notifications?'enabled':'disabled'}.`});save();renderReliability();
   };
   const restoreLatestSnapshot=()=>{
     const latest=S.listSnapshots()[0];if(!latest){showBreachWarning('NO SNAPSHOT','No automatic recovery snapshot is available.');return}
@@ -2291,7 +2313,7 @@
     cancelHold();resetBrandAccessVisual();brandHoldStartedAt=0;brandHoldProtocolActive=false;brandHoldDeveloperReady=false;
     state.system=state.system||{};state.system.developerTest=state.system.developerTest||{};state.system.developerTest.unlocked=true;
     save({silent:true});controlUi.directDeveloper=true;releaseWakeLock();launchDeveloperRun({mode:'live',sandboxMode:'profile',simulatedAt:Date.now(),returnDirect:true});
-    showSystemNotice('integrity','LIVE SIMULATOR OPEN','Change simulated time and watch ASCEND react without changing live progress.',2100);
+    showSystemNotice('diagnostic','LIVE SIMULATOR OPEN','Change simulated time and watch ASCEND react without changing live progress.',2100);
   };
   const startBrandAccessHold=()=>{
     if(!$('#scheduleOverlay').hidden||!$('#emergencyOverlay').hidden)return;
@@ -2303,7 +2325,7 @@
       brand.style.setProperty('--brand-access-glow',`${8+Math.min(1,elapsed/3000)*13}px`);
       brand.style.setProperty('--brand-access-scale',String(1+Math.min(1,elapsed/3000)*.04));
       if(brandHoldProtocolActive&&elapsed>=3000){
-        if(!brandHoldDeveloperReady){brandHoldDeveloperReady=true;haptic('hold-final');showSystemNotice('integrity','DEVELOPER ACCESS READY','Release now for Developer Mode, or keep holding for Emergency Override.',2200)}
+        if(!brandHoldDeveloperReady){brandHoldDeveloperReady=true;haptic('hold-final');showSystemNotice('diagnostic','DEVELOPER ACCESS READY','Release now for Developer Mode, or keep holding for Emergency Override.',2200)}
         brand.classList.remove('developer-arming','developer-ready');brand.classList.add('emergency-arming');
         brand.style.setProperty('--brand-access-progress',`${clamp((elapsed-3000)/3000,0,1)*360}deg`);
       }else{
@@ -2430,7 +2452,7 @@
     $('#openAcademicTasks').addEventListener('click',()=>{controlUi.taskTab='tasks';renderAcademicTasks()});
     $('#openAdvancedSystem').addEventListener('click',renderAdvancedSystemHome);
     $('#openDataBackup').addEventListener('click',()=>{backupUi={pending:null,fileName:''};renderDataBackup()});
-    $('#openSystemIntegrity').addEventListener('click',renderSystemIntegrity);
+    $('#openSystemReliability').addEventListener('click',renderReliability);
     $('#academicBack').addEventListener('click',renderControlHome);
     $('#profileBack').addEventListener('click',closeScheduleOverlay);
     $('#settingsBack').addEventListener('click',()=>{settingsUi={pending:null,fileName:'',kind:''};controlUi.profilePage=0;renderProfile()});
@@ -2451,10 +2473,10 @@
     $('#academicTasksBack').addEventListener('click',renderAcademicHome);
     $('#advancedSystemBack').addEventListener('click',renderAcademicHome);
     $('#dataBackupBack').addEventListener('click',()=>{backupUi={pending:null,fileName:''};renderRecoverySystem()});
-    $('#systemIntegrityBack').addEventListener('click',renderAdvancedSystemHome);
+    $('#systemReliabilityBack').addEventListener('click',renderAdvancedSystemHome);
     $('#taskManagerTabs').addEventListener('click',event=>{const button=event.target.closest('[data-task-tab]');if(!button)return;controlUi.taskTab=button.dataset.taskTab;renderTaskManager()});
     $('#taskManagerContent').addEventListener('click',handleTaskManagerAction);
-    $('#advancedSystemHomeView').addEventListener('click',event=>{const button=event.target.closest('[data-advanced-view]');if(!button||button.classList.contains('developer-entry'))return;const view=button.dataset.advancedView;if(view==='updatesRollbackView')renderUpdatesRollback();else if(view==='systemIntegrityView')renderSystemIntegrity();else if(view==='diagnosticsView')renderDiagnostics();else if(view==='externalRemindersView')renderExternalReminders();else if(view==='recoverySystemView')renderRecoverySystem()});
+    $('#advancedSystemHomeView').addEventListener('click',event=>{const button=event.target.closest('[data-advanced-view]');if(!button||button.classList.contains('developer-entry'))return;const view=button.dataset.advancedView;if(view==='updatesRollbackView')renderUpdatesRollback();else if(view==='systemReliabilityView')renderReliability();else if(view==='diagnosticsView')renderDiagnostics();else if(view==='externalRemindersView')renderExternalReminders();else if(view==='recoverySystemView')renderRecoverySystem()});
     const developerEntry=$('#advancedSystemHomeView .developer-entry');
     developerEntry.addEventListener('click',()=>{state.system.developerTest.unlocked=true;save({silent:true});controlUi.directDeveloper=false;renderDeveloperTest()});
     $('#updatesRollbackBack').addEventListener('click',renderAdvancedSystemHome);
@@ -2492,17 +2514,16 @@
     $('#openEmergencyRecovery').addEventListener('click',openEmergencyRecovery);
     $('#reviewTimezone').addEventListener('click',showTimezoneOverlay);
     $('#confirmTimezoneTravel').addEventListener('click',confirmTimezoneChange);
-    $('#flagTimezoneClock').addEventListener('click',rejectTimezoneChange);
+    $('#keepPreviousTimezone').addEventListener('click',rejectTimezoneChange);
     $('#closeTimezoneOverlay').addEventListener('click',()=>{$('#timezoneOverlay').hidden=true});
     $('#timezoneOverlay').addEventListener('click',event=>{if(event.target===$('#timezoneOverlay'))$('#timezoneOverlay').hidden=true});
     $('#emergencyRecoveryOverlay').addEventListener('click',event=>{if(event.target===$('#emergencyRecoveryOverlay'))closeEmergencyRecovery()});
     $('#emergencyExportBackup').addEventListener('click',exportDataBackup);
     $('#emergencyRestoreSnapshot').addEventListener('click',()=>{closeEmergencyRecovery();restoreLatestSnapshot()});
     $('#emergencyContinue').addEventListener('click',()=>{state.system.safeMode=true;save({silent:true});applySafeMode();closeEmergencyRecovery();completeBootGuard()});
-    $('#verifyClock').addEventListener('click',verifyDeviceClock);
     $('#toggleNotifications').addEventListener('click',toggleNotifications);
-    $('#toggleWakeLock').addEventListener('click',()=>{state.settings.keepAwake=!state.settings.keepAwake;if(!state.settings.keepAwake)releaseWakeLock();else if(activeProtocolRecord())requestWakeLock();save();renderSystemIntegrity()});
-    $('#createIntegritySnapshot').addEventListener('click',()=>{S.createDailySnapshot(state,true);state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'snapshot',message:'Manual recovery snapshot created.'});save({silent:true});showSystemNotice('snapshot','SNAPSHOT CREATED','A known-good recovery point was stored locally.',2600);renderSystemIntegrity()});
+    $('#toggleWakeLock').addEventListener('click',()=>{state.settings.keepAwake=!state.settings.keepAwake;if(!state.settings.keepAwake)releaseWakeLock();else if(activeProtocolRecord())requestWakeLock();save();renderReliability()});
+    $('#createRecoverySnapshot').addEventListener('click',()=>{S.createDailySnapshot(state,true);state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'snapshot',message:'Manual recovery snapshot created.'});save({silent:true});showSystemNotice('snapshot','SNAPSHOT CREATED','A known-good recovery point was stored locally.',2600);renderReliability()});
     $('#restoreLatestSnapshot').addEventListener('click',restoreLatestSnapshot);
     $('#exportBackup').addEventListener('click',exportDataBackup);
     $('#chooseBackup').addEventListener('click',()=>$('#backupFileInput').click());
@@ -2634,14 +2655,13 @@
   };
 
   const tick=()=>{
-    updateClock();checkClockIntegrity();
+    updateClock();
     const currentDate=S.dateKey();if(currentDate!==advancedSyncDate){advancedSyncDate=currentDate;synchronizeAdvancedSystems();if(state.timezone?.pending&&!timezonePromptShown)setTimeout(showTimezoneOverlay,120)}
-    if(state.initialized&&state.integrity?.clockStatus==='trusted'&&Date.now()-integrityHeartbeatAt>=60000){integrityHeartbeatAt=Date.now();state.integrity.lastWallTime=new Date().toISOString();S.save(state)}
     if(orientationBlocked||holdSession||transitionLocked||customFormEditing||!$('#scheduleOverlay').hidden||!$('#developerRunOverlay').hidden||state.system.safeMode)return;renderApp();
   };
   const emergencyBoot=beginBootGuard();
   synchronizeAdvancedSystems();advancedSyncDate=S.dateKey();applySafeMode();
-  wireEvents();updateOrientationGuard();checkClockIntegrity();renderApp();dismissLaunchSplash();setupServiceWorker();if(state.initialized)requestPersistentStorage();
+  wireEvents();updateOrientationGuard();renderApp();dismissLaunchSplash();setupServiceWorker();if(state.initialized)requestPersistentStorage();
   bootCompletionTimer=setTimeout(completeBootGuard,2600);
   if(emergencyBoot||state.system?.recoveredFrom==='startup-guard')setTimeout(openEmergencyRecovery,700);
   if(state.timezone?.pending)setTimeout(showTimezoneOverlay,900);

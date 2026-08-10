@@ -6,12 +6,12 @@
   const SNAPSHOT_KEY='ascend_discipline_protocol_snapshots_v1';
   const ROLLBACK_KEY='ascend_discipline_protocol_rollbacks_v1';
   const LEGACY_KEYS=['ascend_discipline_protocol_v6','ascend_discipline_protocol_v5','ascend_discipline_protocol_v4','ascend_strict_system_v3','ascend_automatic_year_system_v2','ascend_personal_growth_system_v1'];
-  const VERSION=20;
+  const VERSION=21;
   const BACKUP_VERSION=5;
   const ROUTINE_LOG_LIMIT=420;
   const SNAPSHOT_LIMIT=7;
   const ROLLBACK_LIMIT=4;
-  const PERMANENT_LOG_TYPES=new Set(['system','level','rank','mastery','achievement','backup','restore','emergency','attendance-correction','integrity','recovery','snapshot','boss','migration','quest','skill','weekly','test','watchdog','reminder']);
+  const PERMANENT_LOG_TYPES=new Set(['system','level','rank','mastery','achievement','backup','restore','emergency','attendance-correction','recovery','snapshot','boss','migration','quest','skill','weekly','test','watchdog','reminder']);
   const nowIso=()=>new Date().toISOString();
   const dateKey=(date=new Date())=>`${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
   const timezoneName=()=>{try{return Intl.DateTimeFormat().resolvedOptions().timeZone||'Local Time'}catch(error){return'Local Time'}};
@@ -50,8 +50,7 @@
     skills:{points:0,unlocked:[],equipped:[]},
     weeklyDebriefs:[],
     settings:{sound:true,haptics:true,keepAwake:true,notifications:false,notificationLeadMinutes:10,timeFormat:'12',externalCalendarConfirmed:false,externalCalendarExportedAt:null,externalCalendarHorizonDays:60},
-    integrity:{clockStatus:'trusted',rewardHold:false,lastWallTime:null,lastVerifiedAt:null,lastFlag:null,lastSessionDelta:0},
-    timezone:{name:timezoneName(),offset:timezoneOffset(),confirmedAt:nowIso(),pending:null,history:[]},
+    timezone:{name:timezoneName(),offset:timezoneOffset(),confirmedAt:nowIso(),pending:null,ignoredDevice:null,history:[]},
     recovery:{active:false,status:'idle',sourceDate:null,reason:null,action:null,protectedDate:null,protectedProtocolId:null,completedAt:null},
     system:{recoveredFrom:null,lastStorageWarningAt:null,notificationLedger:{},safeMode:false,lastSuccessfulBoot:null,migrationHistory:[],auditTrail:[],watchdog:{lastRun:null,issues:0,repairs:0,summary:'Not run'},reminderBridge:{lastCheckAt:null,missedCount:0,lastMissedAt:null,lastExportAt:null,lastExportEvents:0},profileXpReconciliation:{version:0,completedAt:null,date:null,repairedMarkers:0,recoveredDirectiveXp:0,recoveredAttendanceXp:0,status:'pending'},developerTest:{enabled:false,unlocked:false,scenario:'free',simulatedDate:null,runs:0,lastResult:null,sandboxMode:'profile',reports:[],labHistory:[]}},
     logs:[]
@@ -63,7 +62,7 @@
     scheduledDate:record.scheduledDate||dateKey(new Date(record.createdAt||Date.now())),scheduledStart:record.scheduledStart||'00:00',scheduledEnd:record.scheduledEnd||'00:00',
     room:record.room||'',modality:record.modality||'Onsite',status:record.status||'unverified',checkInAt:record.checkInAt||null,dismissedAt:record.dismissedAt||null,
     dismissalStatus:record.dismissalStatus||null,minutesLate:Number(record.minutesLate||0),pendingXp:Number(record.pendingXp||0),xpAwarded:Number(record.xpAwarded||0),
-    profileXpAppliedAmount:Math.max(0,Number(record.profileXpAppliedAmount||0)),profileXpAppliedAt:record.profileXpAppliedAt||null,profileXpHeld:Math.max(0,Number(record.profileXpHeld||0)),
+    profileXpAppliedAmount:Math.max(0,Number(record.profileXpAppliedAmount||0)),profileXpAppliedAt:record.profileXpAppliedAt||null,
     finalized:Boolean(record.finalized),ongoingUntil:record.ongoingUntil||null,createdAt:record.createdAt||nowIso(),updatedAt:record.updatedAt||record.createdAt||nowIso(),
     timezone:record.timezone||null,corrections:Array.isArray(record.corrections)?record.corrections:[]
   });
@@ -116,16 +115,17 @@
           const legacySettled=legacyDayStatus==='failed'||(legacyDayStatus==='cleared'&&legacyRewardApplied);
           protocol.profileXpAppliedAmount=legacySettled?protocol.earnedXp:0;
         }else protocol.profileXpAppliedAmount=Math.max(0,Number(protocol.profileXpAppliedAmount||0));
-        protocol.profileXpAppliedAt=protocol.profileXpAppliedAt||null;protocol.profileXpHeld=Math.max(0,Number(protocol.profileXpHeld||0));
+        protocol.profileXpAppliedAt=protocol.profileXpAppliedAt||null;
       }
       if(protocol.status==='failed')protocol.earnedXp=0;
+      delete protocol.profileXpHeld;
       protocol.focusBreaches=Math.max(0,Number(protocol.focusBreaches||0));
       protocol.hiddenMilliseconds=Math.max(0,Number(protocol.hiddenMilliseconds||0));
     });
     day.completedProtocols=Object.values(protocols).filter(protocol=>protocol?.status==='cleared').length;
     day.failedProtocols=Object.values(protocols).filter(protocol=>protocol?.status==='failed').length;
     if(!['active','cleared','failed'].includes(day.status))day.status='active';
-    day.rewardApplied=Boolean(day.rewardApplied);day.heldXp=Math.max(0,Number(day.heldXp||0));day.timezone=day.timezone||null;
+    day.rewardApplied=Boolean(day.rewardApplied);delete day.heldXp;delete day.integrityStatus;day.timezone=day.timezone||null;
     return day;
   };
 
@@ -141,7 +141,6 @@
     const state={
       ...base,...raw,
       player:{...base.player,...(raw.player||{})},
-      integrity:{...base.integrity,...(raw.integrity||{})},
       timezone:{...base.timezone,...(raw.timezone||{})},
       recovery:{...base.recovery,...(raw.recovery||{})},
       quests:{...base.quests,...(raw.quests||{})},
@@ -149,6 +148,7 @@
       system:{...base.system,...(raw.system||{}),reminderBridge:{...base.system.reminderBridge,...(raw.system?.reminderBridge||{})},profileXpReconciliation:{...base.system.profileXpReconciliation,...(raw.system?.profileXpReconciliation||{})},developerTest:{...base.system.developerTest,...(raw.system?.developerTest||{})}},
       settings:{...base.settings,...rawSettings}
     };
+    delete state.integrity;
     state.version=VERSION;
     state.settings.sound=typeof rawSettings.sound==='boolean'?rawSettings.sound:base.settings.sound;
     state.settings.haptics=typeof rawSettings.haptics==='boolean'?rawSettings.haptics:base.settings.haptics;
@@ -169,12 +169,10 @@
     state.academicTasks.forEach(task=>{task.dependencyIds=task.dependencyIds.filter(id=>id!==task.id&&validTaskIds.has(id))});
     state.recurringTaskRules=Array.isArray(raw.recurringTaskRules)?raw.recurringTaskRules.map(normalizeRule):[];
     state.tradingNotes=Array.isArray(raw.tradingNotes)?raw.tradingNotes:[];
-    state.logs=pruneLogs(raw.logs);
+    state.logs=pruneLogs(Array.isArray(raw.logs)?raw.logs.map(log=>log?.type==='integrity'?{...log,type:'system'}:log):raw.logs);
     state.player.achievementUnlocks=state.player.achievementUnlocks&&typeof state.player.achievementUnlocks==='object'&&!Array.isArray(state.player.achievementUnlocks)?state.player.achievementUnlocks:{};
     state.player.achievementSeen=Array.isArray(state.player.achievementSeen)?[...new Set(state.player.achievementSeen.map(String))]:[];
     if(!state.player.pendingRank)state.player.pendingRank=pendingRankFor(state.player.level,state.player.rank);
-    if(!['trusted','flagged'].includes(state.integrity.clockStatus))state.integrity.clockStatus='trusted';
-    state.integrity.rewardHold=false; // Temporary reward-hold bypass; integrity diagnostics remain available.
     state.system.notificationLedger=state.system.notificationLedger&&typeof state.system.notificationLedger==='object'&&!Array.isArray(state.system.notificationLedger)?state.system.notificationLedger:{};
     state.system.migrationHistory=Array.isArray(state.system.migrationHistory)?state.system.migrationHistory:[];
     state.system.auditTrail=Array.isArray(state.system.auditTrail)?state.system.auditTrail.slice(-240):[];
@@ -226,18 +224,30 @@
 
   const migrateLegacy=raw=>{
     const fromVersion=Number(raw?.version||0);createPreUpdateRollback(raw,fromVersion,'Automatic pre-migration rollback');
+    const heldDirectiveKeys=[];const heldAttendanceIds=[];
+    Object.entries(raw?.dayRecords||{}).forEach(([date,day])=>{
+      if(!day||day.rewardApplied||!(Number(day.heldXp||0)>0||day.integrityStatus==='held'))return;
+      Object.entries(day.protocols||{}).forEach(([protocolId,protocol])=>{
+        if(protocol?.status==='cleared'&&Number(protocol.earnedXp||0)>0&&!protocol.profileXpAppliedAt)heldDirectiveKeys.push(`${date}|${protocolId}`);
+      });
+    });
+    (raw?.attendanceRecords||[]).forEach(record=>{if(Number(record?.profileXpHeld||0)>0&&!record.profileXpAppliedAt)heldAttendanceIds.push(record.id)});
     const state=normalizeCurrent(raw||{});
-    let currentDayXpRepair=0;
+    let currentDayXpRepair=0,legacyHeldXpReopened=0;
     if(fromVersion<18){
       const today=state.dayRecords?.[dateKey()];
       if(today?.status==='failed')Object.values(today.protocols||{}).forEach(protocol=>{
         const earned=Math.max(0,Number(protocol?.earnedXp||0)),applied=Math.max(0,Number(protocol?.profileXpAppliedAmount||0));
-        if(protocol?.status==='cleared'&&earned>0&&applied===earned&&!protocol.profileXpAppliedAt){protocol.profileXpAppliedAmount=0;protocol.profileXpHeld=0;currentDayXpRepair+=earned}
+        if(protocol?.status==='cleared'&&earned>0&&applied===earned&&!protocol.profileXpAppliedAt){protocol.profileXpAppliedAmount=0;currentDayXpRepair+=earned}
       });
     }
-    const migration={id:uid('migration'),at:nowIso(),fromVersion,toVersion:VERSION,label:'Temporary integrity reward-hold bypass'};
+    heldDirectiveKeys.forEach(key=>{const [date,protocolId]=key.split('|'),protocol=state.dayRecords?.[date]?.protocols?.[protocolId];if(protocol?.status==='cleared'&&!protocol.profileXpAppliedAt){legacyHeldXpReopened+=Math.max(0,Number(protocol.earnedXp||0)-Number(protocol.profileXpAppliedAmount||0));protocol.profileXpAppliedAmount=0}});
+    heldAttendanceIds.forEach(id=>{const record=state.attendanceRecords.find(item=>item.id===id);if(record&&!record.profileXpAppliedAt){legacyHeldXpReopened+=Math.max(0,Number(record.xpAwarded||0)-Number(record.profileXpAppliedAmount||0));record.profileXpAppliedAmount=0}});
+    if(state.quests?.daily?.id==='clean-timeline')state.quests.daily=null;
+    if(fromVersion<21)state.settings.externalCalendarConfirmed=false;
+    const migration={id:uid('migration'),at:nowIso(),fromVersion,toVersion:VERSION,label:'Workout directive and legacy reward cleanup'};
     state.system.migrationHistory.push(migration);
-    state.logs.push({id:uid('log'),at:migration.at,type:'migration',message:`ASCEND data migrated from schema ${fromVersion||'legacy'} to ${VERSION}. A rollback point was retained.${currentDayXpRepair?` ${currentDayXpRepair} legacy current-day XP reopened for reconciliation.`:''}`});
+    state.logs.push({id:uid('log'),at:migration.at,type:'migration',message:`ASCEND data migrated from schema ${fromVersion||'legacy'} to ${VERSION}. A rollback point was retained.${currentDayXpRepair?` ${currentDayXpRepair} legacy current-day XP reopened for reconciliation.`:''}${legacyHeldXpReopened?` ${legacyHeldXpReopened} previously held XP reopened for immediate Profile synchronization.`:''}`});
     state.logs=pruneLogs(state.logs);return state;
   };
 
@@ -250,7 +260,7 @@
   const recoverState=()=>{
     const attempts=[['recovery',store.getItem(RECOVERY_KEY)],...readList(SNAPSHOT_KEY).slice().reverse().map(snapshot=>[`snapshot:${snapshot.date}`,JSON.stringify(snapshot.state)]),...readList(ROLLBACK_KEY).slice().reverse().map(point=>[`rollback:${point.fromVersion}`,JSON.stringify(point.state)])];
     for(const [source,text] of attempts){
-      try{const state=parseStateText(text);state.system.recoveredFrom=source;state.system.safeMode=true;state.logs.push({id:uid('log'),at:nowIso(),type:'integrity',message:`Automatic data recovery completed from ${source}. Safe Mode enabled.`});store.setItem(KEY,JSON.stringify(state));return state}catch(error){}
+      try{const state=parseStateText(text);state.system.recoveredFrom=source;state.system.safeMode=true;state.logs.push({id:uid('log'),at:nowIso(),type:'recovery',message:`Automatic data recovery completed from ${source}. Safe Mode enabled.`});store.setItem(KEY,JSON.stringify(state));return state}catch(error){}
     }
     const clean=initialState();clean.system.recoveredFrom='clean-state';clean.system.safeMode=true;return clean;
   };
