@@ -50,6 +50,9 @@
   let timezonePromptShown=false;
   let customFormEditing=false;
   const BOOT_GUARD_KEY='ascend_boot_guard_v1';
+  // Temporary: keep integrity diagnostics active, but do not block progression rewards.
+  const INTEGRITY_REWARD_HOLD_ENABLED=false;
+  const rewardHoldActive=()=>INTEGRITY_REWARD_HOLD_ENABLED&&Boolean(state.integrity?.rewardHold);
 
   const $=selector=>document.querySelector(selector);
   const glyphNames=new Set(['apex','signal','sleep','wake','confirm','reset','water','shine','stretch','bath','meal','list','work','grid','trade','close','next','academic','success','failure','profile','data','lock','chevron-left','chevron-right','emergency','update','offline','save','shield','bell','calendar','recovery','clock','attribute','quest','skill','lab','diagnostic','timezone','rollback','recurring','dependency','weekly']);
@@ -161,10 +164,10 @@
   const flagClockIntegrity=(reason,delta=0)=>{
     state.integrity=state.integrity||{};
     if(state.integrity.clockStatus==='flagged')return;
-    state.integrity.clockStatus='flagged';state.integrity.rewardHold=true;state.integrity.lastFlag={at:new Date().toISOString(),reason,delta:Math.round(delta)};
-    state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'integrity',message:`Clock integrity flagged: ${reason}. Rewards placed on hold.`});
+    state.integrity.clockStatus='flagged';state.integrity.rewardHold=INTEGRITY_REWARD_HOLD_ENABLED;state.integrity.lastFlag={at:new Date().toISOString(),reason,delta:Math.round(delta)};
+    state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'integrity',message:`Clock integrity flagged: ${reason}. Reward hold is temporarily disabled.`});
     S.save(state);
-    if(!clockAlertShown){clockAlertShown=true;showBreachWarning('DEVICE TIME CHANGE DETECTED','Deadlines continue, but XP rewards are held until the current device time is verified.');showSystemNotice('integrity','REWARD HOLD ACTIVE','Verify device time in System Integrity.',3600)}
+    if(!clockAlertShown){clockAlertShown=true;showSystemNotice('integrity','TIME CHECK FLAGGED','Integrity monitoring remains active, but progression rewards continue normally.',3000)}
   };
   const checkClockIntegrity=()=>{
     const now=Date.now(),expected=clockBaseline.wall+(performance.now()-clockBaseline.mono),drift=now-expected;
@@ -385,17 +388,17 @@
     if(!protocol||protocol.status!=='cleared')return 0;
     const target=Math.max(0,Number(protocol.earnedXp||0)),applied=Math.max(0,Number(protocol.profileXpAppliedAmount||0)),delta=Math.max(0,target-applied);
     if(!delta){protocol.profileXpHeld=0;return 0}
-    if(state.integrity?.rewardHold){protocol.profileXpHeld=delta;return 0}
+    if(rewardHoldActive()){protocol.profileXpHeld=delta;return 0}
     state.player.totalXp=Math.max(0,Number(state.player.totalXp||0)+delta);protocol.profileXpAppliedAmount=target;protocol.profileXpAppliedAt=when.toISOString();protocol.profileXpHeld=0;return delta;
   };
   const syncAttendanceProfileXp=(record,when=new Date())=>{
     if(!record)return 0;
     const target=record.finalized?Math.max(0,Number(record.xpAwarded||0)):0,applied=Math.max(0,Number(record.profileXpAppliedAmount||0)),delta=target-applied;
-    if(delta>0&&state.integrity?.rewardHold){record.profileXpHeld=delta;return 0}
+    if(delta>0&&rewardHoldActive()){record.profileXpHeld=delta;return 0}
     if(!delta){record.profileXpHeld=0;return 0}
     state.player.totalXp=Math.max(0,Number(state.player.totalXp||0)+delta);record.profileXpAppliedAmount=target;record.profileXpAppliedAt=when.toISOString();record.profileXpHeld=0;return delta;
   };
-  const PROFILE_XP_RECONCILIATION_VERSION=53;
+  const PROFILE_XP_RECONCILIATION_VERSION=54;
   const reconcileCurrentDayProfileXp=()=>{
     state.system=state.system||{};
     const previous=state.system.profileXpReconciliation||{};
@@ -425,7 +428,7 @@
     state.system.profileXpReconciliation={version:PROFILE_XP_RECONCILIATION_VERSION,completedAt:now.toISOString(),date,repairedMarkers,recoveredDirectiveXp:directiveXp,recoveredAttendanceXp:attendanceXp,status:heldXp>0?'held':'complete'};
     state.logs.push({id:S.uid('log'),at:now.toISOString(),type:'migration',message:`Profile XP reconciliation completed for ${date}.${repairedMarkers?` ${repairedMarkers} unproven legacy XP marker${repairedMarkers===1?'':'s'} repaired.`:''}${recovered?` ${recovered} XP added to Profile.`:''}${heldXp?` ${heldXp} XP remains held pending time verification.`:''}`});
     save({silent:true});
-    if(recovered&&!state.integrity?.rewardHold)setTimeout(()=>showSystemNotice('restore','PROFILE XP RECOVERED',`+${recovered} XP synchronized from today.`,2800),250);
+    if(recovered&&!rewardHoldActive())setTimeout(()=>showSystemNotice('restore','PROFILE XP RECOVERED',`+${recovered} XP synchronized from today.`,2800),250);
     else if(heldXp)setTimeout(()=>showSystemNotice('integrity','XP FOUND · REWARD HOLD',`${heldXp} XP will release after device time is verified.`,3200),250);
     return recovered;
   };
@@ -442,7 +445,7 @@
     const completedAt=new Date().toISOString();if(!transitionProtocol(protocol,'cleared',{at:completedAt}))return;protocol.completedAt=completedAt;protocol.resolutionKey=protocol.resolutionKey||`${record.date}:${protocol.id}:cleared`;protocol.earnedXp=calculateProtocolXp(record,protocol);
     record.completedProtocols+=1;
     const creditedXp=creditProtocolProfileXp(protocol,new Date(completedAt));
-    state.logs.push({id:S.uid('log'),at:protocol.completedAt,type:'clear',message:`${protocol.name} cleared for ${protocol.earnedXp} XP${creditedXp?' · added to Profile':state.integrity?.rewardHold?' · held pending time verification':''}.`});
+    state.logs.push({id:S.uid('log'),at:protocol.completedAt,type:'clear',message:`${protocol.name} cleared for ${protocol.earnedXp} XP${creditedXp?' · added to Profile':rewardHoldActive()?' · held pending time verification':''}.`});
     save();
     const config=blueprint(protocol.id);
     show('protocolResultScreen');
@@ -527,8 +530,17 @@
     armRecoveryProtocol(record);
   };
   const releaseHeldRewards=()=>{
-    if(state.integrity?.rewardHold)return 0;
+    if(rewardHoldActive())return 0;
     const now=new Date();let directiveXp=0,attendanceXp=0;
+    // A held Daily Clear from an older build may contain legacy "applied" markers without proof of an actual Profile credit.
+    // Reopen only those held/unreleased days before synchronization so XP cannot remain stranded.
+    Object.values(state.dayRecords||{}).forEach(day=>{
+      if(day?.status!=='cleared'||day.rewardApplied||!Number(day.heldXp||0))return;
+      Object.values(day.protocols||{}).forEach(protocol=>{
+        const target=Math.max(0,Number(protocol?.earnedXp||0)),applied=Math.max(0,Number(protocol?.profileXpAppliedAmount||0));
+        if(protocol?.status==='cleared'&&target>0&&applied>=target&&!protocol.profileXpAppliedAt){protocol.profileXpAppliedAmount=0;protocol.profileXpHeld=target}
+      });
+    });
     Object.values(state.dayRecords||{}).forEach(day=>Object.values(day.protocols||{}).forEach(protocol=>{directiveXp+=creditProtocolProfileXp(protocol,now)}));
     state.attendanceRecords.forEach(record=>{attendanceXp+=syncAttendanceProfileXp(record,now)});
     const held=Object.values(state.dayRecords||{}).filter(day=>day.status==='cleared'&&!day.rewardApplied).sort((a,b)=>a.date.localeCompare(b.date));
@@ -551,13 +563,13 @@
     record.perfectClear=cleared&&record.onTimePercentage===100&&totalBreaches===0;
     record.weeklyBossCleared=evaluateWeeklyBoss(record,cleared,totalBreaches);
     if(cleared){
-      if(state.integrity?.rewardHold){record.heldXp=Object.values(record.protocols).reduce((sum,protocol)=>sum+Math.max(0,Number(protocol.earnedXp||0)-Number(protocol.profileXpAppliedAmount||0)),0);record.totalXp=0;record.integrityStatus='held'}
+      if(rewardHoldActive()){record.heldXp=Object.values(record.protocols).reduce((sum,protocol)=>sum+Math.max(0,Number(protocol.earnedXp||0)-Number(protocol.profileXpAppliedAmount||0)),0);record.totalXp=0;record.integrityStatus='held'}
       else applyClearedDayRewards(record,now);
     }else applyFailedDayOutcome(record);
     state.logs.push({id:S.uid('log'),at:now.toISOString(),type:record.status,message:`Day ${record.status}. ${record.completedProtocols}/${requiredProtocolCount} protocols cleared.${record.perfectClear?' Perfect Clear achieved.':''}${record.weeklyBossCleared?' Weekly Boss defeated.':''}`});
     save();
     if(cleared){
-      if(state.integrity?.rewardHold)showSystemNotice('integrity','CLEAR RECORDED · XP HELD','Verify device time to release progression rewards.',3600);
+      if(rewardHoldActive())showSystemNotice('integrity','CLEAR RECORDED · XP HELD','Verify device time to release progression rewards.',3600);
       else if(record.rankAdvanced)systemFeedback('level',`${state.player.rank}-Rank achieved.`);
       else if(record.levelAdvanced)systemFeedback('level',`Level ${state.player.level} reached.`);
       else if(record.weeklyBossCleared)systemFeedback('boss','Weekly Boss defeated.');
@@ -630,7 +642,7 @@
       record.updatedAt=when.toISOString();record.ongoingUntil=null;
     }
     const profileDelta=syncAttendanceProfileXp(record,when);
-    state.logs.push({id:S.uid('log'),at:when.toISOString(),type:'attendance',message:`${record.subjectName}: ${record.status}${record.finalized?` · ${record.xpAwarded} XP`:''}${profileDelta>0?' · added to Profile':profileDelta<0?' · Profile XP adjusted':state.integrity?.rewardHold&&record.xpAwarded?' · XP held':''}.`});
+    state.logs.push({id:S.uid('log'),at:when.toISOString(),type:'attendance',message:`${record.subjectName}: ${record.status}${record.finalized?` · ${record.xpAwarded} XP`:''}${profileDelta>0?' · added to Profile':profileDelta<0?' · Profile XP adjusted':rewardHoldActive()&&record.xpAwarded?' · XP held':''}.`});
     save();
   };
   const syncUnverifiedMeetings=(now=new Date())=>{
@@ -733,7 +745,12 @@
     if(!state.initialized)return null;
     checkClockIntegrity();finalizePastDays();
     reconcileCurrentDayProfileXp();
-    if(state.integrity?.clockStatus==='trusted'&&(Object.values(state.dayRecords||{}).some(day=>day.status==='cleared'&&!day.rewardApplied)||pendingProfileXp()))releaseHeldRewards();
+    if(Object.values(state.dayRecords||{}).some(day=>day.status==='cleared'&&!day.rewardApplied)||pendingProfileXp()){
+      const xpBefore=Math.max(0,Number(state.player.totalXp||0));
+      releaseHeldRewards();
+      const xpReleased=Math.max(0,Number(state.player.totalXp||0)-xpBefore);
+      if(xpReleased>0)setTimeout(()=>showSystemNotice('restore','REWARD HOLD LIFTED',`+${xpReleased} XP released to Profile.`,3000),180);
+    }
     const now=new Date();
     const record=createDayRecord(now);
     const minute=todayMinutes(now);
@@ -1931,7 +1948,7 @@
     $('#integrityStorageStatus').textContent=report.ratio>=.8?'HIGH':`${percent}%`;
     $('#integritySnapshotCount').textContent=`${snapshots.length} / ${skillEquipped('archive-core')?10:7}`;
     $('#integrityNotificationStatus').textContent=state.settings.notifications&&('Notification' in window)&&Notification.permission==='granted'?'ON':'OFF';
-    $('#integrityCopy').textContent=state.integrity.clockStatus==='flagged'?'Progression rewards are held. Confirm the correct device time to release them.':`Timeline trusted · ${state.timezone?.name||S.timezoneName()} · UTC ${timezoneOffsetLabel(state.timezone?.offset??S.timezoneOffset())}.`;
+    $('#integrityCopy').textContent=state.integrity.clockStatus==='flagged'?'Clock verification is flagged, but the progression reward hold is temporarily disabled.':`Timeline trusted · reward hold disabled · ${state.timezone?.name||S.timezoneName()} · UTC ${timezoneOffsetLabel(state.timezone?.offset??S.timezoneOffset())}.`;
     $('#reviewTimezone').textContent=state.timezone?.pending?'Review Detected Timezone':'Review Timezone';
     $('#verifyClock').hidden=state.integrity.clockStatus!=='flagged';
     $('#toggleNotifications b').textContent=state.settings.notifications?'Disable Local Alerts':'Enable Local Alerts';
