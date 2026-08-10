@@ -6,7 +6,7 @@
   const SNAPSHOT_KEY='ascend_discipline_protocol_snapshots_v1';
   const ROLLBACK_KEY='ascend_discipline_protocol_rollbacks_v1';
   const LEGACY_KEYS=['ascend_discipline_protocol_v6','ascend_discipline_protocol_v5','ascend_discipline_protocol_v4','ascend_strict_system_v3','ascend_automatic_year_system_v2','ascend_personal_growth_system_v1'];
-  const VERSION=16;
+  const VERSION=17;
   const BACKUP_VERSION=5;
   const ROUTINE_LOG_LIMIT=420;
   const SNAPSHOT_LIMIT=7;
@@ -63,6 +63,7 @@
     scheduledDate:record.scheduledDate||dateKey(new Date(record.createdAt||Date.now())),scheduledStart:record.scheduledStart||'00:00',scheduledEnd:record.scheduledEnd||'00:00',
     room:record.room||'',modality:record.modality||'Onsite',status:record.status||'unverified',checkInAt:record.checkInAt||null,dismissedAt:record.dismissedAt||null,
     dismissalStatus:record.dismissalStatus||null,minutesLate:Number(record.minutesLate||0),pendingXp:Number(record.pendingXp||0),xpAwarded:Number(record.xpAwarded||0),
+    profileXpAppliedAmount:Math.max(0,Number(record.profileXpAppliedAmount||0)),profileXpAppliedAt:record.profileXpAppliedAt||null,profileXpHeld:Math.max(0,Number(record.profileXpHeld||0)),
     finalized:Boolean(record.finalized),ongoingUntil:record.ongoingUntil||null,createdAt:record.createdAt||nowIso(),updatedAt:record.updatedAt||record.createdAt||nowIso(),
     timezone:record.timezone||null,corrections:Array.isArray(record.corrections)?record.corrections:[]
   });
@@ -96,6 +97,7 @@
   const normalizeProtocolState=day=>{
     if(!day||typeof day!=='object')return day;
     const protocols=day.protocols&&typeof day.protocols==='object'?day.protocols:{};
+    const legacyDayStatus=day.status,legacyRewardApplied=Boolean(day.rewardApplied);
     let activeKept=false;
     Object.values(protocols).sort((a,b)=>String(a.startedAt||'').localeCompare(String(b.startedAt||''))).forEach(protocol=>{
       if(!protocol||typeof protocol!=='object')return;
@@ -110,6 +112,11 @@
       if(protocol.status==='cleared'){
         protocol.steps.forEach(step=>{step.status='completed';step.startedAt=step.startedAt||protocol.startedAt||protocol.completedAt;step.completedAt=step.completedAt||protocol.completedAt||nowIso()});
         protocol.earnedXp=Math.max(0,Number(protocol.earnedXp||0));
+        if(!Object.prototype.hasOwnProperty.call(protocol,'profileXpAppliedAmount')){
+          const legacySettled=legacyDayStatus==='failed'||(legacyDayStatus==='cleared'&&legacyRewardApplied);
+          protocol.profileXpAppliedAmount=legacySettled?protocol.earnedXp:0;
+        }else protocol.profileXpAppliedAmount=Math.max(0,Number(protocol.profileXpAppliedAmount||0));
+        protocol.profileXpAppliedAt=protocol.profileXpAppliedAt||null;protocol.profileXpHeld=Math.max(0,Number(protocol.profileXpHeld||0));
       }
       if(protocol.status==='failed')protocol.earnedXp=0;
       protocol.focusBreaches=Math.max(0,Number(protocol.focusBreaches||0));
@@ -220,7 +227,7 @@
   const migrateLegacy=raw=>{
     const fromVersion=Number(raw?.version||0);createPreUpdateRollback(raw,fromVersion,'Automatic pre-migration rollback');
     const state=normalizeCurrent(raw||{});
-    const migration={id:uid('migration'),at:nowIso(),fromVersion,toVersion:VERSION,label:'Developer sandbox and academic integrity systems'};
+    const migration={id:uid('migration'),at:nowIso(),fromVersion,toVersion:VERSION,label:'Immediate Profile XP and attendance XP integration'};
     state.system.migrationHistory.push(migration);
     state.logs.push({id:uid('log'),at:migration.at,type:'migration',message:`ASCEND data migrated from schema ${fromVersion||'legacy'} to ${VERSION}. A rollback point was retained.`});
     state.logs=pruneLogs(state.logs);return state;

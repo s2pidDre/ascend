@@ -380,6 +380,21 @@
     const lateFactor=protocolOnTime(record,protocol)?1:.85;
     return Math.round(protocol.xp*(integrity/100)*lateFactor*(protocol.boss?1.35:1));
   };
+  const creditProtocolProfileXp=(protocol,when=new Date())=>{
+    if(!protocol||protocol.status!=='cleared')return 0;
+    const target=Math.max(0,Number(protocol.earnedXp||0)),applied=Math.max(0,Number(protocol.profileXpAppliedAmount||0)),delta=Math.max(0,target-applied);
+    if(!delta){protocol.profileXpHeld=0;return 0}
+    if(state.integrity?.rewardHold){protocol.profileXpHeld=delta;return 0}
+    state.player.totalXp=Math.max(0,Number(state.player.totalXp||0)+delta);protocol.profileXpAppliedAmount=target;protocol.profileXpAppliedAt=when.toISOString();protocol.profileXpHeld=0;return delta;
+  };
+  const syncAttendanceProfileXp=(record,when=new Date())=>{
+    if(!record)return 0;
+    const target=record.finalized?Math.max(0,Number(record.xpAwarded||0)):0,applied=Math.max(0,Number(record.profileXpAppliedAmount||0)),delta=target-applied;
+    if(delta>0&&state.integrity?.rewardHold){record.profileXpHeld=delta;return 0}
+    if(!delta){record.profileXpHeld=0;return 0}
+    state.player.totalXp=Math.max(0,Number(state.player.totalXp||0)+delta);record.profileXpAppliedAmount=target;record.profileXpAppliedAt=when.toISOString();record.profileXpHeld=0;return delta;
+  };
+  const pendingProfileXp=()=>Object.values(state.dayRecords||{}).some(day=>Object.values(day.protocols||{}).some(protocol=>protocol?.status==='cleared'&&Number(protocol.earnedXp||0)>Number(protocol.profileXpAppliedAmount||0)))||state.attendanceRecords.some(record=>(record.finalized?Number(record.xpAwarded||0):0)!==Number(record.profileXpAppliedAmount||0));
 
   const showOverlay=(eyebrow,title,value,duration=900)=>new Promise(resolve=>{
     clearTimeout(transitionTimer);transitionLocked=true;
@@ -391,7 +406,8 @@
   const clearProtocol=async(record,protocol)=>{
     const completedAt=new Date().toISOString();if(!transitionProtocol(protocol,'cleared',{at:completedAt}))return;protocol.completedAt=completedAt;protocol.resolutionKey=protocol.resolutionKey||`${record.date}:${protocol.id}:cleared`;protocol.earnedXp=calculateProtocolXp(record,protocol);
     record.completedProtocols+=1;
-    state.logs.push({id:S.uid('log'),at:protocol.completedAt,type:'clear',message:`${protocol.name} cleared for ${protocol.earnedXp} XP.`});
+    const creditedXp=creditProtocolProfileXp(protocol,new Date(completedAt));
+    state.logs.push({id:S.uid('log'),at:protocol.completedAt,type:'clear',message:`${protocol.name} cleared for ${protocol.earnedXp} XP${creditedXp?' · added to Profile':state.integrity?.rewardHold?' · held pending time verification':''}.`});
     save();
     const config=blueprint(protocol.id);
     show('protocolResultScreen');
@@ -445,7 +461,8 @@
     if(record.rewardApplied)return false;
     const totalBreaches=Object.values(record.protocols).reduce((sum,protocol)=>sum+Number(protocol.focusBreaches||0),0);
     const xp=Number(record.baseXp??Object.values(record.protocols).reduce((sum,protocol)=>sum+Number(protocol.earnedXp||0),0));
-    state.player.totalXp+=xp;state.player.streak+=1;state.player.bestStreak=Math.max(state.player.bestStreak,state.player.streak);
+    Object.values(record.protocols).forEach(protocol=>creditProtocolProfileXp(protocol,now));
+    state.player.streak+=1;state.player.bestStreak=Math.max(state.player.bestStreak,state.player.streak);
     state.player.totalClearDays+=1;state.player.levelClearDays+=1;state.player.failureScar=false;
     record.totalXp=xp;record.heldXp=0;record.rewardApplied=true;record.rewardReleasedAt=now.toISOString();
     if(record.perfectClear){state.player.perfectClears=(state.player.perfectClears||0)+1;state.player.lastPerfectDate=record.date}
@@ -475,10 +492,14 @@
     armRecoveryProtocol(record);
   };
   const releaseHeldRewards=()=>{
+    if(state.integrity?.rewardHold)return 0;
+    const now=new Date();let directiveXp=0,attendanceXp=0;
+    Object.values(state.dayRecords||{}).forEach(day=>Object.values(day.protocols||{}).forEach(protocol=>{directiveXp+=creditProtocolProfileXp(protocol,now)}));
+    state.attendanceRecords.forEach(record=>{attendanceXp+=syncAttendanceProfileXp(record,now)});
     const held=Object.values(state.dayRecords||{}).filter(day=>day.status==='cleared'&&!day.rewardApplied).sort((a,b)=>a.date.localeCompare(b.date));
-    held.forEach(day=>applyClearedDayRewards(day,new Date()));
-    if(held.length){state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'integrity',message:`Released ${held.length} held day reward(s) after time verification.`});save({silent:true})}
-    return held.length;
+    held.forEach(day=>applyClearedDayRewards(day,now));
+    if(held.length||directiveXp||attendanceXp){state.logs.push({id:S.uid('log'),at:now.toISOString(),type:'integrity',message:`Profile XP synchronized${directiveXp?` · ${directiveXp} directive XP`:''}${attendanceXp?` · ${attendanceXp} attendance XP`:''}${held.length?` · ${held.length} day reward${held.length===1?'':'s'} released`:''}.`});save({silent:true})}
+    return held.length+directiveXp+attendanceXp;
   };
   const finalizeDay=(record,now=new Date(),force=false)=>{
     if(!record||record.status!=='active')return;
@@ -495,7 +516,7 @@
     record.perfectClear=cleared&&record.onTimePercentage===100&&totalBreaches===0;
     record.weeklyBossCleared=evaluateWeeklyBoss(record,cleared,totalBreaches);
     if(cleared){
-      if(state.integrity?.rewardHold){record.heldXp=record.baseXp;record.totalXp=0;record.integrityStatus='held'}
+      if(state.integrity?.rewardHold){record.heldXp=Object.values(record.protocols).reduce((sum,protocol)=>sum+Math.max(0,Number(protocol.earnedXp||0)-Number(protocol.profileXpAppliedAmount||0)),0);record.totalXp=0;record.integrityStatus='held'}
       else applyClearedDayRewards(record,now);
     }else applyFailedDayOutcome(record);
     state.logs.push({id:S.uid('log'),at:now.toISOString(),type:record.status,message:`Day ${record.status}. ${record.completedProtocols}/${requiredProtocolCount} protocols cleared.${record.perfectClear?' Perfect Clear achieved.':''}${record.weeklyBossCleared?' Weekly Boss defeated.':''}`});
@@ -538,7 +559,7 @@
     const record={
       id:S.uid('attendance'),meetingKey:meetingKey(entry,date),classId:entry.id,subjectKey:subjectKey(entry.subject),subjectName:entry.subject,code:entry.code||'',
       scheduledDate:S.dateKey(date),scheduledStart:entry.start,scheduledEnd:entry.end,room:entry.room||'',modality:entry.modality||'Onsite',
-      status:'unverified',checkInAt:null,dismissedAt:null,dismissalStatus:null,minutesLate:0,pendingXp:0,xpAwarded:0,finalized:false,
+      status:'unverified',checkInAt:null,dismissedAt:null,dismissalStatus:null,minutesLate:0,pendingXp:0,xpAwarded:0,profileXpAppliedAmount:0,profileXpAppliedAt:null,profileXpHeld:0,finalized:false,
       ongoingUntil:null,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),corrections:[],
       timezone:{name:state.timezone?.name||S.timezoneName(),offset:state.timezone?.offset??S.timezoneOffset()}
     };
@@ -573,7 +594,8 @@
       record.dismissedAt=when.toISOString();record.dismissalStatus=dismissalStatus;record.finalized=true;record.xpAwarded=record.pendingXp||attendanceXpFor(record.status,record.minutesLate);
       record.updatedAt=when.toISOString();record.ongoingUntil=null;
     }
-    state.logs.push({id:S.uid('log'),at:when.toISOString(),type:'attendance',message:`${record.subjectName}: ${record.status}${record.finalized?` · ${record.xpAwarded} XP`:''}.`});
+    const profileDelta=syncAttendanceProfileXp(record,when);
+    state.logs.push({id:S.uid('log'),at:when.toISOString(),type:'attendance',message:`${record.subjectName}: ${record.status}${record.finalized?` · ${record.xpAwarded} XP`:''}${profileDelta>0?' · added to Profile':profileDelta<0?' · Profile XP adjusted':state.integrity?.rewardHold&&record.xpAwarded?' · XP held':''}.`});
     save();
   };
   const syncUnverifiedMeetings=(now=new Date())=>{
@@ -675,7 +697,7 @@
   const updateCheckInAndEvaluation=()=>{
     if(!state.initialized)return null;
     checkClockIntegrity();finalizePastDays();
-    if(state.integrity?.clockStatus==='trusted'&&Object.values(state.dayRecords||{}).some(day=>day.status==='cleared'&&!day.rewardApplied))releaseHeldRewards();
+    if(state.integrity?.clockStatus==='trusted'&&(Object.values(state.dayRecords||{}).some(day=>day.status==='cleared'&&!day.rewardApplied)||pendingProfileXp()))releaseHeldRewards();
     const now=new Date();
     const record=createDayRecord(now);
     const minute=todayMinutes(now);
@@ -1136,7 +1158,7 @@
     const cleared=record.status==='cleared';$('#resultEmblem').classList.toggle('failed',!cleared);setGlyph('resultEmblem',cleared?'success':'failure');
     $('#resultEyebrow').textContent=cleared?(record.heldXp?'CLEAR RECORDED · REWARD HOLD':record.rankAdvanced?'RANK ADVANCED':record.perfectClear?'PERFECT CLEAR':record.weeklyBossCleared?'WEEKLY BOSS DEFEATED':'DAY CLEARED'):'DAY FAILED';
     $('#resultTitle').textContent=cleared?'Discipline Maintained':'Discipline Broken';
-    $('#resultMessage').textContent=cleared?(record.heldXp?'Clear recorded. Progression rewards are held until device time is verified.':'Every required protocol was completed before the daily cutoff.'):'At least one required protocol failed. Daily XP and the streak were lost.';
+    $('#resultMessage').textContent=cleared?(record.heldXp?'Clear recorded. Progression rewards are held until device time is verified.':'Every required protocol was completed before the daily cutoff.'):'At least one required protocol failed. The streak and Daily Clear were lost; XP from directives already cleared remains earned.';
     $('#resultProtocols').textContent=`${record.completedProtocols}/${requiredProtocolCount}`;$('#resultOnTime').textContent=`${record.onTimePercentage}%`;$('#resultXp').textContent=record.heldXp?`${record.heldXp} HELD`:record.totalXp;$('#resultLevel').textContent=`${state.player.level} · ${state.player.rank}`;
     const sealText=record.heldXp?'TIME VERIFICATION REQUIRED':record.rankAdvanced?`${state.player.rank}-RANK ACHIEVED`:record.perfectClear?'PERFECT CLEAR':record.rankTrialFailed?'RANK-UP TRIAL FAILED':record.weeklyBossCleared?'WEEKLY BOSS DEFEATED':'';
     $('#resultSeal').hidden=!sealText;$('#resultSeal').textContent=sealText;$('#resultSeal').classList.toggle('failed',record.rankTrialFailed);
@@ -1891,7 +1913,7 @@
         <div class="simple-profile-identity"><div class="profile-emblem profile-settings-hold" data-settings-hold="true" aria-label="Hold for Settings">${glyphMarkup(activeEmblem)}</div><div><span>PLAYER · ${state.player.rank}-RANK</span><strong>${escapeHtml(state.player.codename||state.player.name)}</strong><small>${escapeHtml(state.player.name)} · ${escapeHtml(state.player.title)}</small></div><button type="button" data-profile-action="edit-identity">Edit</button></div>
         <div class="simple-profile-progression">
           <div class="simple-profile-momentum"><div><span>LEVEL</span><strong>${state.player.level}</strong></div><div><span>STREAK</span><strong>${state.player.streak} DAY${state.player.streak===1?'':'S'}</strong></div></div>
-          <div class="simple-profile-progress"><div><span>${state.player.mastered?'SYSTEM MASTERY':'LEVEL PROGRESS'}</span><strong>${state.player.mastered?'COMPLETE':`${state.player.levelClearDays} / ${required} CLEAR DAYS`}</strong></div><i><b style="width:${levelProgress}%"></b></i><small>${Number(state.player.totalXp||0).toLocaleString()} lifetime XP</small></div>
+          <div class="simple-profile-progress"><div><span>${state.player.mastered?'SYSTEM MASTERY':'LEVEL PROGRESS'}</span><strong>${state.player.mastered?'COMPLETE':`${state.player.levelClearDays} / ${required} CLEAR DAYS`}</strong></div><i><b style="width:${levelProgress}%"></b></i><small>${Number(state.player.totalXp||0).toLocaleString()} lifetime XP · attendance included</small></div>
         </div>
         <div class="simple-profile-links"><button type="button" data-profile-action="open-achievements"><span>ACHIEVEMENTS</span><strong>${achievementCount} / ${achievements.length}</strong><small>${latestAchievement?`Latest · ${escapeHtml(latestAchievement.title)}`:'None unlocked yet'}</small></button><button type="button" data-profile-action="open-skills"><span>SKILLS</span><strong>${unlocked} / ${skillDefinitions.length}</strong><small>${equipped} equipped</small></button></div>
       </div>`;
@@ -1994,7 +2016,8 @@
     }else{
       setAttendanceStatus(record,status,now);record.finalized=true;record.dismissalStatus=status;record.dismissedAt=now.toISOString();save();
     }
-    state.logs.push({id:S.uid('log'),at:now.toISOString(),type:'attendance-correction',message:`${record.subjectName} corrected from ${before} to ${status}.`});save();controlUi.correction=false;renderAttendance();
+    const xpDelta=syncAttendanceProfileXp(record,now);
+    state.logs.push({id:S.uid('log'),at:now.toISOString(),type:'attendance-correction',message:`${record.subjectName} corrected from ${before} to ${status}.${xpDelta?` Profile XP ${xpDelta>0?'increased':'decreased'} by ${Math.abs(xpDelta)}.`:''}`});save();controlUi.correction=false;renderAttendance();
   };
   const SETTINGS_EXPORT_VERSION=1;
   const progressExportKeys=['player','dayRecords','attendanceRecords','academicTasks','recurringTaskRules','tradingNotes','quests','skills','weeklyDebriefs'];

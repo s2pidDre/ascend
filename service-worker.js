@@ -1,5 +1,5 @@
 const CACHE_PREFIX='ascend-discipline-';
-const CACHE=`${CACHE_PREFIX}v50-free-window-cleanup`;
+const CACHE=`${CACHE_PREFIX}v51-immediate-profile-xp`;
 const APP_SHELL=[
   './',
   './index.html',
