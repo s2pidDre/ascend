@@ -395,6 +395,40 @@
     if(!delta){record.profileXpHeld=0;return 0}
     state.player.totalXp=Math.max(0,Number(state.player.totalXp||0)+delta);record.profileXpAppliedAmount=target;record.profileXpAppliedAt=when.toISOString();record.profileXpHeld=0;return delta;
   };
+  const PROFILE_XP_RECONCILIATION_VERSION=53;
+  const reconcileCurrentDayProfileXp=()=>{
+    state.system=state.system||{};
+    const previous=state.system.profileXpReconciliation||{};
+    if(Number(previous.version||0)>=PROFILE_XP_RECONCILIATION_VERSION)return 0;
+    const now=new Date(),date=S.dateKey(now),day=state.dayRecords?.[date];
+    let repairedMarkers=0,directiveXp=0,attendanceXp=0,heldXp=0;
+    if(day){
+      const legacyWholeDayPaid=day.status==='cleared'&&Boolean(day.rewardApplied);
+      Object.values(day.protocols||{}).forEach(protocol=>{
+        if(protocol?.status!=='cleared')return;
+        const target=Math.max(0,Number(protocol.earnedXp||0));if(!target)return;
+        const applied=Math.max(0,Number(protocol.profileXpAppliedAmount||0));
+        const hasDirectCreditProof=Boolean(protocol.profileXpAppliedAt);
+        if(applied>=target&&!hasDirectCreditProof&&!legacyWholeDayPaid){protocol.profileXpAppliedAmount=0;protocol.profileXpHeld=0;repairedMarkers+=1}
+        directiveXp+=creditProtocolProfileXp(protocol,now);
+        heldXp+=Math.max(0,Number(protocol.profileXpHeld||0));
+      });
+    }
+    state.attendanceRecords.filter(record=>record?.scheduledDate===date&&record.finalized).forEach(record=>{
+      const target=Math.max(0,Number(record.xpAwarded||0));if(!target)return;
+      const applied=Math.max(0,Number(record.profileXpAppliedAmount||0));
+      if(applied>=target&&!record.profileXpAppliedAt){record.profileXpAppliedAmount=0;record.profileXpHeld=0;repairedMarkers+=1}
+      attendanceXp+=syncAttendanceProfileXp(record,now);
+      heldXp+=Math.max(0,Number(record.profileXpHeld||0));
+    });
+    const recovered=directiveXp+attendanceXp;
+    state.system.profileXpReconciliation={version:PROFILE_XP_RECONCILIATION_VERSION,completedAt:now.toISOString(),date,repairedMarkers,recoveredDirectiveXp:directiveXp,recoveredAttendanceXp:attendanceXp,status:heldXp>0?'held':'complete'};
+    state.logs.push({id:S.uid('log'),at:now.toISOString(),type:'migration',message:`Profile XP reconciliation completed for ${date}.${repairedMarkers?` ${repairedMarkers} unproven legacy XP marker${repairedMarkers===1?'':'s'} repaired.`:''}${recovered?` ${recovered} XP added to Profile.`:''}${heldXp?` ${heldXp} XP remains held pending time verification.`:''}`});
+    save({silent:true});
+    if(recovered&&!state.integrity?.rewardHold)setTimeout(()=>showSystemNotice('restore','PROFILE XP RECOVERED',`+${recovered} XP synchronized from today.`,2800),250);
+    else if(heldXp)setTimeout(()=>showSystemNotice('integrity','XP FOUND · REWARD HOLD',`${heldXp} XP will release after device time is verified.`,3200),250);
+    return recovered;
+  };
   const pendingProfileXp=()=>Object.values(state.dayRecords||{}).some(day=>Object.values(day.protocols||{}).some(protocol=>protocol?.status==='cleared'&&Number(protocol.earnedXp||0)>Number(protocol.profileXpAppliedAmount||0)))||state.attendanceRecords.some(record=>(record.finalized?Number(record.xpAwarded||0):0)!==Number(record.profileXpAppliedAmount||0));
 
   const showOverlay=(eyebrow,title,value,duration=900)=>new Promise(resolve=>{
@@ -698,6 +732,7 @@
   const updateCheckInAndEvaluation=()=>{
     if(!state.initialized)return null;
     checkClockIntegrity();finalizePastDays();
+    reconcileCurrentDayProfileXp();
     if(state.integrity?.clockStatus==='trusted'&&(Object.values(state.dayRecords||{}).some(day=>day.status==='cleared'&&!day.rewardApplied)||pendingProfileXp()))releaseHeldRewards();
     const now=new Date();
     const record=createDayRecord(now);

@@ -6,7 +6,7 @@
   const SNAPSHOT_KEY='ascend_discipline_protocol_snapshots_v1';
   const ROLLBACK_KEY='ascend_discipline_protocol_rollbacks_v1';
   const LEGACY_KEYS=['ascend_discipline_protocol_v6','ascend_discipline_protocol_v5','ascend_discipline_protocol_v4','ascend_strict_system_v3','ascend_automatic_year_system_v2','ascend_personal_growth_system_v1'];
-  const VERSION=18;
+  const VERSION=19;
   const BACKUP_VERSION=5;
   const ROUTINE_LOG_LIMIT=420;
   const SNAPSHOT_LIMIT=7;
@@ -53,7 +53,7 @@
     integrity:{clockStatus:'trusted',rewardHold:false,lastWallTime:null,lastVerifiedAt:null,lastFlag:null,lastSessionDelta:0},
     timezone:{name:timezoneName(),offset:timezoneOffset(),confirmedAt:nowIso(),pending:null,history:[]},
     recovery:{active:false,status:'idle',sourceDate:null,reason:null,action:null,protectedDate:null,protectedProtocolId:null,completedAt:null},
-    system:{recoveredFrom:null,lastStorageWarningAt:null,notificationLedger:{},safeMode:false,lastSuccessfulBoot:null,migrationHistory:[],auditTrail:[],watchdog:{lastRun:null,issues:0,repairs:0,summary:'Not run'},reminderBridge:{lastCheckAt:null,missedCount:0,lastMissedAt:null,lastExportAt:null,lastExportEvents:0},developerTest:{enabled:false,unlocked:false,scenario:'free',simulatedDate:null,runs:0,lastResult:null,sandboxMode:'profile',reports:[],labHistory:[]}},
+    system:{recoveredFrom:null,lastStorageWarningAt:null,notificationLedger:{},safeMode:false,lastSuccessfulBoot:null,migrationHistory:[],auditTrail:[],watchdog:{lastRun:null,issues:0,repairs:0,summary:'Not run'},reminderBridge:{lastCheckAt:null,missedCount:0,lastMissedAt:null,lastExportAt:null,lastExportEvents:0},profileXpReconciliation:{version:0,completedAt:null,date:null,repairedMarkers:0,recoveredDirectiveXp:0,recoveredAttendanceXp:0,status:'pending'},developerTest:{enabled:false,unlocked:false,scenario:'free',simulatedDate:null,runs:0,lastResult:null,sandboxMode:'profile',reports:[],labHistory:[]}},
     logs:[]
   });
 
@@ -146,7 +146,7 @@
       recovery:{...base.recovery,...(raw.recovery||{})},
       quests:{...base.quests,...(raw.quests||{})},
       skills:{...base.skills,...(raw.skills||{})},
-      system:{...base.system,...(raw.system||{}),reminderBridge:{...base.system.reminderBridge,...(raw.system?.reminderBridge||{})},developerTest:{...base.system.developerTest,...(raw.system?.developerTest||{})}},
+      system:{...base.system,...(raw.system||{}),reminderBridge:{...base.system.reminderBridge,...(raw.system?.reminderBridge||{})},profileXpReconciliation:{...base.system.profileXpReconciliation,...(raw.system?.profileXpReconciliation||{})},developerTest:{...base.system.developerTest,...(raw.system?.developerTest||{})}},
       settings:{...base.settings,...rawSettings}
     };
     state.version=VERSION;
@@ -235,9 +235,9 @@
         if(protocol?.status==='cleared'&&earned>0&&applied===earned&&!protocol.profileXpAppliedAt){protocol.profileXpAppliedAmount=0;protocol.profileXpHeld=0;currentDayXpRepair+=earned}
       });
     }
-    const migration={id:uid('migration'),at:nowIso(),fromVersion,toVersion:VERSION,label:'Current-day XP recovery and stable Task Audit input'};
+    const migration={id:uid('migration'),at:nowIso(),fromVersion,toVersion:VERSION,label:'Deterministic current-day Profile XP reconciliation'};
     state.system.migrationHistory.push(migration);
-    state.logs.push({id:uid('log'),at:migration.at,type:'migration',message:`ASCEND data migrated from schema ${fromVersion||'legacy'} to ${VERSION}. A rollback point was retained.${currentDayXpRepair?` ${currentDayXpRepair} current-day cleared directive XP marked for Profile synchronization.`:''}`});
+    state.logs.push({id:uid('log'),at:migration.at,type:'migration',message:`ASCEND data migrated from schema ${fromVersion||'legacy'} to ${VERSION}. A rollback point was retained.${currentDayXpRepair?` ${currentDayXpRepair} legacy current-day XP reopened for reconciliation.`:''}`});
     state.logs=pruneLogs(state.logs);return state;
   };
 
