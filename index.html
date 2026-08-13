@@ -52,7 +52,6 @@
     <symbol id="glyph-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
     <symbol id="glyph-attribute" viewBox="0 0 24 24"><path d="M4 18 8 9l4 5 4-10 4 14"/><path d="M3 21h18"/></symbol>
     <symbol id="glyph-quest" viewBox="0 0 24 24"><path d="M5 4h14v16H5z"/><path d="M8 8h8M8 12h5"/><path d="m14 16 1.5 1.5 3-3"/></symbol>
-    <symbol id="glyph-skill" viewBox="0 0 24 24"><path d="m12 2 2.2 6.3L21 9l-5.2 4.1L17.5 20 12 16.3 6.5 20l1.7-6.9L3 9l6.8-.7L12 2Z"/></symbol>
     <symbol id="glyph-lab" viewBox="0 0 24 24"><path d="M9 3h6M10 3v6l-5 9a2 2 0 0 0 1.8 3h10.4a2 2 0 0 0 1.8-3l-5-9V3"/><path d="M8 15h8"/></symbol>
     <symbol id="glyph-diagnostic" viewBox="0 0 24 24"><path d="M4 12h4l2-6 4 12 2-6h4"/><path d="M4 4h16v16H4z"/></symbol>
     <symbol id="glyph-timezone" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/></symbol>
@@ -372,7 +371,7 @@
           <section class="settings-group">
             <div class="settings-group-heading"><span>DATA</span><small>Save or restore only what you choose.</small></div>
             <div class="settings-data-row">
-              <div><strong>Progress</strong><small>Player progress, attendance, tasks, quests, skills, and weekly records.</small></div>
+              <div><strong>Progress</strong><small>Player progress, attendance, tasks, quests, and weekly records.</small></div>
               <div class="settings-inline-actions"><button type="button" id="settingsSaveProgress">Save</button><button type="button" id="settingsLoadProgress">Load</button></div>
             </div>
             <div class="settings-data-row">
@@ -482,7 +481,7 @@
           </div>
         </div>
         <div class="snapshot-strip"><span>AUTOMATIC SNAPSHOTS</span><strong id="snapshotStripCount">0 available</strong><small id="snapshotStripLatest">No recovery snapshot yet.</small></div>
-        <p class="backup-footnote">Routine activity logs are automatically limited. Seven daily recovery snapshots are kept, or ten while Archive Core is equipped.</p>
+        <p class="backup-footnote">Routine activity logs are automatically limited. Seven daily recovery snapshots are kept.</p>
         <button class="ghost-button" id="dataBackupBack" type="button">Back</button>
       </section>
 
@@ -713,21 +712,6 @@
     </div>
   </div>
 
-  <div class="recovery-overlay" id="recoveryOverlay" hidden>
-    <div class="recovery-panel system-panel">
-      <div class="emergency-symbol recovery-symbol glyph-frame"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-recovery"></use></svg></div>
-      <p class="eyebrow">RECOVERY PROTOCOL</p>
-      <h2>Re-enter the Sequence</h2>
-      <p id="recoveryCopy">A failed day was recorded. Acknowledge the cause and arm one recovery action. No XP is awarded for recovery.</p>
-      <label for="recoveryReason">Failure reason</label>
-      <select class="selectable" id="recoveryReason"><option value="overslept">Overslept</option><option value="forgot">Forgot or lost track</option><option value="device">Device unavailable</option><option value="schedule">Schedule changed</option><option value="health">Health or illness</option><option value="intentional">Intentional skip</option><option value="other">Other</option></select>
-      <label for="recoveryAction">Recovery action</label>
-      <select class="selectable" id="recoveryAction"><option value="prepare">Prepare the next protocol now</option><option value="alarm">Confirm alarm and required materials</option><option value="environment">Reset the environment</option><option value="review">Review the missed sequence</option></select>
-      <div class="recovery-protection"><span>NEXT PROTOCOL PROTECTION</span><strong id="recoveryProtectedProtocol">Wake Protocol</strong><small>Normal completion is still required. No free XP.</small></div>
-      <button class="system-button" id="completeRecovery" type="button"><b>Acknowledge & Arm Recovery</b></button>
-    </div>
-  </div>
-
   <div class="emergency-overlay" id="emergencyOverlay" hidden>
     <div class="emergency-panel system-panel">
       <div class="emergency-symbol glyph-frame"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-emergency"></use></svg></div>
@@ -758,7 +742,7 @@
       <div class="daily-quest-progress" aria-hidden="true"><b id="dailyQuestFill"></b></div>
       <div class="daily-quest-meta">
         <span id="dailyQuestStatus">0 / 1</span>
-        <strong id="dailyQuestReward">+30 XP · +1 SKILL POINT</strong>
+        <strong id="dailyQuestReward">+50 XP</strong>
       </div>
       <button class="system-button compact-button" id="dailyQuestClaim" type="button" hidden><b>Claim Reward</b></button>
       <button class="ghost-button" id="closeDailyQuest" type="button">Close</button>

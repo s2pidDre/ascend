@@ -49,7 +49,7 @@
   const BOOT_GUARD_KEY='ascend_boot_guard_v1';
 
   const $=selector=>document.querySelector(selector);
-  const glyphNames=new Set(['apex','signal','sleep','wake','confirm','reset','water','shine','stretch','bath','meal','list','work','grid','trade','close','next','academic','success','failure','profile','data','lock','chevron-left','chevron-right','emergency','update','offline','save','shield','bell','calendar','recovery','clock','attribute','quest','skill','lab','diagnostic','timezone','rollback','recurring','dependency','weekly']);
+  const glyphNames=new Set(['apex','signal','sleep','wake','confirm','reset','water','shine','stretch','bath','meal','list','work','grid','trade','close','next','academic','success','failure','profile','data','lock','chevron-left','chevron-right','emergency','update','offline','save','shield','bell','calendar','recovery','clock','quest','lab','diagnostic','timezone','rollback','recurring','dependency','weekly']);
   const glyphAlias={
     '◇':'apex','◆':'confirm','✦':'shine','⌁':'stretch','◈':'academic','A':'apex',
     '↑':'wake','▰':'reset','◉':'water','◒':'meal','▤':'list','◎':'work','▦':'grid','✓':'success','×':'close','→':'next','☾':'sleep'
@@ -401,11 +401,6 @@
     const protocol=record.protocols[config.id];
     if(protocol.status!=='pending')return protocol;
     if(!transitionProtocol(protocol,'active',{at:now.toISOString()}))return protocol;
-    if(state.recovery?.status==='completed'&&state.recovery.protectedDate===record.date&&state.recovery.protectedProtocolId===config.id){
-      protocol.recoveryProtected=true;state.recovery.status='consumed';state.recovery.consumedAt=now.toISOString();
-      state.logs.push({id:S.uid('log'),at:now.toISOString(),type:'recovery',message:`Recovery protection activated for ${config.name}. Normal completion remains required.`});
-      showSystemNotice('recovery','RECOVERY PROTECTION ACTIVE',`${config.name} must be completed normally.`,2600);
-    }
     state.logs.push({id:S.uid('log'),at:now.toISOString(),type:'protocol',message:`${config.name} started.`});
     save();systemFeedback(protocol.boss?'boss':'start',protocol.boss?'Weekly Boss issued.':'Directive issued.',`start-${record.date}-${config.id}`);
     return protocol;
@@ -544,7 +539,7 @@
     const xp=Number(record.baseXp??Object.values(record.protocols).reduce((sum,protocol)=>sum+Number(protocol.earnedXp||0),0));
     Object.values(record.protocols).forEach(protocol=>creditProtocolProfileXp(protocol,now));
     state.player.streak+=1;state.player.bestStreak=Math.max(state.player.bestStreak,state.player.streak);
-    state.player.totalClearDays+=1;state.player.levelClearDays+=1;state.player.failureScar=false;
+    state.player.totalClearDays+=1;state.player.levelClearDays+=1;
     record.totalXp=xp;record.rewardApplied=true;record.rewardReleasedAt=now.toISOString();
     if(record.perfectClear){state.player.perfectClears=(state.player.perfectClears||0)+1;state.player.lastPerfectDate=record.date}
     if(record.rankTrialActive&&!record.rankTrialResolved){
@@ -561,17 +556,10 @@
     }
     record.automaticReward=chooseReward(record);return true;
   };
-  const armRecoveryProtocol=record=>{
-    if(state.recovery?.active||state.recovery?.sourceDate===record.date)return;
-    const nextDate=new Date(`${record.date}T12:00:00`);nextDate.setDate(nextDate.getDate()+1);
-    state.recovery={active:true,status:'pending',sourceDate:record.date,reason:null,action:null,protectedDate:S.dateKey(nextDate),protectedProtocolId:'wake',completedAt:null};
-    state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'recovery',message:`Recovery Protocol armed after failed day ${record.date}.`});
-  };
   const applyFailedDayOutcome=record=>{
     if(record.outcomeApplied)return;
-    state.player.streak=0;state.player.totalFailedDays+=1;state.player.failureScar=true;record.outcomeApplied=true;
+    state.player.streak=0;state.player.totalFailedDays+=1;record.outcomeApplied=true;
     if(record.rankTrialActive){record.rankTrialFailed=true;record.rankTrialResolved=true;state.player.rankTrialAttempts=(state.player.rankTrialAttempts||0)+1}
-    armRecoveryProtocol(record);
   };
   const syncOutstandingProfileXp=()=>{
     const now=new Date();let directiveXp=0,attendanceXp=0;
@@ -839,7 +827,6 @@
     if(xp){void burst.offsetWidth;burst.classList.toggle('milestone',milestone);burst.classList.add('play')}
   };
   const syncAmbientState=(record,protocol=null)=>{
-    document.body.classList.toggle('failure-scar',Boolean(state.player.failureScar));
     document.body.classList.toggle('rank-trial',Boolean(record?.rankTrialActive||state.player.pendingRank));
     document.body.classList.toggle('weekly-boss',Boolean(protocol?.boss));
     document.body.dataset.rank=state.player.rank||'E';
@@ -969,18 +956,6 @@
     if(report.ratio>=.8||report.localBytes>=4*1024*1024){const today=S.dateKey();if(state.system.lastStorageWarningAt!==today){state.system.lastStorageWarningAt=today;state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'system',message:'Local storage pressure warning issued.'});save({silent:true});showSystemNotice('alert','STORAGE CAPACITY WARNING','Export a backup. Routine logs are being limited automatically.',4200)}}
     return report;
   };
-  const syncRecoveryOverlay=()=>{
-    const overlay=$('#recoveryOverlay');if(!overlay)return;
-    const canShow=Boolean(state.recovery?.active)&&!activeProtocolRecord()&&!classStateAt(new Date())&&$('#scheduleOverlay').hidden&&$('#emergencyOverlay').hidden&&$('#dailyQuestOverlay').hidden;
-    overlay.hidden=!canShow;
-    if(canShow){const config=blueprint(state.recovery.protectedProtocolId)||blueprint('wake');$('#recoveryProtectedProtocol').textContent=config.name;releaseWakeLock()}
-  };
-  const completeRecoveryProtocol=()=>{
-    if(!state.recovery?.active)return;
-    state.recovery.reason=$('#recoveryReason').value;state.recovery.action=$('#recoveryAction').value;state.recovery.status='completed';state.recovery.active=false;state.recovery.completedAt=new Date().toISOString();state.player.failureScar=false;
-    state.logs.push({id:S.uid('log'),at:state.recovery.completedAt,type:'recovery',message:`Recovery completed after ${state.recovery.sourceDate}: ${state.recovery.reason} · ${state.recovery.action}. Next ${state.recovery.protectedProtocolId} protected.`});
-    save();$('#recoveryOverlay').hidden=true;showSystemNotice('recovery','RECOVERY ARMED','The next protocol must still be completed normally.',3000);renderApp();
-  };
 
   const applyBodyState=(record,protocol,task,deadlineMs)=>{
     syncAmbientState(record,protocol);
@@ -1019,7 +994,7 @@
     $('#dailyQuestCopy').textContent=quest.copy;
     $('#dailyQuestStatus').textContent=quest.claimed?'CLAIMED':progress.label;
     $('#dailyQuestFill').style.width=`${progress.progress*100}%`;
-    $('#dailyQuestReward').textContent=quest.claimed?'REWARD CLAIMED':`+${quest.xp} XP · +1 SKILL POINT`;
+    $('#dailyQuestReward').textContent=quest.claimed?'REWARD CLAIMED':`+${quest.xp} XP`;
     $('#dailyQuestClaim').hidden=!canClaim;
   };
   const openDailyQuest=()=>{renderFreeDailyQuest();$('#dailyQuestOverlay').hidden=false};
@@ -1289,7 +1264,6 @@
     const record=updateCheckInAndEvaluation();
     syncAmbientState(record,activeProtocolRecord());
     if(!state.initialized){renderSetup();return}
-    syncRecoveryOverlay();
     if(transitionLocked)return;
     const now=new Date();
     if(isSleepWindow(now)){renderSleep(now);return}
@@ -1501,77 +1475,60 @@
     const item=sortedExceptions()[exceptionUi.index];if(!item)return;state.scheduleExceptions=state.scheduleExceptions.filter(value=>value.id!==item.id);invalidateExternalCalendar();state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'schedule',message:`Schedule exception deleted for ${item.date}.`});save();exceptionUi.index=Math.max(0,exceptionUi.index-1);renderScheduleExceptions();
   };
 
-  const skillDefinitions=[
-    {id:'foresight',name:'Foresight',cost:1,copy:'Adds five minutes to optional local notification lead time.'},
-    {id:'archive-core',name:'Archive Core',cost:2,copy:'Expands automatic recovery snapshots from seven to ten.'},
-    {id:'insight-lens',name:'Insight Lens',cost:1,copy:'Shows an additional cause line in Weekly Debrief.'},
-    {id:'quest-compass',name:'Quest Compass',cost:2,copy:'Allows one Daily Quest reroll each day.'},
-    {id:'recovery-map',name:'Recovery Map',cost:1,copy:'Adds failure-pattern context to recovery guidance.'},
-    {id:'title-forge',name:'Title Forge',cost:2,copy:'Unlocks the System Pathfinder profile title.'}
-  ];
-  const skillUnlocked=id=>(state.skills?.unlocked||[]).includes(id);
-  const skillEquipped=id=>(state.skills?.equipped||[]).includes(id);
-  const notificationLeadMinutes=()=>Math.min(35,Number(state.settings.notificationLeadMinutes||10)+(skillEquipped('foresight')?5:0));
+  const notificationLeadMinutes=()=>Math.min(30,Math.max(5,Number(state.settings.notificationLeadMinutes||10)));
   const dateFromKey=key=>new Date(`${key}T12:00:00`);
   const addDays=(date,amount)=>{const value=new Date(date);value.setDate(value.getDate()+amount);return value};
   const mondayFor=date=>{const value=new Date(date);value.setHours(12,0,0,0);const day=value.getDay();value.setDate(value.getDate()-(day===0?6:day-1));return value};
   const percent=(value,total)=>total?Math.round(value/total*100):0;
   const completedTaskCount=()=>state.academicTasks.filter(task=>task.status==='completed').length;
-  const derivedAttributes=()=>{
-    const days=Object.values(state.dayRecords||{}),clears=days.filter(day=>day.status==='cleared').length,failures=days.filter(day=>day.status==='failed').length;
-    const protocols=days.flatMap(day=>Object.values(day.protocols||{})),focusValues=protocols.map(focusScore),focus=focusValues.length?Math.round(focusValues.reduce((sum,value)=>sum+value,0)/focusValues.length):100;
-    const academic=overallAcademicStats(),tasks=state.academicTasks||[],completed=tasks.filter(task=>task.status==='completed').length;
-    const recovered=(state.logs||[]).filter(log=>log.type==='recovery').length;
-    const discipline=clamp(Math.round(percent(clears,clears+failures)*.72+Math.min(28,(state.player.bestStreak||0)*4)),0,100);
-    const endurance=clamp(Math.round(Math.min(55,(state.player.bestStreak||0)*5)+Math.min(45,clears*3)),0,100);
-    const recovery=failures?clamp(Math.round(recovered/failures*85+Math.min(15,(state.player.streak||0)*3)),0,100):100;
-    const academicControl=academic.required||tasks.length?clamp(Math.round(academic.attendanceRate*.35+academic.punctualityRate*.25+percent(completed,tasks.length)*.4),0,100):50;
-    return[
-      {id:'discipline',label:'Discipline',value:discipline,copy:'Reliable completion and clear-day consistency.'},
-      {id:'focus',label:'Focus',value:focus,copy:'Uninterrupted execution during active protocols.'},
-      {id:'endurance',label:'Endurance',value:endurance,copy:'Sustained performance across repeated days.'},
-      {id:'recovery',label:'Recovery',value:recovery,copy:'Structured response after failed days.'},
-      {id:'academic',label:'Academic Control',value:academicControl,copy:'Attendance, punctuality, and task completion.'}
-    ];
-  };
 
-  const questTemplates=()=>{
-    const lowest=[...derivedAttributes()].sort((a,b)=>a.value-b.value)[0]?.id||'discipline';
-    const templates={
-      discipline:{id:'clear-day',title:'Complete the Sequence',copy:'Clear every required protocol today.',xp:30},
-      focus:{id:'no-breach',title:'Unbroken Focus',copy:'Clear the day without leaving ASCEND during an active timed task.',xp:35},
-      endurance:{id:'wake-clear',title:'First Victory',copy:'Clear the Wake Protocol today.',xp:25},
-      recovery:{id:'recovery-action',title:'Re-enter the Sequence',copy:'Complete an active Recovery Protocol.',xp:25},
-      academic:{id:'academic-task',title:'Academic Advance',copy:'Complete one pending academic task today.',xp:30}
-    };
-    return{primary:templates[lowest],all:Object.values(templates)};
+  const dailyQuestCatalog={
+    'wake-clear':{id:'wake-clear',title:'First Victory',copy:'Clear the Wake Protocol today.',xp:25},
+    'academic-task':{id:'academic-task',title:'Academic Advance',copy:'Complete one pending academic task today.',xp:35},
+    'no-breach':{id:'no-breach',title:'Unbroken Focus',copy:'Complete one timed focus task without a focus breach.',xp:40},
+    'on-schedule':{id:'on-schedule',title:'On Schedule',copy:'Clear one required directive within its proper window.',xp:30},
+    'clear-day':{id:'clear-day',title:'Complete the Sequence',copy:'Clear every required protocol today.',xp:50}
+  };
+  const questCandidatesForDate=date=>{
+    const schoolDay=effectiveScheduleForDate(date).length>0;
+    const hasPendingAcademic=state.academicTasks.some(task=>task.status!=='completed');
+    const ids=schoolDay
+      ?[...(hasPendingAcademic?['academic-task']:[]),'on-schedule','no-breach','clear-day']
+      :['wake-clear','on-schedule','no-breach','clear-day'];
+    return [...new Set(ids)].map(id=>dailyQuestCatalog[id]).filter(Boolean);
+  };
+  const chooseDailyQuest=date=>{
+    const candidates=questCandidatesForDate(date),key=S.dateKey(date);
+    const seed=[...key].reduce((sum,char)=>sum+char.charCodeAt(0),0);
+    return candidates[seed%candidates.length]||dailyQuestCatalog['clear-day'];
   };
   const questProgress=quest=>{
     if(!quest)return{done:false,progress:0,label:'0 / 1'};
-    const day=state.dayRecords?.[quest.date],todayAttendance=state.attendanceRecords.filter(record=>record.scheduledDate===quest.date&&record.finalized&&['early','present','late'].includes(record.status));
-    let done=false;
+    const day=state.dayRecords?.[quest.date];let done=false;
     if(quest.id==='clear-day')done=day?.status==='cleared';
-    if(quest.id==='no-breach')done=day?.status==='cleared'&&Object.values(day.protocols||{}).every(protocol=>Number(protocol.focusBreaches||0)===0);
     if(quest.id==='wake-clear')done=day?.protocols?.wake?.status==='cleared';
-    if(quest.id==='recovery-action')done=(state.logs||[]).some(log=>log.type==='recovery'&&String(log.at||'').slice(0,10)===quest.date);
     if(quest.id==='academic-task')done=completedTaskCount()>Number(quest.baselineCompleted||0);
-    if(quest.id==='attendance')done=todayAttendance.length>0;
+    if(quest.id==='on-schedule')done=Boolean(day&&Object.values(day.protocols||{}).some(protocol=>protocol?.status==='cleared'&&protocolOnTime(day,protocol)));
+    if(quest.id==='no-breach')done=Boolean(day&&Object.values(day.protocols||{}).some(protocol=>{
+      if(Number(protocol?.focusBreaches||0)>0)return false;
+      return (protocol?.steps||[]).some(step=>step?.type==='timer'&&step.status==='completed');
+    }));
     return{done,progress:done?1:0,label:done?'1 / 1':'0 / 1'};
   };
   const ensureDailyQuest=()=>{
-    state.quests=state.quests||{daily:null,history:[]};const today=S.dateKey();const current=state.quests.daily;
-    if(current?.date===today&&current.id!=='clean-timeline')return current;
+    state.quests=state.quests||{daily:null,history:[]};const today=S.dateKey(),date=new Date(`${today}T12:00:00`),current=state.quests.daily;
+    const template=current?.date===today?dailyQuestCatalog[current.id]:null;
+    if(template){Object.assign(current,template);return current}
     if(current){state.quests.history=state.quests.history||[];state.quests.history.push({...current,expiredAt:new Date().toISOString(),completed:questProgress(current).done});state.quests.history=state.quests.history.slice(-60)}
-    const templates=questTemplates(),chosen=templates.primary;
-    state.quests.daily={...chosen,date:today,createdAt:new Date().toISOString(),claimed:false,rerolled:false,baselineCompleted:completedTaskCount()};
+    const chosen=chooseDailyQuest(date);
+    state.quests.daily={...chosen,date:today,createdAt:new Date().toISOString(),claimed:false,baselineCompleted:completedTaskCount()};
     return state.quests.daily;
   };
   const claimDailyQuest=()=>{
     const quest=ensureDailyQuest(),progress=questProgress(quest);if(!progress.done||quest.claimed)return;
-    quest.claimed=true;quest.claimedAt=new Date().toISOString();state.player.totalXp+=Number(quest.xp||25);state.skills.points=Number(state.skills.points||0)+1;
-    state.logs.push({id:S.uid('log'),at:quest.claimedAt,type:'quest',message:`Daily Quest claimed: ${quest.title}. +${quest.xp} XP and +1 Skill Point.`});save();systemFeedback('clear','Daily Quest reward claimed.');renderApp();
+    quest.claimed=true;quest.claimedAt=new Date().toISOString();state.player.totalXp+=Number(quest.xp||25);
+    state.logs.push({id:S.uid('log'),at:quest.claimedAt,type:'quest',message:`Daily Quest claimed: ${quest.title}. +${quest.xp} XP.`});save();systemFeedback('clear','Daily Quest reward claimed.');renderApp();
   };
-
 
   const buildWeeklyDebrief=(startDate,endDate,key)=>{
     const start=S.dateKey(startDate),end=S.dateKey(endDate),days=Object.values(state.dayRecords).filter(day=>day.date>=start&&day.date<=end),records=state.attendanceRecords.filter(record=>record.scheduledDate>=start&&record.scheduledDate<=end&&record.finalized),tasks=state.academicTasks.filter(task=>String(task.completedAt||'').slice(0,10)>=start&&String(task.completedAt||'').slice(0,10)<=end);
@@ -1580,8 +1537,9 @@
     const reasons={};days.filter(day=>day.status==='failed').forEach(day=>{const reason=day.failureReason||'Missed sequence';reasons[reason]=(reasons[reason]||0)+1});
     const commonReason=Object.entries(reasons).sort((a,b)=>b[1]-a[1])[0]?.[0]||'No repeated failure pattern';
     const trend=clears>failures?'RISING':clears===failures?'STABLE':'REBUILDING';
-    const weakest=[...derivedAttributes()].sort((a,b)=>a.value-b.value)[0];
-    return{id:S.uid('weekly'),key,start,end,createdAt:new Date().toISOString(),completionRate:percent(clears,clears+failures),attendanceRate:percent(attended,required),bestDay:bestDay?.date||'No clear day',commonReason,trend,bossCleared:days.some(day=>day.weeklyBossCleared),tasksCompleted:tasks.length,recommendation:`Strengthen ${weakest.label}. ${weakest.copy}`};
+    const completionRate=percent(clears,clears+failures),attendanceRate=percent(attended,required);
+    const recommendation=completionRate<70?'Prioritize clearing every required directive next week.':attendanceRate<85?'Protect class attendance and punctuality next week.':tasks.length===0?'Complete at least one meaningful academic task next week.':'Maintain the current sequence and protect consistency.';
+    return{id:S.uid('weekly'),key,start,end,createdAt:new Date().toISOString(),completionRate,attendanceRate,bestDay:bestDay?.date||'No clear day',commonReason,trend,bossCleared:days.some(day=>day.weeklyBossCleared),tasksCompleted:tasks.length,recommendation};
   };
   const ensureWeeklyDebrief=()=>{
     state.weeklyDebriefs=state.weeklyDebriefs||[];const thisMonday=mondayFor(new Date()),end=addDays(thisMonday,-1),start=addDays(end,-6),key=S.dateKey(start);
@@ -1962,45 +1920,6 @@
     const attended=counts.early+counts.present+counts.late,required=attended+counts.absent;
     return{subjects,counts,attended,required,attendanceRate:required?Math.round(attended/required*100):0,punctualityRate:attended?Math.round((counts.early+counts.present)/attended*100):0,xp:subjects.reduce((sum,item)=>sum+item.xp,0),streaks:streakSummary(state.attendanceRecords)};
   };
-  const sortedDayRecords=()=>Object.values(state.dayRecords).sort((a,b)=>String(a.date).localeCompare(String(b.date)));
-  const firstStreakUnlockDate=threshold=>{
-    let streak=0;
-    for(const day of sortedDayRecords()){
-      if(day.status==='cleared')streak+=1;else if(day.status==='failed')streak=0;
-      if(streak>=threshold)return `${day.date}T23:00:00`;
-    }
-    return null;
-  };
-  const nthAttendanceDate=(statuses,count)=>{
-    const matches=[...state.attendanceRecords].filter(record=>record.finalized&&statuses.includes(record.status)).sort((a,b)=>`${a.scheduledDate}T${a.scheduledStart}`.localeCompare(`${b.scheduledDate}T${b.scheduledStart}`));
-    const record=matches[count-1];return record?record.checkInAt||`${record.scheduledDate}T${record.scheduledStart}:00`:null;
-  };
-  const firstFocusUnlockDate=()=>{
-    const qualifying=sortedDayRecords().filter(day=>day.status==='cleared'&&Object.values(day.protocols||{}).every(protocol=>Number(protocol.focusBreaches||0)===0));
-    return qualifying[2]?`${qualifying[2].date}T23:00:00`:null;
-  };
-  const achievementList=()=>{
-    const academic=overallAcademicStats();const subjects=academic.subjects;
-    const days=sortedDayRecords();
-    const firstPerfect=days.find(day=>day.perfectClear);
-    const firstBoss=days.find(day=>day.weeklyBossCleared);
-    const specialistDates=[...state.attendanceRecords.map(record=>record.updatedAt||record.checkInAt),...state.academicTasks.map(task=>task.completedAt||task.createdAt)].filter(Boolean).sort();const specialistSource=specialistDates[specialistDates.length-1]||null;
-    const items=[
-      {id:'discipline-initiate',title:'Discipline Initiate',unlocked:true,detail:'Activate the ASCEND System.',candidateAt:state.createdAt},
-      {id:'first-perfect-clear',title:'First Perfect Clear',unlocked:(state.player.perfectClears||0)>=1,detail:'Complete one Perfect Clear.',candidateAt:firstPerfect?`${firstPerfect.date}T23:00:00`:state.player.lastPerfectDate},
-      {id:'seven-day-streak',title:'Seven-Day Streak',unlocked:(state.player.bestStreak||0)>=7,detail:'Maintain seven consecutive clear days.',candidateAt:firstStreakUnlockDate(7)},
-      {id:'thirty-day-streak',title:'Thirty-Day Streak',unlocked:(state.player.bestStreak||0)>=30,detail:'Maintain thirty consecutive clear days.',candidateAt:firstStreakUnlockDate(30)},
-      {id:'perfect-attendance',title:'Perfect Attendance',unlocked:academic.required>=5&&academic.attendanceRate===100,detail:'Maintain perfect verified attendance across five classes.',candidateAt:nthAttendanceDate(['early','present','late'],5)},
-      {id:'early-arrival-specialist',title:'Early Arrival Specialist',unlocked:academic.counts.early>=5,detail:'Record five early class arrivals.',candidateAt:nthAttendanceDate(['early'],5)},
-      {id:'weekly-boss-slayer',title:'Weekly Boss Slayer',unlocked:Boolean(firstBoss),detail:'Defeat one Weekly Boss.',candidateAt:firstBoss?`${firstBoss.date}T23:00:00`:null},
-      {id:'focus-unbroken',title:'Focus Unbroken',unlocked:state.player.totalClearDays>=3&&firstFocusUnlockDate()!=null,detail:'Clear three days without a timed-task Focus Breach.',candidateAt:firstFocusUnlockDate()},
-      {id:'subject-specialist',title:'Subject Specialist',unlocked:subjects.some(subject=>subject.level>=5),detail:'Reach Subject Level 5.',candidateAt:specialistSource}
-    ];
-    const unlocks=state.player.achievementUnlocks||(state.player.achievementUnlocks={}),newAchievements=[];
-    items.forEach(item=>{if(item.unlocked&&!unlocks[item.id]){unlocks[item.id]=item.candidateAt||new Date().toISOString();newAchievements.push(item)}item.unlockedAt=unlocks[item.id]||null});
-    if(newAchievements.length){newAchievements.forEach(item=>state.logs.push({id:S.uid('log'),at:item.unlockedAt||new Date().toISOString(),type:'achievement',message:`Achievement unlocked: ${item.title}.`}));save()}
-    return items;
-  };
   const renderControlHome=()=>{setControlView('controlHomeView');const academic=overallAcademicStats();$('#freeScheduleClassCount').textContent=activeSchedule().length;$('#freeScheduleAttendanceRate').textContent=`${academic.attendanceRate}%`};
   const renderAcademicHome=()=>{
     setControlView('academicHomeView');const academic=overallAcademicStats();$('#scheduleHomeCount').textContent=activeSchedule().length;$('#academicHomeXp').textContent=academic.xp;
@@ -2010,7 +1929,7 @@
     const snapshots=S.listSnapshots();const report=await storageReport();const percent=Math.min(999,Math.round(report.ratio*100));
     $('#reliabilityTimezoneStatus').textContent=`UTC ${timezoneOffsetLabel(state.timezone?.offset??S.timezoneOffset())}`;
     $('#reliabilityStorageStatus').textContent=report.ratio>=.8?'HIGH':`${percent}%`;
-    $('#reliabilitySnapshotCount').textContent=`${snapshots.length} / ${skillEquipped('archive-core')?10:7}`;
+    $('#reliabilitySnapshotCount').textContent=`${snapshots.length} / 7`;
     $('#reliabilityNotificationStatus').textContent=state.settings.notifications&&('Notification' in window)&&Notification.permission==='granted'?'ON':'OFF';
     $('#reliabilityCopy').textContent=`Local recovery and alerts remain available offline · ${state.timezone?.name||S.timezoneName()}.`;
     $('#reviewTimezone').textContent=state.timezone?.pending?'Review Detected Timezone':'Review Timezone';
@@ -2098,8 +2017,6 @@
   };
   const renderProfile=()=>{
     setControlView('profileView');controlUi.profilePage=clamp(controlUi.profilePage,0,profilePages.length-1);
-    const achievements=achievementList();let unlockedTitles=achievements.filter(item=>item.unlocked).map(item=>item.title);if(skillUnlocked('title-forge'))unlockedTitles=[...new Set([...unlockedTitles,'System Pathfinder'])];
-    if(!unlockedTitles.includes(state.player.title)){state.player.title=unlockedTitles[0]||'Discipline Initiate';save({silent:true})}
     const content=$('#profileContent'),activeEmblem=normalizeGlyph(state.player.emblem),required=clearDaysRequired(state.player.level),levelProgress=state.player.mastered?100:required?Math.round(state.player.levelClearDays/required*100):100;
     if(controlUi.profilePage===0){
       controlUi.profileMonth=controlUi.profileMonth||profileMonthKey(new Date());
@@ -2114,7 +2031,7 @@
       return;
     }
     const emblemOptions=[['apex','Apex'],['confirm','Shard'],['shine','Radiance'],['stretch','Flow'],['academic','Scholar'],['work','Core']];
-    content.innerHTML=`<div class="simple-profile-detail"><div class="simple-detail-heading"><span>IDENTITY</span><strong>Edit Player Record</strong><small>Changes apply only to your visible profile identity.</small></div><div class="profile-form simple-identity-form"><label>Name<input id="profileNameEdit" type="text" maxlength="40" value="${escapeHtml(state.player.name)}"></label><label>Codename<input id="profileCodenameEdit" type="text" maxlength="24" value="${escapeHtml(state.player.codename||'')}"></label><label>Emblem<select id="profileEmblemEdit">${emblemOptions.map(([value,label])=>`<option value="${value}" ${value===activeEmblem?'selected':''}>${label}</option>`).join('')}</select></label><label>Title<select id="profileTitleEdit">${unlockedTitles.map(value=>`<option ${value===state.player.title?'selected':''}>${escapeHtml(value)}</option>`).join('')}</select></label></div><button class="custom-primary" type="button" data-profile-action="save-identity">Save Identity</button><button class="ghost-button" type="button" data-profile-action="profile-home">Back to Profile</button></div>`;
+    content.innerHTML=`<div class="simple-profile-detail"><div class="simple-detail-heading"><span>IDENTITY</span><strong>Edit Player Record</strong><small>Changes apply only to your visible profile identity.</small></div><div class="profile-form simple-identity-form"><label>Name<input id="profileNameEdit" type="text" maxlength="40" value="${escapeHtml(state.player.name)}"></label><label>Codename<input id="profileCodenameEdit" type="text" maxlength="24" value="${escapeHtml(state.player.codename||'')}"></label><label>Emblem<select id="profileEmblemEdit">${emblemOptions.map(([value,label])=>`<option value="${value}" ${value===activeEmblem?'selected':''}>${label}</option>`).join('')}</select></label><label>Title<input id="profileTitleEdit" type="text" maxlength="32" value="${escapeHtml(state.player.title||'ASCEND Player')}"></label></div><button class="custom-primary" type="button" data-profile-action="save-identity">Save Identity</button><button class="ghost-button" type="button" data-profile-action="profile-home">Back to Profile</button></div>`;
   };
   const historyRecords=()=>[...state.attendanceRecords].sort((a,b)=>`${b.scheduledDate}T${b.scheduledStart}`.localeCompare(`${a.scheduledDate}T${a.scheduledStart}`));
   const currentWeekAttendance=()=>{
@@ -2204,7 +2121,7 @@
     state.logs.push({id:S.uid('log'),at:now.toISOString(),type:'attendance-correction',message:`${record.subjectName} corrected from ${before} to ${status}.${xpDelta?` Profile XP ${xpDelta>0?'increased':'decreased'} by ${Math.abs(xpDelta)}.`:''}`});save();controlUi.correction=false;renderAttendance();
   };
   const SETTINGS_EXPORT_VERSION=1;
-  const progressExportKeys=['player','dayRecords','attendanceRecords','academicTasks','recurringTaskRules','tradingNotes','quests','skills','weeklyDebriefs'];
+  const progressExportKeys=['player','dayRecords','attendanceRecords','academicTasks','recurringTaskRules','tradingNotes','quests','weeklyDebriefs'];
   const settingsExportFilename=kind=>{
     const now=new Date(),time=`${pad(now.getHours())}${pad(now.getMinutes())}`,label=kind==='full'?'full-backup':kind;
     return `ascend-${label}-${S.dateKey(now)}-${time}.json`;
@@ -2222,8 +2139,8 @@
     return JSON.stringify({app:'ASCEND',exportType:kind,exportVersion:SETTINGS_EXPORT_VERSION,schemaVersion:S.schemaInfo().version,exportedAt:new Date().toISOString(),data},null,2);
   };
   const settingsProgressSummary=data=>{
-    const player=data.player||{},achievements=Object.keys(player.achievementUnlocks||{}).length;
-    return{title:`${player.codename||player.name||'Player'} · Level ${Number(player.level||1)} · ${player.rank||'E'}-Rank`,details:`${Object.keys(data.dayRecords||{}).length} days · ${(data.attendanceRecords||[]).length} attendance · ${(data.academicTasks||[]).length} tasks · ${achievements} achievements`};
+    const player=data.player||{};
+    return{title:`${player.codename||player.name||'Player'} · Level ${Number(player.level||1)} · ${player.rank||'E'}-Rank`,details:`${Object.keys(data.dayRecords||{}).length} days · ${(data.attendanceRecords||[]).length} attendance · ${(data.academicTasks||[]).length} tasks · ${(data.quests?.history||[]).length} quest records`};
   };
   const settingsScheduleSummary=data=>{
     const classes=Array.isArray(data.classSchedule)?data.classSchedule:[],exceptions=Array.isArray(data.scheduleExceptions)?data.scheduleExceptions:[],subjects=new Set(classes.map(item=>String(item.subject||'').trim().toLowerCase()).filter(Boolean));
@@ -2238,7 +2155,7 @@
       if(!data.player||typeof data.player!=='object'||Array.isArray(data.player))throw new Error('The progress backup is missing the Player record.');
       if(!data.dayRecords||typeof data.dayRecords!=='object'||Array.isArray(data.dayRecords))throw new Error('The progress backup is missing day records.');
       ['attendanceRecords','academicTasks','recurringTaskRules','tradingNotes','weeklyDebriefs'].forEach(key=>{if(!Array.isArray(data[key]))throw new Error(`The progress backup has invalid ${key}.`)});
-      if(!data.quests||typeof data.quests!=='object'||!data.skills||typeof data.skills!=='object')throw new Error('The progress backup is missing quest or skill records.');
+      if(!data.quests||typeof data.quests!=='object')throw new Error('The progress backup is missing quest records.');
       const merged=clone(state);progressExportKeys.forEach(key=>{merged[key]=clone(data[key])});const validated=S.normalizeCurrent(merged),validatedData={};progressExportKeys.forEach(key=>{validatedData[key]=clone(validated[key])});
       return{kind,data:validatedData,summary:settingsProgressSummary(validatedData)};
     }
@@ -2655,7 +2572,7 @@
       if(action==='calendar-day'){const dateKey=button.dataset.date;if(!dateKey||dateKey>currentKey())return;controlUi.profileDay=dateKey;renderProfile();return}
       if(action==='calendar-back'){controlUi.profileDay=null;renderProfile();return}
       if(action==='save-identity'){
-        const name=$('#profileNameEdit')?.value.trim(),codename=$('#profileCodenameEdit')?.value.trim()||'',emblem=normalizeGlyph($('#profileEmblemEdit')?.value||'apex'),title=$('#profileTitleEdit')?.value||'Discipline Initiate';
+        const name=$('#profileNameEdit')?.value.trim(),codename=$('#profileCodenameEdit')?.value.trim()||'',emblem=normalizeGlyph($('#profileEmblemEdit')?.value||'apex'),title=$('#profileTitleEdit')?.value.trim()||'ASCEND Player';
         if(!name){showBreachWarning('NAME REQUIRED','Player name cannot be empty.');return}
         state.player.name=name;state.player.codename=codename;state.player.emblem=emblem;state.player.title=title;state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'profile',message:'Player identity updated.'});save();systemFeedback('clear','Profile saved.');controlUi.profilePage=0;renderProfile();return;
       }
@@ -2705,7 +2622,6 @@
     $('#clockPanel').addEventListener('pointerdown',startClockAccessHold);
     $('#clockPanel').addEventListener('pointerup',finishClockAccessHold);
     ['pointercancel','lostpointercapture'].forEach(type=>$('#clockPanel').addEventListener(type,cancelClockAccessHold));
-    $('#completeRecovery').addEventListener('click',completeRecoveryProtocol);
     $('#returnDirectiveButton').addEventListener('click',closeEmergencyOverlay);
     $('#confirmEmergencyButton').addEventListener('pointerdown',event=>{event.preventDefault();beginHold('emergency-exit',3000,progress=>{$('#emergencyExitFill').style.width=`${progress*100}%`},emergencyExit)});
     ['pointerup','pointercancel','pointerleave'].forEach(type=>$('#confirmEmergencyButton').addEventListener(type,()=>cancelHold('emergency-exit')));
@@ -2714,7 +2630,6 @@
     document.addEventListener('keydown',event=>{
       if(event.key!=='Escape'||event.repeat)return;
       if(!$('#developerRunOverlay').hidden){exitDeveloperRun(false);return;}
-      if(!$('#recoveryOverlay').hidden)return;
       if(!$('#emergencyRecoveryOverlay').hidden){closeEmergencyRecovery();return}
       if(!$('#dailyQuestOverlay').hidden){closeDailyQuest();return}
       if(!$('#timezoneOverlay').hidden){$('#timezoneOverlay').hidden=true;return}

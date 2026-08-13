@@ -1,5 +1,5 @@
 const CACHE_PREFIX='ascend-discipline-';
-const CACHE=`${CACHE_PREFIX}v58-profile-streak-xp-display`;
+const CACHE=`${CACHE_PREFIX}v59-progression-cleanup`;
 const APP_SHELL=[
   './',
   './index.html',

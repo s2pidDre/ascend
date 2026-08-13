@@ -33,7 +33,7 @@ input,select,.selectable,.selectable *{-webkit-user-select:text;user-select:text
 @keyframes energyRotate{to{transform:rotate(360deg)}}
 @keyframes particle{to{transform:translateY(-110vh) scale(1.8);opacity:0}}
 .app-shell{position:relative;z-index:2;width:min(100%,620px);height:100dvh;margin:0 auto;padding:calc(8px + var(--safe-top)) 13px calc(8px + var(--safe-bottom));display:grid;grid-template-rows:50px minmax(0,1fr);gap:8px;overflow:hidden}
-.app-shell::after{content:"";position:absolute;z-index:8;inset:48px 0 0;pointer-events:none;opacity:0;background:linear-gradient(128deg,transparent 0 47%,rgba(255,83,108,.18) 47.4% 48%,transparent 48.5% 100%),linear-gradient(54deg,transparent 0 64%,rgba(255,83,108,.11) 64.3% 64.8%,transparent 65.2% 100%);mix-blend-mode:screen;transition:opacity .3s}body.failure-scar .app-shell::after{opacity:.48;animation:scarGlitch 6s steps(1) infinite}@keyframes scarGlitch{0%,92%,100%{transform:none}94%{transform:translateX(2px)}96%{transform:translateX(-1px)}}
+.app-shell::after{content:"";position:absolute;z-index:8;inset:48px 0 0;pointer-events:none;opacity:0;background:linear-gradient(128deg,transparent 0 47%,rgba(255,83,108,.18) 47.4% 48%,transparent 48.5% 100%),linear-gradient(54deg,transparent 0 64%,rgba(255,83,108,.11) 64.3% 64.8%,transparent 65.2% 100%);mix-blend-mode:screen;transition:opacity .3s}94%{transform:translateX(2px)}96%{transform:translateX(-1px)}}
 .topbar{min-height:0;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(75,177,255,.24);padding:0 1px 7px;position:relative}
 .topbar::after{content:"";position:absolute;bottom:-1px;left:0;width:24%;height:1px;background:linear-gradient(90deg,var(--blue),transparent);box-shadow:0 0 12px var(--blue)}
 .brand,.clock{background:none;padding:0;display:flex;align-items:center;cursor:default;position:relative;outline-offset:4px}
@@ -978,7 +978,7 @@ h1,h2,p,strong,b,small,span,button,label{
   z-index:0;
   mix-blend-mode:normal;
 }
-body.failure-scar .app-shell::after{opacity:.18}
+
 .topbar,.screen{position:relative;z-index:1}
 .system-panel{isolation:isolate}
 .system-panel::before,.system-panel::after{z-index:0}
@@ -1839,11 +1839,6 @@ body[data-state="warning"],body[data-state="critical"]{
   background:rgba(7,23,47,.7);
 }
 .profile-emblem .system-glyph{width:56%;height:56%;margin:auto;color:var(--blue)}
-.achievement-status{
-  transform:none!important;
-  clip-path:polygon(20% 0,80% 0,100% 20%,100% 80%,80% 100%,20% 100%,0 80%,0 20%);
-}
-.achievement-status .system-glyph{width:58%;height:58%;margin:auto}
 .section-nav button,.mini-nav button,.picker-nav button{
   display:grid;
   place-items:center;
@@ -2118,38 +2113,6 @@ body.orientation-blocked .orientation-guard{visibility:visible!important}
 .exception-record strong{font-size:.68rem;color:#e8f8ff;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .exception-record small{font-size:.49rem;color:#6d86a4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .compact-danger{min-height:34px;padding:5px 8px;font-size:.5rem}
-.recovery-overlay{
-  position:fixed;
-  z-index:45;
-  inset:0;
-  display:grid;
-  place-items:center;
-  overflow:hidden;
-  padding:18px;
-  background:rgba(2,4,14,.97);
-}
-.recovery-panel{
-  width:min(100%,430px);
-  max-height:100%;
-  padding:17px 15px;
-  display:flex;
-  flex-direction:column;
-  align-items:center;
-  text-align:center;
-  gap:8px;
-  border-color:rgba(136,103,255,.54);
-  background:linear-gradient(180deg,rgba(18,12,46,.96),rgba(4,7,20,.99));
-}
-.recovery-symbol{border-color:rgba(136,103,255,.7);color:#b9a6ff;box-shadow:0 0 24px rgba(136,103,255,.18)}
-.recovery-panel h2{font-size:1.2rem;text-transform:uppercase}
-.recovery-panel>p:not(.eyebrow){margin:0;color:#9ba7c7;font-size:.68rem;line-height:1.32}
-.recovery-panel label{align-self:stretch;text-align:left;color:#7886ae;font-size:.52rem;letter-spacing:.12em;text-transform:uppercase}
-.recovery-panel select{width:100%;height:39px;padding:0 9px;border:1px solid rgba(136,103,255,.34);background:#09091c;color:#edf0ff;outline:none}
-.recovery-protection{align-self:stretch;display:grid;gap:2px;padding:8px;border:1px solid rgba(75,199,255,.22);background:rgba(4,19,40,.64);text-align:left}
-.recovery-protection span{font-size:.43rem;letter-spacing:.12em;color:var(--blue)}
-.recovery-protection strong{font-size:.7rem;color:#e3f7ff;text-transform:uppercase}
-.recovery-protection small{font-size:.48rem;color:#7087a3}
-body.orientation-blocked .recovery-overlay{display:none!important}
 
 @media(max-height:760px){
   .system-reliability-view,.schedule-exceptions-view{gap:5px}
@@ -2159,16 +2122,12 @@ body.orientation-blocked .recovery-overlay{display:none!important}
   .exception-form{gap:4px}
   .exception-form input,.exception-form select{height:29px}
   .exception-record{min-height:47px;padding:6px}
-  .recovery-panel{padding:12px;gap:6px}
-  .recovery-panel select{height:34px}
 }
 @media(max-height:620px){
-  .reliability-copy,.snapshot-strip small,.recovery-protection small{display:none}
+  .reliability-copy,.snapshot-strip small{display:none}
   .reliability-summary>div{padding:4px 5px}
   .reliability-actions .system-button,.reliability-actions .danger-button,.reliability-actions .ghost-button{min-height:29px}
   .exception-note-field{display:none!important}
-  .recovery-panel>p:not(.eyebrow){font-size:.56rem}
-  .recovery-protection{padding:5px}
 }
 @media(max-width:390px){
   .reliability-actions{grid-template-columns:1fr}

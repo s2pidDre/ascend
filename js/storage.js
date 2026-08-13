@@ -6,12 +6,12 @@
   const SNAPSHOT_KEY='ascend_discipline_protocol_snapshots_v1';
   const ROLLBACK_KEY='ascend_discipline_protocol_rollbacks_v1';
   const LEGACY_KEYS=['ascend_discipline_protocol_v6','ascend_discipline_protocol_v5','ascend_discipline_protocol_v4','ascend_strict_system_v3','ascend_automatic_year_system_v2','ascend_personal_growth_system_v1'];
-  const VERSION=22;
+  const VERSION=23;
   const BACKUP_VERSION=5;
   const ROUTINE_LOG_LIMIT=420;
   const SNAPSHOT_LIMIT=7;
   const ROLLBACK_LIMIT=4;
-  const PERMANENT_LOG_TYPES=new Set(['system','level','rank','mastery','achievement','backup','restore','emergency','attendance-correction','recovery','snapshot','boss','migration','quest','skill','weekly','test','watchdog','reminder']);
+  const PERMANENT_LOG_TYPES=new Set(['system','level','rank','mastery','backup','restore','emergency','attendance-correction','recovery','snapshot','boss','migration','quest','weekly','test','watchdog','reminder']);
   const nowIso=()=>new Date().toISOString();
   const dateKey=(date=new Date())=>`${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
   const timezoneName=()=>{try{return Intl.DateTimeFormat().resolvedOptions().timeZone||'Local Time'}catch(error){return'Local Time'}};
@@ -36,8 +36,7 @@
     player:{
       name:'Player',codename:'',emblem:'apex',title:'Discipline Initiate',level:1,maxLevel:50,streak:0,bestStreak:0,totalClearDays:0,totalFailedDays:0,
       levelClearDays:0,mastered:false,masteredAt:null,totalXp:0,masteryChoice:null,
-      rank:'E',pendingRank:null,perfectClears:0,lastPerfectDate:null,failureScar:false,rankTrialAttempts:0,
-      achievementUnlocks:{},achievementSeen:[]
+      rank:'E',pendingRank:null,perfectClears:0,lastPerfectDate:null,rankTrialAttempts:0
     },
     dayRecords:{},
     classSchedule:[],
@@ -47,11 +46,9 @@
     recurringTaskRules:[],
     tradingNotes:[],
     quests:{daily:null,history:[]},
-    skills:{points:0,unlocked:[],equipped:[]},
     weeklyDebriefs:[],
     settings:{sound:true,haptics:true,keepAwake:true,notifications:false,notificationLeadMinutes:10,timeFormat:'12',externalCalendarConfirmed:false,externalCalendarExportedAt:null,externalCalendarHorizonDays:60},
     timezone:{name:timezoneName(),offset:timezoneOffset(),confirmedAt:nowIso(),pending:null,ignoredDevice:null,history:[]},
-    recovery:{active:false,status:'idle',sourceDate:null,reason:null,action:null,protectedDate:null,protectedProtocolId:null,completedAt:null},
     system:{recoveredFrom:null,lastStorageWarningAt:null,notificationLedger:{},safeMode:false,lastSuccessfulBoot:null,migrationHistory:[],auditTrail:[],watchdog:{lastRun:null,issues:0,repairs:0,summary:'Not run'},reminderBridge:{lastCheckAt:null,missedCount:0,lastMissedAt:null,lastExportAt:null,lastExportEvents:0},profileXpReconciliation:{version:0,completedAt:null,date:null,repairedMarkers:0,recoveredDirectiveXp:0,recoveredAttendanceXp:0,status:'pending'},developerTest:{enabled:false,unlocked:false,scenario:'free',simulatedDate:null,runs:0,lastResult:null,sandboxMode:'profile',reports:[],labHistory:[]}},
     logs:[]
   });
@@ -118,7 +115,7 @@
         protocol.profileXpAppliedAt=protocol.profileXpAppliedAt||null;
       }
       if(protocol.status==='failed')protocol.earnedXp=0;
-      delete protocol.profileXpHeld;
+      delete protocol.profileXpHeld;delete protocol.recoveryProtected;
       protocol.focusBreaches=Math.max(0,Number(protocol.focusBreaches||0));
       protocol.hiddenMilliseconds=Math.max(0,Number(protocol.hiddenMilliseconds||0));
     });
@@ -142,13 +139,11 @@
       ...base,...raw,
       player:{...base.player,...(raw.player||{})},
       timezone:{...base.timezone,...(raw.timezone||{})},
-      recovery:{...base.recovery,...(raw.recovery||{})},
       quests:{...base.quests,...(raw.quests||{})},
-      skills:{...base.skills,...(raw.skills||{})},
       system:{...base.system,...(raw.system||{}),reminderBridge:{...base.system.reminderBridge,...(raw.system?.reminderBridge||{})},profileXpReconciliation:{...base.system.profileXpReconciliation,...(raw.system?.profileXpReconciliation||{})},developerTest:{...base.system.developerTest,...(raw.system?.developerTest||{})}},
       settings:{...base.settings,...rawSettings}
     };
-    delete state.integrity;
+    delete state.integrity;delete state.recovery;delete state.skills;delete state.player.failureScar;delete state.player.achievementUnlocks;delete state.player.achievementSeen;
     state.version=VERSION;
     state.settings.sound=typeof rawSettings.sound==='boolean'?rawSettings.sound:base.settings.sound;
     state.settings.haptics=typeof rawSettings.haptics==='boolean'?rawSettings.haptics:base.settings.haptics;
@@ -169,9 +164,12 @@
     state.academicTasks.forEach(task=>{task.dependencyIds=task.dependencyIds.filter(id=>id!==task.id&&validTaskIds.has(id))});
     state.recurringTaskRules=Array.isArray(raw.recurringTaskRules)?raw.recurringTaskRules.map(normalizeRule):[];
     state.tradingNotes=Array.isArray(raw.tradingNotes)?raw.tradingNotes:[];
-    state.logs=pruneLogs(Array.isArray(raw.logs)?raw.logs.map(log=>log?.type==='integrity'?{...log,type:'system'}:log):raw.logs);
-    state.player.achievementUnlocks=state.player.achievementUnlocks&&typeof state.player.achievementUnlocks==='object'&&!Array.isArray(state.player.achievementUnlocks)?state.player.achievementUnlocks:{};
-    state.player.achievementSeen=Array.isArray(state.player.achievementSeen)?[...new Set(state.player.achievementSeen.map(String))]:[];
+    const normalizedLogs=(Array.isArray(raw.logs)?raw.logs:[]).map(log=>{
+      let next=log?.type==='integrity'?{...log,type:'system'}:log;
+      if(next?.type==='quest'&&/skill point/i.test(String(next.message||'')))next={...next,message:String(next.message||'').replace(/\s*(?:and|·)\s*\+1 Skill Point\.?/gi,'.').replace(/\.\./g,'.')};
+      return next;
+    }).filter(log=>log?.type!=='achievement'&&log?.type!=='skill'&&!(log?.type==='recovery'&&/Recovery Protocol armed|Recovery completed after|Recovery protection activated/i.test(String(log.message||''))));
+    state.logs=pruneLogs(normalizedLogs);
     if(!state.player.pendingRank)state.player.pendingRank=pendingRankFor(state.player.level,state.player.rank);
     state.system.notificationLedger=state.system.notificationLedger&&typeof state.system.notificationLedger==='object'&&!Array.isArray(state.system.notificationLedger)?state.system.notificationLedger:{};
     state.system.migrationHistory=Array.isArray(state.system.migrationHistory)?state.system.migrationHistory:[];
@@ -184,11 +182,10 @@
     state.system.developerTest.labHistory=Array.isArray(state.system.developerTest.labHistory)?state.system.developerTest.labHistory.slice(-40):[];
     state.system.developerTest.sandboxMode=['profile','sample'].includes(state.system.developerTest.sandboxMode)?state.system.developerTest.sandboxMode:'profile';
     state.system.safeMode=Boolean(state.system.safeMode);
-    state.quests.daily=state.quests.daily&&typeof state.quests.daily==='object'?state.quests.daily:null;
-    state.quests.history=Array.isArray(state.quests.history)?state.quests.history.slice(-60):[];
-    state.skills.points=Math.max(0,Number(state.skills.points||0));
-    state.skills.unlocked=Array.isArray(state.skills.unlocked)?[...new Set(state.skills.unlocked.map(String))]:[];
-    state.skills.equipped=Array.isArray(state.skills.equipped)?[...new Set(state.skills.equipped.map(String))].slice(0,2):[];
+    const retiredQuestIds=new Set(['recovery-action','clean-timeline','attendance']);
+    state.quests.daily=state.quests.daily&&typeof state.quests.daily==='object'&&!retiredQuestIds.has(state.quests.daily.id)?state.quests.daily:null;
+    if(state.quests.daily)delete state.quests.daily.rerolled;
+    state.quests.history=Array.isArray(state.quests.history)?state.quests.history.filter(item=>item&&typeof item==='object'&&!retiredQuestIds.has(item.id)).map(item=>{const clean={...item};delete clean.rerolled;return clean}).slice(-60):[];
     state.weeklyDebriefs=Array.isArray(raw.weeklyDebriefs)?raw.weeklyDebriefs.slice(-16):[];
     state.timezone.name=state.timezone.name||timezoneName();state.timezone.offset=Number.isFinite(Number(state.timezone.offset))?Number(state.timezone.offset):timezoneOffset();
     state.timezone.history=Array.isArray(state.timezone.history)?state.timezone.history.slice(-20):[];
@@ -204,7 +201,7 @@
   const readList=(key)=>{try{const value=JSON.parse(store.getItem(key)||'[]');return Array.isArray(value)?value:[]}catch(error){return[]}};
   const writeList=(key,value,limit)=>store.setItem(key,JSON.stringify(value.slice(-limit)));
   const snapshotState=state=>clone({...state,system:{...(state.system||{}),recoveredFrom:null}});
-  const snapshotLimitFor=state=>state?.skills?.equipped?.includes('archive-core')?10:SNAPSHOT_LIMIT;
+  const snapshotLimitFor=()=>SNAPSHOT_LIMIT;
 
   const createDailySnapshot=(state,force=false)=>{
     const normalized=normalizeCurrent(snapshotState(state));
@@ -243,7 +240,7 @@
     }
     heldDirectiveKeys.forEach(key=>{const [date,protocolId]=key.split('|'),protocol=state.dayRecords?.[date]?.protocols?.[protocolId];if(protocol?.status==='cleared'&&!protocol.profileXpAppliedAt){legacyHeldXpReopened+=Math.max(0,Number(protocol.earnedXp||0)-Number(protocol.profileXpAppliedAmount||0));protocol.profileXpAppliedAmount=0}});
     heldAttendanceIds.forEach(id=>{const record=state.attendanceRecords.find(item=>item.id===id);if(record&&!record.profileXpAppliedAt){legacyHeldXpReopened+=Math.max(0,Number(record.xpAwarded||0)-Number(record.profileXpAppliedAmount||0));record.profileXpAppliedAmount=0}});
-    if(state.quests?.daily?.id==='clean-timeline')state.quests.daily=null;
+    if(['clean-timeline','recovery-action','attendance'].includes(state.quests?.daily?.id))state.quests.daily=null;
     if(fromVersion<21)state.settings.externalCalendarConfirmed=false;
     if(fromVersion<22){
       Object.values(state.dayRecords||{}).forEach(day=>{
@@ -259,7 +256,7 @@
       });
       state.settings.externalCalendarConfirmed=false;
     }
-    const migration={id:uid('migration'),at:nowIso(),fromVersion,toVersion:VERSION,label:'Workout shower routine update'};
+    const migration={id:uid('migration'),at:nowIso(),fromVersion,toVersion:VERSION,label:'Recovery, achievements, and skills cleanup'};
     state.system.migrationHistory.push(migration);
     state.logs.push({id:uid('log'),at:migration.at,type:'migration',message:`ASCEND data migrated from schema ${fromVersion||'legacy'} to ${VERSION}. A rollback point was retained.${currentDayXpRepair?` ${currentDayXpRepair} legacy current-day XP reopened for reconciliation.`:''}${legacyHeldXpReopened?` ${legacyHeldXpReopened} previously held XP reopened for immediate Profile synchronization.`:''}`});
     state.logs=pruneLogs(state.logs);return state;
