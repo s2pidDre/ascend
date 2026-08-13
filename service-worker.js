@@ -1,5 +1,5 @@
 const CACHE_PREFIX='ascend-discipline-';
-const CACHE=`${CACHE_PREFIX}v59-progression-cleanup`;
+const CACHE=`${CACHE_PREFIX}v60-mobile-header-fix`;
 const APP_SHELL=[
   './',
   './index.html',

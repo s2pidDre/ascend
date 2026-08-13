@@ -750,9 +750,18 @@
     }
   };
 
+  const formatHeaderClock=date=>{
+    const compactHeader=!!window.matchMedia?.('(max-width:480px)').matches;
+    const options={hour:'2-digit',minute:'2-digit'};
+    if(!compactHeader)options.second='2-digit';
+    if(state.settings?.timeFormat==='24')options.hourCycle='h23';
+    else options.hour12=true;
+    return new Intl.DateTimeFormat(undefined,options).format(date);
+  };
+
   const updateClock=()=>{
     const now=new Date();
-    $('#clockTime').textContent=new Intl.DateTimeFormat(undefined,{hour:'2-digit',minute:'2-digit',second:'2-digit'}).format(now);
+    $('#clockTime').textContent=formatHeaderClock(now);
     $('#clockDate').textContent=formatDate(now);
   };
 

@@ -4454,3 +4454,27 @@ body.orientation-blocked .developer-run-overlay{display:none!important}
   .settings-select-row{grid-template-columns:minmax(0,1fr) 112px;gap:6px}
   .settings-data-row small,.settings-select-row small{font-size:.37rem}
 }
+
+/* Mobile header stability: size the header from its real content and keep clock/date in their own column. */
+.app-shell{grid-template-rows:auto minmax(0,1fr)}
+.topbar{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto;
+  align-items:center;
+  gap:12px;
+  min-width:0;
+}
+.brand{min-width:0}
+.clock{
+  min-width:max-content;
+  justify-items:end;
+  align-content:center;
+  white-space:nowrap;
+}
+.clock strong,.clock span{display:block;white-space:nowrap;line-height:1.08}
+@media (max-width:480px){
+  .topbar{gap:8px}
+  .clock{min-width:76px}
+  .clock strong{font-size:.78rem;letter-spacing:.055em}
+  .clock span{font-size:.49rem;margin-top:3px;letter-spacing:.075em}
+}
