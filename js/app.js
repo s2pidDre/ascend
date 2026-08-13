@@ -2106,8 +2106,8 @@
       content.innerHTML=`<div class="simple-profile-home">
         <div class="simple-profile-identity"><div class="profile-emblem profile-settings-hold" data-settings-hold="true" aria-label="Hold for Settings">${glyphMarkup(activeEmblem)}</div><div><span>PLAYER · ${state.player.rank}-RANK</span><strong>${escapeHtml(state.player.codename||state.player.name)}</strong><small>${escapeHtml(state.player.name)} · ${escapeHtml(state.player.title)}</small></div><button type="button" data-profile-action="edit-identity">Edit</button></div>
         <div class="simple-profile-progression">
-          <div class="simple-profile-momentum"><div><span>LEVEL</span><strong>${state.player.level}</strong></div><div><span>STREAK</span><strong>${state.player.streak} DAY${state.player.streak===1?'':'S'}</strong></div></div>
-          <div class="simple-profile-progress"><div><span>${state.player.mastered?'SYSTEM MASTERY':'LEVEL PROGRESS'}</span><strong>${state.player.mastered?'COMPLETE':`${state.player.levelClearDays} / ${required} CLEAR DAYS`}</strong></div><i><b style="width:${levelProgress}%"></b></i><small>${Number(state.player.totalXp||0).toLocaleString()} lifetime XP · attendance included</small></div>
+          <div class="simple-profile-momentum"><div><span>LEVEL</span><strong>${state.player.level}</strong></div><div><span>STREAK</span><strong>${state.player.streak} DAY${state.player.streak===1?'':'S'}</strong><small class="simple-profile-best">BEST · ${state.player.bestStreak||0} DAY${Number(state.player.bestStreak||0)===1?'':'S'}</small></div></div>
+          <div class="simple-profile-progress"><div><span>${state.player.mastered?'SYSTEM MASTERY':'LEVEL PROGRESS'}</span><strong>${state.player.mastered?'COMPLETE':`${state.player.levelClearDays} / ${required} CLEAR DAYS`}</strong></div><i><b style="width:${levelProgress}%"></b></i><small>${Number(state.player.totalXp||0).toLocaleString()} XP</small></div>
         </div>
         ${controlUi.profileDay?profileDayDetailMarkup(controlUi.profileDay):profileCalendarMarkup()}
       </div>`;

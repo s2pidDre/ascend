@@ -3722,6 +3722,13 @@ body.orientation-blocked .developer-run-overlay{display:none!important}
   text-overflow:ellipsis;
   white-space:nowrap;
 }
+.simple-profile-best{
+  color:#7891ad;
+  font-size:.36rem;
+  font-weight:800;
+  letter-spacing:.08em;
+  line-height:1.1;
+}
 .simple-profile-progress{
   display:grid;
   gap:5px;
