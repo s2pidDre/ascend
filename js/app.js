@@ -21,7 +21,7 @@
   let clockSuppressClick=false;
   let escapeTimer=null;
   let scheduleUi={view:'home',day:new Date().getDay(),page:0,editId:null,isNew:false};
-  let controlUi={view:'home',profilePage:0,attendanceTab:'overall',subjectIndex:0,subjectAbsencePage:0,historyIndex:0,correction:false,taskTab:'tasks',taskIndex:0,ruleIndex:0,dependencyIndex:0,rollbackIndex:0,directDeveloper:false,directProfile:false};
+  let controlUi={view:'home',profilePage:0,profileMonth:null,profileDay:null,attendanceTab:'overall',subjectIndex:0,subjectAbsencePage:0,historyIndex:0,correction:false,taskTab:'tasks',taskIndex:0,ruleIndex:0,dependencyIndex:0,rollbackIndex:0,directDeveloper:false,directProfile:false};
   let developerRunSession=null;
   let developerClockTimer=null;
   let conflictUi={index:0,issues:[]};
@@ -2028,37 +2028,93 @@
     const latest=S.listSnapshots()[0];if(!latest){showBreachWarning('NO SNAPSHOT','No automatic recovery snapshot is available.');return}
     try{state=S.restoreSnapshot(latest.id);state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'restore',message:`Latest automatic snapshot restored: ${latest.date}.`});save({silent:true});closeScheduleOverlay();activeScreenId=null;renderApp();showSystemNotice('restore','SNAPSHOT RESTORED',`Recovered local state from ${latest.date}.`,3200)}catch(error){showBreachWarning('RESTORE FAILED',error.message||'Snapshot could not be restored.')}
   };
-  const profilePages=['Overview','Identity','Skills','Achievements'];
-  const latestUnlockedAchievement=items=>[...items].filter(item=>item.unlocked).sort((a,b)=>String(b.unlockedAt||'').localeCompare(String(a.unlockedAt||'')))[0]||null;
+  const profilePages=['Overview','Identity'];
+  const profileMonthKey=date=>`${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}`;
+  const profileMonthDate=key=>{const [year,month]=String(key||profileMonthKey(new Date())).split('-').map(Number);return new Date(year,Math.max(0,(month||1)-1),1,12,0,0,0)};
+  const shiftProfileMonth=(key,delta)=>{const date=profileMonthDate(key);date.setMonth(date.getMonth()+delta);return profileMonthKey(date)};
+  const profileDayRecordsFor=dateKey=>({day:state.dayRecords?.[dateKey]||null,attendance:state.attendanceRecords.filter(record=>record.scheduledDate===dateKey).sort((a,b)=>String(a.scheduledStart||'').localeCompare(String(b.scheduledStart||'')))});
+  const profileDayState=dateKey=>{
+    if(dateKey>currentKey())return'future';
+    const {day,attendance}=profileDayRecordsFor(dateKey);
+    if(day?.status==='cleared')return'clear';
+    if(day?.status==='failed')return'failed';
+    if(day){
+      const protocols=Object.values(day.protocols||{}),touched=protocols.some(protocol=>['active','cleared','failed'].includes(protocol.status));
+      if(touched)return'partial';
+    }
+    if(attendance.some(record=>record.finalized||record.status!=='unverified'))return'partial';
+    return'none';
+  };
+  const profileDayResultLabel=dateKey=>{
+    const {day,attendance}=profileDayRecordsFor(dateKey),status=profileDayState(dateKey);
+    if(status==='clear')return'DAILY CLEAR';
+    if(status==='failed')return'FAILED';
+    if(status==='partial')return day?.status==='active'&&dateKey===currentKey()?'IN PROGRESS':day?'PARTIAL':'ATTENDANCE ONLY';
+    if(status==='future')return'FUTURE';
+    return attendance.length?'NO FINAL RESULT':'NO RECORD';
+  };
+  const profileDayXp=dateKey=>{
+    const {day,attendance}=profileDayRecordsFor(dateKey);
+    const directive=Object.values(day?.protocols||{}).reduce((sum,protocol)=>sum+Math.max(0,Number(protocol.profileXpAppliedAmount||0)),0);
+    const academic=attendance.reduce((sum,record)=>sum+Math.max(0,Number(record.profileXpAppliedAmount||0)),0);
+    return{directive,academic,total:directive+academic};
+  };
+  const profileMonthSummary=key=>{
+    const date=profileMonthDate(key),year=date.getFullYear(),month=date.getMonth(),last=new Date(year,month+1,0,12).getDate(),counts={clear:0,partial:0,failed:0};
+    for(let day=1;day<=last;day+=1){const dayKey=S.dateKey(new Date(year,month,day,12));if(dayKey>currentKey())continue;const status=profileDayState(dayKey);if(counts[status]!==undefined)counts[status]+=1}
+    return counts;
+  };
+  const profileCalendarMarkup=()=>{
+    const currentMonth=profileMonthKey(new Date());controlUi.profileMonth=controlUi.profileMonth||currentMonth;
+    const monthDate=profileMonthDate(controlUi.profileMonth),year=monthDate.getFullYear(),month=monthDate.getMonth(),daysInMonth=new Date(year,month+1,0,12).getDate(),offset=(new Date(year,month,1,12).getDay()+6)%7,summary=profileMonthSummary(controlUi.profileMonth);
+    const cells=[];for(let index=0;index<offset;index+=1)cells.push('<span class="profile-calendar-spacer" aria-hidden="true"></span>');
+    for(let day=1;day<=daysInMonth;day+=1){
+      const key=S.dateKey(new Date(year,month,day,12)),status=profileDayState(key),today=key===currentKey(),disabled=status==='future';
+      cells.push(`<button type="button" class="profile-calendar-day ${status}${today?' today':''}" data-profile-action="calendar-day" data-date="${key}" ${disabled?'disabled':''} aria-label="${escapeHtml(new Date(`${key}T12:00:00`).toLocaleDateString(undefined,{month:'long',day:'numeric',year:'numeric'}))} · ${profileDayResultLabel(key)}"><span>${day}</span><i aria-hidden="true"></i></button>`);
+    }
+    while(cells.length<42)cells.push('<span class="profile-calendar-spacer" aria-hidden="true"></span>');
+    const monthLabel=monthDate.toLocaleDateString(undefined,{month:'long',year:'numeric'}),nextDisabled=controlUi.profileMonth>=currentMonth;
+    return `<section class="profile-daily-log">
+      <div class="profile-calendar-head"><div><span>DAILY LOG</span><strong>${escapeHtml(monthLabel)}</strong><small>${summary.clear} Clear · ${summary.partial} Partial · ${summary.failed} Failed</small></div><nav aria-label="Daily log month navigation"><button type="button" data-profile-action="calendar-prev" aria-label="Previous month">‹</button><button type="button" data-profile-action="calendar-next" aria-label="Next month" ${nextDisabled?'disabled':''}>›</button></nav></div>
+      <div class="profile-calendar-weekdays" aria-hidden="true"><span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span><span>S</span></div>
+      <div class="profile-calendar-grid">${cells.join('')}</div>
+      <div class="profile-calendar-legend"><span class="clear"><i></i>Clear</span><span class="partial"><i></i>Partial</span><span class="failed"><i></i>Failed</span></div>
+    </section>`;
+  };
+  const profileProtocolStatusCopy=protocol=>protocol.status==='cleared'?'DONE':protocol.status==='failed'?'MISSED':protocol.status==='active'?'IN PROGRESS':'PENDING';
+  const profileAttendanceStatusCopy=status=>({early:'EARLY',present:'PRESENT',late:'LATE',absent:'ABSENT',cancelled:'CANCELLED',unverified:'UNVERIFIED'})[status]||String(status||'UNVERIFIED').toUpperCase();
+  const profileDayDetailMarkup=dateKey=>{
+    const {day,attendance}=profileDayRecordsFor(dateKey),xp=profileDayXp(dateKey),date=new Date(`${dateKey}T12:00:00`),status=profileDayState(dateKey),result=profileDayResultLabel(dateKey);
+    const directiveRows=day?protocolConfigsForRecord(day).map(config=>{const protocol=day.protocols[config.id],boss=Boolean(protocol?.boss),name=boss?(day.weeklyBossPlan?.title?`Weekly Boss · ${day.weeklyBossPlan.title}`:'Weekly Boss'):config.name.replace(/ Protocol$/,'');const applied=Math.max(0,Number(protocol?.profileXpAppliedAmount||0));return `<div class="profile-log-row ${protocol?.status||'pending'}"><section><strong>${escapeHtml(name)}</strong><small>${escapeHtml(config.start)}–${escapeHtml(config.end)}${applied?` · +${applied} XP`:''}</small></section><b>${profileProtocolStatusCopy(protocol||{})}</b></div>`}).join(''):'';
+    const attendanceRows=attendance.map(record=>{const name=record.code||record.subjectName||'Class',applied=Math.max(0,Number(record.profileXpAppliedAmount||0));return `<div class="profile-log-row attendance ${escapeHtml(record.status||'unverified')}"><section><strong>${escapeHtml(name)}</strong><small>${formatTime(record.scheduledStart||'00:00')}${record.subjectName&&record.code?` · ${escapeHtml(record.subjectName)}`:''}${applied?` · +${applied} XP`:''}</small></section><b>${profileAttendanceStatusCopy(record.status)}</b></div>`}).join('');
+    return `<section class="profile-day-log-detail">
+      <div class="profile-day-log-head"><div><span>DAY LOG</span><strong>${escapeHtml(date.toLocaleDateString(undefined,{weekday:'long',month:'long',day:'numeric'}))}</strong><small>${result}</small></div><div><span>PROFILE XP</span><strong>+${xp.total}</strong><small>${xp.directive} directive · ${xp.academic} attendance</small></div></div>
+      <div class="profile-day-log-scroll">
+        <div class="profile-log-section"><span>DIRECTIVES</span>${directiveRows||'<div class="profile-log-empty">No directive activity recorded.</div>'}</div>
+        <div class="profile-log-section"><span>ATTENDANCE</span>${attendanceRows||'<div class="profile-log-empty">No attendance records for this day.</div>'}</div>
+      </div>
+      <button class="ghost-button profile-log-back" type="button" data-profile-action="calendar-back">Back to Calendar</button>
+    </section>`;
+  };
   const renderProfile=()=>{
     setControlView('profileView');controlUi.profilePage=clamp(controlUi.profilePage,0,profilePages.length-1);
     const achievements=achievementList();let unlockedTitles=achievements.filter(item=>item.unlocked).map(item=>item.title);if(skillUnlocked('title-forge'))unlockedTitles=[...new Set([...unlockedTitles,'System Pathfinder'])];
     if(!unlockedTitles.includes(state.player.title)){state.player.title=unlockedTitles[0]||'Discipline Initiate';save({silent:true})}
     const content=$('#profileContent'),activeEmblem=normalizeGlyph(state.player.emblem),required=clearDaysRequired(state.player.level),levelProgress=state.player.mastered?100:required?Math.round(state.player.levelClearDays/required*100):100;
     if(controlUi.profilePage===0){
-      const latestAchievement=latestUnlockedAchievement(achievements),achievementCount=achievements.filter(item=>item.unlocked).length,equipped=(state.skills.equipped||[]).length,unlocked=(state.skills.unlocked||[]).length;
+      controlUi.profileMonth=controlUi.profileMonth||profileMonthKey(new Date());
       content.innerHTML=`<div class="simple-profile-home">
         <div class="simple-profile-identity"><div class="profile-emblem profile-settings-hold" data-settings-hold="true" aria-label="Hold for Settings">${glyphMarkup(activeEmblem)}</div><div><span>PLAYER · ${state.player.rank}-RANK</span><strong>${escapeHtml(state.player.codename||state.player.name)}</strong><small>${escapeHtml(state.player.name)} · ${escapeHtml(state.player.title)}</small></div><button type="button" data-profile-action="edit-identity">Edit</button></div>
         <div class="simple-profile-progression">
           <div class="simple-profile-momentum"><div><span>LEVEL</span><strong>${state.player.level}</strong></div><div><span>STREAK</span><strong>${state.player.streak} DAY${state.player.streak===1?'':'S'}</strong></div></div>
           <div class="simple-profile-progress"><div><span>${state.player.mastered?'SYSTEM MASTERY':'LEVEL PROGRESS'}</span><strong>${state.player.mastered?'COMPLETE':`${state.player.levelClearDays} / ${required} CLEAR DAYS`}</strong></div><i><b style="width:${levelProgress}%"></b></i><small>${Number(state.player.totalXp||0).toLocaleString()} lifetime XP · attendance included</small></div>
         </div>
-        <div class="simple-profile-links"><button type="button" data-profile-action="open-achievements"><span>ACHIEVEMENTS</span><strong>${achievementCount} / ${achievements.length}</strong><small>${latestAchievement?`Latest · ${escapeHtml(latestAchievement.title)}`:'None unlocked yet'}</small></button><button type="button" data-profile-action="open-skills"><span>SKILLS</span><strong>${unlocked} / ${skillDefinitions.length}</strong><small>${equipped} equipped</small></button></div>
+        ${controlUi.profileDay?profileDayDetailMarkup(controlUi.profileDay):profileCalendarMarkup()}
       </div>`;
       return;
     }
-    if(controlUi.profilePage===1){
-      const emblemOptions=[['apex','Apex'],['confirm','Shard'],['shine','Radiance'],['stretch','Flow'],['academic','Scholar'],['work','Core']];
-      content.innerHTML=`<div class="simple-profile-detail"><div class="simple-detail-heading"><span>IDENTITY</span><strong>Edit Player Record</strong><small>Changes apply only to your visible profile identity.</small></div><div class="profile-form simple-identity-form"><label>Name<input id="profileNameEdit" type="text" maxlength="40" value="${escapeHtml(state.player.name)}"></label><label>Codename<input id="profileCodenameEdit" type="text" maxlength="24" value="${escapeHtml(state.player.codename||'')}"></label><label>Emblem<select id="profileEmblemEdit">${emblemOptions.map(([value,label])=>`<option value="${value}" ${value===activeEmblem?'selected':''}>${label}</option>`).join('')}</select></label><label>Title<select id="profileTitleEdit">${unlockedTitles.map(value=>`<option ${value===state.player.title?'selected':''}>${escapeHtml(value)}</option>`).join('')}</select></label></div><button class="custom-primary" type="button" data-profile-action="save-identity">Save Identity</button><button class="ghost-button" type="button" data-profile-action="profile-home">Back to Profile</button></div>`;
-      return;
-    }
-    if(controlUi.profilePage===2){
-      const equippedIds=new Set(state.skills.equipped||[]),unlockedIds=new Set(state.skills.unlocked||[]);
-      content.innerHTML=`<div class="simple-profile-detail"><div class="simple-detail-heading"><span>SKILLS & PERKS</span><strong>${state.skills.points} Skill Point${state.skills.points===1?'':'s'}</strong><small>Your earned skill status, without crowding the main profile.</small></div><div class="simple-skill-grid">${skillDefinitions.map(skill=>`<div class="${equippedIds.has(skill.id)?'equipped':unlockedIds.has(skill.id)?'unlocked':'locked'}"><span>${escapeHtml(skill.name)}</span><strong>${equippedIds.has(skill.id)?'EQUIPPED':unlockedIds.has(skill.id)?'UNLOCKED':`COST ${skill.cost}`}</strong><small>${escapeHtml(skill.copy)}</small></div>`).join('')}</div><button class="ghost-button" type="button" data-profile-action="profile-home">Back to Profile</button></div>`;
-      return;
-    }
-    const unlocked=achievements.filter(item=>item.unlocked).sort((a,b)=>String(b.unlockedAt||'').localeCompare(String(a.unlockedAt||''))).slice(0,5);
-    content.innerHTML=`<div class="simple-profile-detail"><div class="simple-detail-heading"><span>ACHIEVEMENTS</span><strong>${achievements.filter(item=>item.unlocked).length} / ${achievements.length} Unlocked</strong><small>Your newest unlocked titles appear first.</small></div><div class="simple-achievement-list">${unlocked.length?unlocked.map(item=>`<div><span>${glyphMarkup('success')}</span><section><strong>${escapeHtml(item.title)}</strong><small>${item.unlockedAt?`Unlocked ${formatShortDate(item.unlockedAt)}`:'Unlocked'}</small></section></div>`).join(''):'<div class="schedule-empty"><strong>No Achievements Yet</strong><span>Clear directives and milestones to unlock titles.</span></div>'}</div><button class="ghost-button" type="button" data-profile-action="profile-home">Back to Profile</button></div>`;
+    const emblemOptions=[['apex','Apex'],['confirm','Shard'],['shine','Radiance'],['stretch','Flow'],['academic','Scholar'],['work','Core']];
+    content.innerHTML=`<div class="simple-profile-detail"><div class="simple-detail-heading"><span>IDENTITY</span><strong>Edit Player Record</strong><small>Changes apply only to your visible profile identity.</small></div><div class="profile-form simple-identity-form"><label>Name<input id="profileNameEdit" type="text" maxlength="40" value="${escapeHtml(state.player.name)}"></label><label>Codename<input id="profileCodenameEdit" type="text" maxlength="24" value="${escapeHtml(state.player.codename||'')}"></label><label>Emblem<select id="profileEmblemEdit">${emblemOptions.map(([value,label])=>`<option value="${value}" ${value===activeEmblem?'selected':''}>${label}</option>`).join('')}</select></label><label>Title<select id="profileTitleEdit">${unlockedTitles.map(value=>`<option ${value===state.player.title?'selected':''}>${escapeHtml(value)}</option>`).join('')}</select></label></div><button class="custom-primary" type="button" data-profile-action="save-identity">Save Identity</button><button class="ghost-button" type="button" data-profile-action="profile-home">Back to Profile</button></div>`;
   };
   const historyRecords=()=>[...state.attendanceRecords].sort((a,b)=>`${b.scheduledDate}T${b.scheduledStart}`.localeCompare(`${a.scheduledDate}T${a.scheduledStart}`));
   const currentWeekAttendance=()=>{
@@ -2343,7 +2399,7 @@
   };
   const openProfileFromBrand=()=>{
     if(!state.initialized||!$('#scheduleOverlay').hidden||!$('#emergencyOverlay').hidden||!$('#developerRunOverlay').hidden)return;
-    cancelHold();resetBrandAccessVisual();brandHoldStartedAt=0;brandHoldProtocolActive=false;brandHoldDeveloperReady=false;controlUi.directDeveloper=false;controlUi.directProfile=true;controlUi.profilePage=0;$('#scheduleOverlay').hidden=false;renderProfile();releaseWakeLock();haptic('tap');
+    cancelHold();resetBrandAccessVisual();brandHoldStartedAt=0;brandHoldProtocolActive=false;brandHoldDeveloperReady=false;controlUi.directDeveloper=false;controlUi.directProfile=true;controlUi.profilePage=0;controlUi.profileMonth=profileMonthKey(new Date());controlUi.profileDay=null;$('#scheduleOverlay').hidden=false;renderProfile();releaseWakeLock();haptic('tap');
   };
   const openDeveloperFromBrand=()=>{
     if(!$('#emergencyOverlay').hidden)return;
@@ -2481,7 +2537,7 @@
     $('#classScreen').addEventListener('click',event=>{const button=event.target.closest('[data-class-action]');if(button)handleClassAction(button.dataset.classAction)});
 
     $('#scheduleClose').addEventListener('click',closeScheduleOverlay);
-    $('#openPlayerProfile').addEventListener('click',()=>{controlUi.profilePage=0;renderProfile()});
+    $('#openPlayerProfile').addEventListener('click',()=>{controlUi.profilePage=0;controlUi.profileMonth=profileMonthKey(new Date());controlUi.profileDay=null;renderProfile()});
     $('#openSettings').addEventListener('click',()=>{settingsUi={pending:null,fileName:'',kind:''};renderSettings()});
     $('#openAcademicControl').addEventListener('click',renderAcademicHome);
     $('#openFreeSchedule').addEventListener('click',()=>{scheduleUi.day=defaultScheduleDay();scheduleUi.page=0;renderScheduleOverview()});
@@ -2492,7 +2548,7 @@
     $('#openSystemReliability').addEventListener('click',renderReliability);
     $('#academicBack').addEventListener('click',renderControlHome);
     $('#profileBack').addEventListener('click',closeScheduleOverlay);
-    $('#settingsBack').addEventListener('click',()=>{settingsUi={pending:null,fileName:'',kind:''};controlUi.profilePage=0;renderProfile()});
+    $('#settingsBack').addEventListener('click',()=>{settingsUi={pending:null,fileName:'',kind:''};controlUi.profilePage=0;controlUi.profileDay=null;renderProfile()});
     $('#settingsSaveProgress').addEventListener('click',()=>exportSettingsData('progress'));
     $('#settingsSaveSchedule').addEventListener('click',()=>exportSettingsData('schedule'));
     $('#settingsSaveFull').addEventListener('click',()=>exportSettingsData('full'));
@@ -2592,10 +2648,12 @@
     $('#profileContent').addEventListener('contextmenu',event=>{if(event.target.closest('[data-settings-hold]'))event.preventDefault()});
     $('#profileContent').addEventListener('click',event=>{
       const button=event.target.closest('[data-profile-action]');if(!button)return;const action=button.dataset.profileAction;
-      if(action==='profile-home'){controlUi.profilePage=0;renderProfile();return}
+      if(action==='profile-home'){controlUi.profilePage=0;controlUi.profileDay=null;renderProfile();return}
       if(action==='edit-identity'){controlUi.profilePage=1;renderProfile();return}
-      if(action==='open-skills'){controlUi.profilePage=2;renderProfile();return}
-      if(action==='open-achievements'){controlUi.profilePage=3;renderProfile();return}
+      if(action==='calendar-prev'){controlUi.profileMonth=shiftProfileMonth(controlUi.profileMonth||profileMonthKey(new Date()),-1);controlUi.profileDay=null;renderProfile();return}
+      if(action==='calendar-next'){const currentMonth=profileMonthKey(new Date()),next=shiftProfileMonth(controlUi.profileMonth||currentMonth,1);controlUi.profileMonth=next>currentMonth?currentMonth:next;controlUi.profileDay=null;renderProfile();return}
+      if(action==='calendar-day'){const dateKey=button.dataset.date;if(!dateKey||dateKey>currentKey())return;controlUi.profileDay=dateKey;renderProfile();return}
+      if(action==='calendar-back'){controlUi.profileDay=null;renderProfile();return}
       if(action==='save-identity'){
         const name=$('#profileNameEdit')?.value.trim(),codename=$('#profileCodenameEdit')?.value.trim()||'',emblem=normalizeGlyph($('#profileEmblemEdit')?.value||'apex'),title=$('#profileTitleEdit')?.value||'Discipline Initiate';
         if(!name){showBreachWarning('NAME REQUIRED','Player name cannot be empty.');return}

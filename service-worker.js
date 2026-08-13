@@ -1,5 +1,5 @@
 const CACHE_PREFIX='ascend-discipline-';
-const CACHE=`${CACHE_PREFIX}v56-workout-shower`;
+const CACHE=`${CACHE_PREFIX}v57-profile-daily-log`;
 const APP_SHELL=[
   './',
   './index.html',
