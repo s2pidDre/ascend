@@ -21,7 +21,7 @@
   let clockSuppressClick=false;
   let escapeTimer=null;
   let scheduleUi={view:'home',day:new Date().getDay(),page:0,editId:null,isNew:false};
-  let controlUi={view:'home',profilePage:0,profileMonth:null,profileDay:null,attendanceTab:'overall',subjectIndex:0,subjectAbsencePage:0,historyIndex:0,correction:false,taskTab:'tasks',taskIndex:0,ruleIndex:0,dependencyIndex:0,rollbackIndex:0,directDeveloper:false,directProfile:false};
+  let controlUi={view:'home',profilePage:0,profileMonth:null,profileDay:null,attendanceTab:'overall',subjectIndex:0,subjectAbsencePage:0,unverifiedIndex:0,unverifiedResolveId:null,historyIndex:0,correction:false,taskTab:'tasks',taskIndex:0,ruleIndex:0,dependencyIndex:0,rollbackIndex:0,directDeveloper:false,directProfile:false};
   let developerRunSession=null;
   let developerClockTimer=null;
   let conflictUi={index:0,issues:[]};
@@ -2055,6 +2055,62 @@
     const date=new Date(`${value}T12:00:00`);
     return Number.isNaN(date.getTime())?String(value||'Unknown date'):date.toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'});
   };
+  const resolvableUnverifiedRecords=(now=new Date())=>state.attendanceRecords
+    .filter(record=>{
+      if(record.status!=='unverified'||record.finalized||!record.scheduledDate||!record.scheduledEnd)return false;
+      const end=scheduledMoment(record,record.scheduledEnd);
+      return !Number.isNaN(end.getTime())&&end<=now;
+    })
+    .sort((a,b)=>`${b.scheduledDate}T${b.scheduledStart}`.localeCompare(`${a.scheduledDate}T${a.scheduledStart}`));
+  const resolveUnverifiedAttendanceRecord=(record,status)=>{
+    if(!record||record.status!=='unverified'||record.finalized)return;
+    if(!['present','late','cancelled','absent'].includes(status))return;
+    const end=scheduledMoment(record,record.scheduledEnd),resolvedAt=Number.isNaN(end.getTime())?new Date():end;
+    if(status==='present'||status==='late'){
+      const start=scheduledMoment(record,record.scheduledStart),check=Number.isNaN(start.getTime())?new Date(resolvedAt):new Date(start);
+      if(status==='late')check.setMinutes(check.getMinutes()+15);
+      setAttendanceStatus(record,status,check);
+      finalizeAttendance(record,'dismissed',resolvedAt);
+    }else if(status==='cancelled'){
+      finalizeAttendance(record,'cancelled',resolvedAt);
+    }else{
+      setAttendanceStatus(record,'absent',resolvedAt);
+      const profileDelta=syncAttendanceProfileXp(record,resolvedAt);
+      state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'attendance',message:`${record.subjectName}: absent · resolved from unverified.${profileDelta?` Profile XP adjusted by ${Math.abs(profileDelta)}.`:''}`});
+      save();
+    }
+    controlUi.unverifiedResolveId=null;
+    const remaining=resolvableUnverifiedRecords();
+    controlUi.unverifiedIndex=clamp(controlUi.unverifiedIndex,0,Math.max(0,remaining.length-1));
+    systemFeedback(status==='absent'?'warning':'attendance','Attendance record resolved.');
+    renderAttendance();
+  };
+  const unverifiedAttendanceMarkup=records=>{
+    if(!records.length){controlUi.unverifiedIndex=0;controlUi.unverifiedResolveId=null;return''}
+    const resolving=records.find(record=>record.id===controlUi.unverifiedResolveId)||null;
+    if(controlUi.unverifiedResolveId&&!resolving)controlUi.unverifiedResolveId=null;
+    if(resolving){
+      return `<section class="attendance-unverified-panel resolving">
+        <div class="attendance-unverified-heading"><div><span>UNVERIFIED RECORD</span><strong>${escapeHtml(resolving.subjectName||resolving.code||'Class')}</strong></div><small>${escapeHtml(attendanceDateLabel(resolving.scheduledDate))}</small></div>
+        <div class="attendance-unverified-meta"><span>${formatTime(resolving.scheduledStart)}–${formatTime(resolving.scheduledEnd)}</span><span>${escapeHtml([resolving.code,resolving.room].filter(Boolean).join(' · ')||'Scheduled class')}</span></div>
+        <p class="attendance-unverified-question">What happened in this class?</p>
+        <div class="attendance-unverified-resolve-grid">
+          <button type="button" data-unverified-status="present">I Attended</button>
+          <button type="button" data-unverified-status="late">I Was Late</button>
+          <button type="button" data-unverified-status="cancelled">Class Cancelled</button>
+          <button type="button" class="danger" data-unverified-status="absent">I Was Absent</button>
+        </div>
+        <button type="button" class="attendance-unverified-cancel" data-attendance-action="cancel-unverified-resolution">Cancel</button>
+      </section>`;
+    }
+    controlUi.unverifiedIndex=clamp(controlUi.unverifiedIndex,0,records.length-1);
+    const record=records[controlUi.unverifiedIndex];
+    return `<section class="attendance-unverified-panel">
+      <div class="attendance-unverified-heading"><div><span>UNVERIFIED RECORDS</span><strong>${records.length} need${records.length===1?'s':''} confirmation</strong></div><small>${controlUi.unverifiedIndex+1} / ${records.length}</small></div>
+      <div class="attendance-unverified-record"><div><strong>${escapeHtml(record.subjectName||record.code||'Class')}</strong><small>${escapeHtml(attendanceDateLabel(record.scheduledDate))} · ${formatTime(record.scheduledStart)}–${formatTime(record.scheduledEnd)}</small></div><button type="button" data-attendance-action="resolve-unverified" data-record-id="${escapeHtml(record.id)}">Resolve</button></div>
+      <div class="attendance-unverified-nav" ${records.length<=1?'hidden':''}><button type="button" data-attendance-action="unverified-prev" ${controlUi.unverifiedIndex===0?'disabled':''} aria-label="Previous unverified record">${glyphMarkup('chevron-left')}</button><span>Past unresolved classes</span><button type="button" data-attendance-action="unverified-next" ${controlUi.unverifiedIndex>=records.length-1?'disabled':''} aria-label="Next unverified record">${glyphMarkup('chevron-right')}</button></div>
+    </section>`;
+  };
   const attendanceModeSwitch=active=>`<div class="attendance-mode-switch" role="group" aria-label="Attendance view"><button type="button" data-attendance-action="show-overall" class="${active==='overall'?'active':''}">Overview</button><button type="button" data-attendance-action="show-subjects" class="${active==='subjects'?'active':''}">Per Subject</button></div>`;
   const attendanceAbsencePageSize=()=>window.innerHeight<=620?3:4;
   const renderAttendance=()=>{
@@ -2097,7 +2153,9 @@
     controlUi.attendanceTab='overall';
     const weekRate=week.required?Math.round(week.attended/week.required*100):0;
     const onTime=academic.counts.early+academic.counts.present;
-    const latestMarkup=latest?`<div class="attendance-latest-card"><div><span>LATEST RECORD</span><strong>${escapeHtml(latest.subjectName)}</strong><small>${escapeHtml(attendanceDateLabel(latest.scheduledDate))} · ${formatTime(latest.scheduledStart)}</small></div><b class="attendance-status-${escapeHtml(latest.status)}">${escapeHtml(latest.status.toUpperCase())}</b></div>`:'<div class="schedule-empty attendance-empty"><strong>No Attendance Records</strong><span>Your first completed class check-in will appear here.</span></div>';
+    const unverified=resolvableUnverifiedRecords();
+    const latestForDisplay=unverified.length?records.find(record=>record.status!=='unverified'||record.finalized)||null:latest;
+    const latestMarkup=latestForDisplay?`<div class="attendance-latest-card"><div><span>LATEST RECORD</span><strong>${escapeHtml(latestForDisplay.subjectName)}</strong><small>${escapeHtml(attendanceDateLabel(latestForDisplay.scheduledDate))} · ${formatTime(latestForDisplay.scheduledStart)}</small></div><b class="attendance-status-${escapeHtml(latestForDisplay.status)}">${escapeHtml(latestForDisplay.status.toUpperCase())}</b></div>`:unverified.length?'':'<div class="schedule-empty attendance-empty"><strong>No Attendance Records</strong><span>Your first completed class check-in will appear here.</span></div>';
     content.innerHTML=`
       ${attendanceModeSwitch('overall')}
       <div class="attendance-overview-stats">
@@ -2114,7 +2172,7 @@
         <div><span>CANCELLED</span><strong>${academic.counts.cancelled}</strong></div>
         <div><span>TOTAL</span><strong>${records.length}</strong></div>
       </div>
-      ${latestMarkup}`;
+      <div class="attendance-overview-lower">${unverifiedAttendanceMarkup(unverified)}${latestMarkup}</div>`;
   };
   const correctAttendanceRecord=(record,status)=>{
     const before=record.status,now=new Date();record.corrections=record.corrections||[];record.corrections.push({at:now.toISOString(),from:before,to:status});
@@ -2467,7 +2525,7 @@
     $('#openSettings').addEventListener('click',()=>{settingsUi={pending:null,fileName:'',kind:''};renderSettings()});
     $('#openAcademicControl').addEventListener('click',renderAcademicHome);
     $('#openFreeSchedule').addEventListener('click',()=>{scheduleUi.day=defaultScheduleDay();scheduleUi.page=0;renderScheduleOverview()});
-    $('#openFreeAttendance').addEventListener('click',()=>{controlUi.attendanceTab='overall';controlUi.subjectIndex=0;controlUi.subjectAbsencePage=0;renderAttendance()});
+    $('#openFreeAttendance').addEventListener('click',()=>{controlUi.attendanceTab='overall';controlUi.subjectIndex=0;controlUi.subjectAbsencePage=0;controlUi.unverifiedIndex=0;controlUi.unverifiedResolveId=null;renderAttendance()});
     $('#openAcademicTasks').addEventListener('click',()=>{controlUi.taskTab='tasks';renderAcademicTasks()});
     $('#openAdvancedSystem').addEventListener('click',renderAdvancedSystemHome);
     $('#openDataBackup').addEventListener('click',()=>{backupUi={pending:null,fileName:''};renderDataBackup()});
@@ -2550,7 +2608,7 @@
     $('#cancelBackupRestore').addEventListener('click',clearBackupPreview);
     $('#confirmBackupRestore').addEventListener('click',confirmBackupRestore);
     $('#scheduleConfigEdit').addEventListener('click',()=>{scheduleUi.day=defaultScheduleDay();scheduleUi.page=0;renderScheduleOverview()});
-    $('#openAttendance').addEventListener('click',()=>{controlUi.attendanceTab='overall';controlUi.correction=false;renderAttendance()});
+    $('#openAttendance').addEventListener('click',()=>{controlUi.attendanceTab='overall';controlUi.correction=false;controlUi.unverifiedIndex=0;controlUi.unverifiedResolveId=null;renderAttendance()});
     $('#openScheduleExceptions').addEventListener('click',()=>{exceptionUi.index=0;renderScheduleExceptions()});
     $('#openConflictScan').addEventListener('click',()=>renderConflictScan(true));
     $('#conflictScanBack').addEventListener('click',renderAcademicHome);
@@ -2594,7 +2652,11 @@
       if(action){
         const type=action.dataset.attendanceAction;
         if(type==='show-overall'){controlUi.attendanceTab='overall';controlUi.subjectAbsencePage=0;renderAttendance();return}
-        if(type==='show-subjects'){controlUi.attendanceTab='subjects';controlUi.subjectIndex=clamp(controlUi.subjectIndex,0,Math.max(0,subjectCatalog().length-1));controlUi.subjectAbsencePage=0;renderAttendance();return}
+        if(type==='show-subjects'){controlUi.attendanceTab='subjects';controlUi.subjectIndex=clamp(controlUi.subjectIndex,0,Math.max(0,subjectCatalog().length-1));controlUi.subjectAbsencePage=0;controlUi.unverifiedResolveId=null;renderAttendance();return}
+        if(type==='resolve-unverified'){const record=state.attendanceRecords.find(item=>item.id===action.dataset.recordId&&item.status==='unverified'&&!item.finalized);if(record){controlUi.unverifiedResolveId=record.id;renderAttendance()}return}
+        if(type==='cancel-unverified-resolution'){controlUi.unverifiedResolveId=null;renderAttendance();return}
+        if(type==='unverified-prev'){controlUi.unverifiedIndex=Math.max(0,controlUi.unverifiedIndex-1);renderAttendance();return}
+        if(type==='unverified-next'){controlUi.unverifiedIndex=Math.min(Math.max(0,resolvableUnverifiedRecords().length-1),controlUi.unverifiedIndex+1);renderAttendance();return}
         if(type==='absence-prev'){controlUi.subjectAbsencePage=Math.max(0,controlUi.subjectAbsencePage-1);renderAttendance();return}
         if(type==='absence-next'){
           const subject=overallAcademicStats().subjects[controlUi.subjectIndex],total=Math.max(1,Math.ceil((subject?.records||[]).filter(record=>record.status==='absent').length/attendanceAbsencePageSize()));
@@ -2602,6 +2664,8 @@
         }
         if(type==='correct'){controlUi.correction=true;renderAttendance();return}
       }
+      const resolution=event.target.closest('[data-unverified-status]');
+      if(resolution){const record=state.attendanceRecords.find(item=>item.id===controlUi.unverifiedResolveId);if(record)resolveUnverifiedAttendanceRecord(record,resolution.dataset.unverifiedStatus);return}
       const correction=event.target.closest('[data-correct-status]');if(correction){const record=historyRecords()[controlUi.historyIndex];if(record)correctAttendanceRecord(record,correction.dataset.correctStatus)}
     });
 
