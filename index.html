@@ -91,14 +91,14 @@
       <div class="system-emblem" aria-hidden="true"><img class="system-emblem-image" src="assets/inapp-logo.png" alt=""></div>
       <p class="eyebrow">SYSTEM INITIALIZATION</p>
       <h1>Discipline Training</h1>
-      <p class="lead">Five fixed directives. Schedule-driven classes. Sequential actions. Every required subtask must be cleared before its deadline.</p>
+      <p class="lead">Configurable protocols. Schedule-driven classes. Sequential actions. Build routines that stay organized around your actual day.</p>
       <label class="field-label" for="playerName">Player name</label>
       <input class="field selectable" id="playerName" type="text" maxlength="40" placeholder="Enter your name" autocomplete="name">
       <div class="setup-summary system-panel">
         <span>Maximum level</span><strong>50</strong>
-        <span>Wake directive</span><strong>5:00 AM</strong>
+        <span>Default wake</span><strong>5:00 AM</strong>
         <span>Class window</span><strong>7:30 AM–7:30 PM</strong>
-        <span>Final deadline</span><strong>10:00 PM</strong>
+        <span>Protocol builder</span><strong>Unlocked</strong>
       </div>
       <p class="setup-help">Tap ASCEND to open the Player Profile. Hold the clock for 3 seconds to manage your class schedule from any screen. Hold ASCEND for 3 seconds to open Developer Test Mode. During an active protocol, keep holding ASCEND to 6 seconds for Emergency Override.</p>
       <button class="system-button" id="activateButton" type="button"><span></span><b>Activate System</b></button>
@@ -166,6 +166,7 @@
         </section>
         <section class="state-zone state-zone-lower free-lower" aria-label="Preparation">
           <p class="prep-note" id="freePrep">Prepare for the next directive.</p>
+          <button class="system-button compact-button flexible-start-button" id="startFlexibleProtocolButton" type="button" hidden><b>Start Available Protocol</b></button>
         </section>
       </div>
 
@@ -253,6 +254,7 @@
             <span class="hold-fill" id="holdFill"></span>
             <b id="actionLabel">Hold to Confirm</b>
           </button>
+          <button class="ghost-button directive-skip-live" id="skipDirectiveButton" type="button" hidden>Skip Directive</button>
           <p class="focus-note" id="focusNote">Complete this action before continuing.</p>
         </section>
       </article>
@@ -607,8 +609,14 @@
         <div class="config-sigil glyph-frame" aria-hidden="true"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-list"></use></svg></div>
         <p class="eyebrow">HIDDEN DIRECTIVE ACCESS</p>
         <h2>Directive Studio</h2>
-        <p class="schedule-hint">Edit how ASCEND guides each protocol while keeping system-linked behavior protected.</p>
-        <div class="directive-studio-meta" id="directiveStudioMeta">6 protocols</div>
+        <p class="schedule-hint">Build, schedule, and organize protocols without editing source code. System roles stay protected while the visible routine remains yours.</p>
+        <div class="directive-studio-meta" id="directiveStudioMeta">Protocols</div>
+        <div class="directive-create-bar">
+          <select class="selectable" id="directiveTemplateSelect" aria-label="Protocol template">
+            <option value="blank">Blank Protocol</option><option value="study">Study</option><option value="reading">Reading</option><option value="exercise">Exercise</option><option value="meal">Meal</option><option value="morning">Morning Routine</option><option value="night">Night Routine</option><option value="cleaning">Cleaning</option><option value="meditation">Meditation</option>
+          </select>
+          <button class="system-button compact-button" id="directiveAddProtocol" type="button"><b>+ Add Protocol</b></button>
+        </div>
         <div class="directive-protocol-list" id="directiveProtocolList"></div>
         <div class="directive-studio-actions">
           <button class="ghost-button" id="directiveExport" type="button">Export</button>
@@ -623,26 +631,44 @@
       <section class="directive-editor-view" id="directiveEditorView" hidden>
         <p class="eyebrow" id="directiveEditorEyebrow">EDITABLE PROTOCOL</p>
         <h2 id="directiveEditorTitle">Protocol</h2>
-        <p class="schedule-hint">Pending protocols can adopt saved changes. Active or completed protocol records keep their original snapshot.</p>
+        <p class="schedule-hint">Changes update pending future sessions. An active protocol keeps its current snapshot until it finishes.</p>
         <div class="directive-editor-scroll">
           <section class="directive-general-card">
-            <div class="directive-card-heading"><strong>Protocol Settings</strong><small id="directiveCoreNote" hidden>Core timing and active days are protected to preserve the daily lifecycle.</small></div>
-            <div class="directive-general-grid">
+            <div class="directive-card-heading"><strong>Protocol Settings</strong><small id="directiveCoreNote">System roles keep their specialized behavior even when you rename or reschedule them.</small></div>
+            <div class="directive-role-strip"><span>SYSTEM ROLE</span><strong id="directiveSystemRole">STANDARD</strong><small id="directiveProtocolRuleSummary">Required · Fixed window</small></div>
+            <div class="directive-general-grid directive-general-grid-expanded">
               <label>Name<input class="selectable" id="directiveName" type="text" maxlength="60"></label>
+              <label>Short label<input class="selectable" id="directiveShort" type="text" maxlength="16"></label>
               <label class="directive-enabled-field">Enabled<span class="directive-switch"><input id="directiveProtocolEnabled" type="checkbox"><i></i></span></label>
+              <label class="directive-enabled-field">Required for Daily Clear<span class="directive-switch"><input id="directiveProtocolRequired" type="checkbox"><i></i></span></label>
               <label>Start<span class="time-shell"><input class="selectable" id="directiveStart" type="time"></span></label>
               <label>End<span class="time-shell"><input class="selectable" id="directiveEnd" type="time"></span></label>
+              <label>Scheduling<select class="selectable" id="directiveSchedulingMode"><option value="fixed">Fixed Window</option><option value="flexible">Flexible Window</option></select></label>
+              <label>Priority<select class="selectable" id="directivePriority"><option value="high">High</option><option value="normal">Normal</option><option value="low">Low</option></select></label>
+              <label>XP mode<select class="selectable" id="directiveXpMode"><option value="automatic">Automatic</option><option value="custom">Custom</option></select></label>
+              <label id="directiveXpValueWrap">XP reward<input class="selectable" id="directiveXpValue" type="number" min="10" max="500" step="5"></label>
+              <label class="directive-enabled-field">Allow Skip Today<span class="directive-switch"><input id="directiveAllowSkipToday" type="checkbox"><i></i></span></label>
               <label class="directive-prep-field">Preparation message<textarea class="selectable" id="directivePrep" maxlength="420" rows="2"></textarea></label>
             </div>
             <div class="directive-days" id="directiveDayButtons" aria-label="Active protocol days"></div>
           </section>
           <section class="directive-steps-card">
-            <div class="directive-card-heading"><strong>Directives</strong><small>System-linked steps can be renamed and reworded, but their engine behavior stays protected.</small></div>
+            <div class="directive-card-heading"><strong>Directives</strong><small>Required directives may be skipped when allowed, but doing so blocks Perfect Clear for that day.</small></div>
             <div class="directive-step-list" id="directiveStepList"></div>
             <button class="system-button compact-button" id="directiveAddStep" type="button"><b>Add Directive</b></button>
           </section>
+          <section class="directive-preview-card" id="directivePreviewPanel" hidden>
+            <div class="directive-card-heading"><strong>Preview</strong><small>No XP, timers, progress, or logs are changed in preview mode.</small></div>
+            <div id="directivePreviewContent"></div>
+          </section>
         </div>
         <p class="directive-unsaved" id="directiveUnsaved" hidden>Unsaved changes · Back discards them.</p>
+        <div class="directive-today-actions">
+          <button class="ghost-button" id="directiveSkipToday" type="button">Skip Today</button>
+          <button class="ghost-button" id="directivePreview" type="button">Preview</button>
+          <button class="ghost-button" id="directiveDuplicate" type="button">Duplicate</button>
+          <button class="danger-button compact-danger" id="directiveDeleteProtocol" type="button"><b>Delete Protocol</b></button>
+        </div>
         <div class="directive-editor-actions">
           <button class="ghost-button" id="directiveEditorBack" type="button">Back</button>
           <button class="ghost-button" id="directiveRestoreProtocol" type="button">Restore Defaults</button>
@@ -653,12 +679,14 @@
       <section class="directive-step-view" id="directiveStepView" hidden>
         <p class="eyebrow" id="directiveStepEyebrow">CUSTOM DIRECTIVE</p>
         <h2 id="directiveStepTitle">Edit Directive</h2>
-        <p class="schedule-hint" id="directiveStepLinkedNote" hidden>This directive is system-linked. Its title, instructions, and icon can change, but its completion engine remains locked.</p>
+        <p class="schedule-hint" id="directiveStepLinkedNote" hidden>This directive is system-linked. Its engine type stays locked, while its title, instructions, icon, and timer skip rule remain configurable.</p>
         <div class="directive-step-form">
           <label>Title<input class="selectable" id="directiveStepName" type="text" maxlength="80"></label>
           <label>Completion<select class="selectable" id="directiveStepType"><option value="tap">Tap</option><option value="hold">Hold</option><option value="timer">Timer</option></select></label>
           <label>Icon<select class="selectable" id="directiveStepIcon"><option value="apex">Apex</option><option value="confirm">Confirm</option><option value="wake">Wake</option><option value="water">Water</option><option value="shine">Hygiene</option><option value="stretch">Workout</option><option value="meal">Meal</option><option value="list">List</option><option value="work">Work</option><option value="grid">Reset</option><option value="trade">Trade</option><option value="sleep">Sleep</option><option value="success">Success</option></select></label>
           <label id="directiveStepDurationWrap">Timer minutes<input class="selectable" id="directiveStepDuration" type="number" min="1" max="180" step="1"></label>
+          <label class="directive-enabled-field">Required<span class="directive-switch"><input id="directiveStepRequired" type="checkbox"><i></i></span></label>
+          <label class="directive-enabled-field">Allow Skip<span class="directive-switch"><input id="directiveStepAllowSkip" type="checkbox"><i></i></span></label>
           <label class="directive-step-copy-field">Primary instruction<textarea class="selectable" id="directiveStepCopy" maxlength="320" rows="3"></textarea></label>
           <label class="directive-step-copy-field">Alternate instruction<textarea class="selectable" id="directiveStepAltCopy" maxlength="320" rows="3"></textarea></label>
         </div>
@@ -844,8 +872,8 @@
   </div>
 
   <div class="breach-warning" id="breachWarning" hidden>
-    <strong id="breachTitle">FOCUS BREACH RECORDED</strong>
-    <p id="breachCopy">The deadline continued while ASCEND was hidden.</p>
+    <strong id="breachTitle">SYSTEM NOTICE</strong>
+    <p id="breachCopy">Review the message before continuing.</p>
   </div>
 
 

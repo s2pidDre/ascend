@@ -6,7 +6,7 @@
   const SNAPSHOT_KEY='ascend_discipline_protocol_snapshots_v1';
   const ROLLBACK_KEY='ascend_discipline_protocol_rollbacks_v1';
   const LEGACY_KEYS=['ascend_discipline_protocol_v6','ascend_discipline_protocol_v5','ascend_discipline_protocol_v4','ascend_strict_system_v3','ascend_automatic_year_system_v2','ascend_personal_growth_system_v1'];
-  const VERSION=24;
+  const VERSION=25;
   const BACKUP_VERSION=6;
   const ROUTINE_LOG_LIMIT=420;
   const SNAPSHOT_LIMIT=7;
@@ -45,7 +45,7 @@
     academicTasks:[],
     recurringTaskRules:[],
     tradingNotes:[],
-    directiveConfig:{version:1,protocols:{},history:[],updatedAt:null},
+    directiveConfig:{version:2,protocols:{},history:[],updatedAt:null},
     quests:{daily:null,history:[]},
     weeklyDebriefs:[],
     settings:{sound:true,haptics:true,keepAwake:true,notifications:false,notificationLeadMinutes:10,timeFormat:'12',externalCalendarConfirmed:false,externalCalendarExportedAt:null,externalCalendarHorizonDays:60},
@@ -98,16 +98,16 @@
     let activeKept=false;
     Object.values(protocols).sort((a,b)=>String(a.startedAt||'').localeCompare(String(b.startedAt||''))).forEach(protocol=>{
       if(!protocol||typeof protocol!=='object')return;
-      if(!['pending','active','cleared','failed'].includes(protocol.status))protocol.status='pending';
+      if(!['pending','active','cleared','failed','skipped'].includes(protocol.status))protocol.status='pending';
       protocol.steps=Array.isArray(protocol.steps)?protocol.steps:[];
       protocol.steps.forEach(step=>{
-        if(!['pending','active','completed'].includes(step.status))step.status='pending';
+        if(!['pending','active','completed','skipped'].includes(step.status))step.status='pending';
         if(step.status==='completed'&&!step.completedAt)step.completedAt=step.startedAt||day.finalizedAt||nowIso();
         if(step.status==='active'&&!step.startedAt)step.startedAt=nowIso();
       });
       if(protocol.status==='active'){if(activeKept)protocol.status='pending';else activeKept=true}
       if(protocol.status==='cleared'){
-        protocol.steps.forEach(step=>{step.status='completed';step.startedAt=step.startedAt||protocol.startedAt||protocol.completedAt;step.completedAt=step.completedAt||protocol.completedAt||nowIso()});
+        protocol.steps.forEach(step=>{if(step.status!=='skipped')step.status='completed';step.startedAt=step.startedAt||protocol.startedAt||protocol.completedAt;step.completedAt=step.completedAt||protocol.completedAt||nowIso()});
         protocol.earnedXp=Math.max(0,Number(protocol.earnedXp||0));
         if(!Object.prototype.hasOwnProperty.call(protocol,'profileXpAppliedAmount')){
           const legacySettled=legacyDayStatus==='failed'||(legacyDayStatus==='cleared'&&legacyRewardApplied);
@@ -116,9 +116,10 @@
         protocol.profileXpAppliedAt=protocol.profileXpAppliedAt||null;
       }
       if(protocol.status==='failed')protocol.earnedXp=0;
-      delete protocol.profileXpHeld;delete protocol.recoveryProtected;
-      protocol.focusBreaches=Math.max(0,Number(protocol.focusBreaches||0));
-      protocol.hiddenMilliseconds=Math.max(0,Number(protocol.hiddenMilliseconds||0));
+      if(protocol.status==='skipped')protocol.earnedXp=0;
+      protocol.required=protocol.required!==false;protocol.excused=Boolean(protocol.excused);
+      protocol.hadRequiredSkip=Boolean(protocol.hadRequiredSkip);
+      delete protocol.focusBreaches;delete protocol.hiddenMilliseconds;delete protocol.profileXpHeld;delete protocol.recoveryProtected;
     });
     day.completedProtocols=Object.values(protocols).filter(protocol=>protocol?.status==='cleared').length;
     day.failedProtocols=Object.values(protocols).filter(protocol=>protocol?.status==='failed').length;
@@ -132,31 +133,46 @@
     classId:exception.classId||null,start:exception.start||'',end:exception.end||'',note:String(exception.note||'').slice(0,100),createdAt:exception.createdAt||nowIso(),active:exception.active!==false
   });
 
-  const DIRECTIVE_PROTOCOL_IDS=new Set(['wake','breakfast','workout','dinner','productivity','shutdown']);
-  const DIRECTIVE_STEP_TYPES=new Set(['tap','hold','timer','system','workout','audit','planner','trading']);
+  const CORE_DIRECTIVE_PROTOCOL_IDS=new Set(['wake','breakfast','workout','dinner','productivity','shutdown']);
+  const CORE_DIRECTIVE_ROLES={wake:'wake',workout:'workout',productivity:'productivity',shutdown:'shutdown'};
+  const DIRECTIVE_STEP_TYPES=new Set(['tap','hold','timer','system','workout','audit','planner','trading','academic']);
+  const DIRECTIVE_SCHEDULE_MODES=new Set(['fixed','flexible']);
+  const DIRECTIVE_PRIORITIES=new Set(['high','normal','low']);
+  const DIRECTIVE_XP_MODES=new Set(['automatic','custom']);
   const cleanDirectiveTime=value=>/^([01]\d|2[0-3]):[0-5]\d$/.test(String(value||''))?String(value):'';
-  const cleanDirectiveId=value=>String(value||'').toLowerCase().replace(/[^a-z0-9_-]/g,'-').replace(/-+/g,'-').slice(0,64)||uid('directive');
+  const cleanDirectiveId=value=>String(value||'').toLowerCase().replace(/[^a-z0-9_-]/g,'-').replace(/-+/g,'-').replace(/^-|-$/g,'').slice(0,64)||uid('directive');
   const normalizeDirectiveStep=step=>{
     const source=step&&typeof step==='object'?step:{};
     const type=DIRECTIVE_STEP_TYPES.has(source.type)?source.type:'hold';
     const copies=Array.isArray(source.copy)?source.copy:[source.copy||''];
     return{
       id:cleanDirectiveId(source.id),title:String(source.title||'Untitled Directive').slice(0,80),copy:copies.slice(0,2).map(value=>String(value||'').slice(0,320)),
-      icon:String(source.icon||'apex').slice(0,32),type,enabled:source.enabled!==false,
+      icon:String(source.icon||'apex').slice(0,32),type,enabled:source.enabled!==false,required:source.required!==false,
+      allowSkip:source.allowSkip===true||type==='timer',perfectRequired:source.perfectRequired!==false,
       duration:Math.min(180,Math.max(1,Number(source.duration||15))),holdDuration:Math.min(10000,Math.max(600,Number(source.holdDuration||1800))),
       minDuration:Math.min(180,Math.max(1,Number(source.minDuration||15))),recommendedMax:Math.min(240,Math.max(1,Number(source.recommendedMax||45))),autoComplete:Boolean(source.autoComplete)
     };
   };
+  const normalizeDirectiveProtocol=(id,value)=>{
+    if(!value||typeof value!=='object'||Array.isArray(value))return null;
+    const protocolId=cleanDirectiveId(id||value.id),core=CORE_DIRECTIVE_PROTOCOL_IDS.has(protocolId),role=core?(CORE_DIRECTIVE_ROLES[protocolId]||'standard'):'standard';
+    const item={
+      id:protocolId,custom:!core,systemRole:role,enabled:value.enabled!==false,required:value.required!==false,
+      name:String(value.name||'').slice(0,60),short:String(value.short||'').slice(0,16),prep:String(value.prep||'').slice(0,420),icon:String(value.icon||'').slice(0,32),
+      start:cleanDirectiveTime(value.start),end:cleanDirectiveTime(value.end),activeDays:Array.isArray(value.activeDays)?[...new Set(value.activeDays.map(Number).filter(day=>day>=0&&day<=6))]:undefined,
+      schedulingMode:DIRECTIVE_SCHEDULE_MODES.has(value.schedulingMode)?value.schedulingMode:'fixed',priority:DIRECTIVE_PRIORITIES.has(value.priority)?value.priority:'normal',
+      allowSkipToday:value.allowSkipToday!==false,xpMode:DIRECTIVE_XP_MODES.has(value.xpMode)?value.xpMode:(core?'custom':'automatic'),xp:Math.min(500,Math.max(10,Number(value.xp||100)))
+    };
+    if(Array.isArray(value.subtasks))item.subtasks=value.subtasks.slice(0,32).map(normalizeDirectiveStep);
+    return item;
+  };
   const normalizeDirectiveProtocols=rawProtocols=>{
     const source=rawProtocols&&typeof rawProtocols==='object'&&!Array.isArray(rawProtocols)?rawProtocols:{};const protocols={};
-    DIRECTIVE_PROTOCOL_IDS.forEach(id=>{const value=source[id];if(!value||typeof value!=='object'||Array.isArray(value))return;const item={
-      enabled:value.enabled!==false,name:String(value.name||'').slice(0,60),short:String(value.short||'').slice(0,16),prep:String(value.prep||'').slice(0,420),icon:String(value.icon||'').slice(0,32),
-      start:cleanDirectiveTime(value.start),end:cleanDirectiveTime(value.end),activeDays:Array.isArray(value.activeDays)?[...new Set(value.activeDays.map(Number).filter(day=>day>=0&&day<=6))]:undefined
-    };if(Array.isArray(value.subtasks))item.subtasks=value.subtasks.slice(0,24).map(normalizeDirectiveStep);protocols[id]=item});return protocols;
+    Object.entries(source).slice(0,40).forEach(([id,value])=>{const item=normalizeDirectiveProtocol(id,value);if(item)protocols[item.id]=item});return protocols;
   };
   const normalizeDirectiveConfig=raw=>{
     const source=raw&&typeof raw==='object'&&!Array.isArray(raw)?raw:{};const history=Array.isArray(source.history)?source.history.slice(-5).map(item=>({at:String(item?.at||nowIso()),protocols:normalizeDirectiveProtocols(item?.protocols)})):[];
-    return{version:1,protocols:normalizeDirectiveProtocols(source.protocols),history,updatedAt:source.updatedAt?String(source.updatedAt):null};
+    return{version:2,protocols:normalizeDirectiveProtocols(source.protocols),history,updatedAt:source.updatedAt?String(source.updatedAt):null};
   };
 
   const normalizeCurrent=raw=>{
@@ -197,7 +213,7 @@
       let next=log?.type==='integrity'?{...log,type:'system'}:log;
       if(next?.type==='quest'&&/skill point/i.test(String(next.message||'')))next={...next,message:String(next.message||'').replace(/\s*(?:and|·)\s*\+1 Skill Point\.?/gi,'.').replace(/\.\./g,'.')};
       return next;
-    }).filter(log=>log?.type!=='achievement'&&log?.type!=='skill'&&!(log?.type==='recovery'&&/Recovery Protocol armed|Recovery completed after|Recovery protection activated/i.test(String(log.message||''))));
+    }).filter(log=>log?.type!=='achievement'&&log?.type!=='skill'&&log?.type!=='breach'&&!/focus breach/i.test(String(log?.message||''))&&!(log?.type==='recovery'&&/Recovery Protocol armed|Recovery completed after|Recovery protection activated/i.test(String(log.message||''))));
     state.logs=pruneLogs(normalizedLogs);
     if(!state.player.pendingRank)state.player.pendingRank=pendingRankFor(state.player.level,state.player.rank);
     state.system.notificationLedger=state.system.notificationLedger&&typeof state.system.notificationLedger==='object'&&!Array.isArray(state.system.notificationLedger)?state.system.notificationLedger:{};
@@ -211,7 +227,7 @@
     state.system.developerTest.labHistory=Array.isArray(state.system.developerTest.labHistory)?state.system.developerTest.labHistory.slice(-40):[];
     state.system.developerTest.sandboxMode=['profile','sample'].includes(state.system.developerTest.sandboxMode)?state.system.developerTest.sandboxMode:'profile';
     state.system.safeMode=Boolean(state.system.safeMode);
-    const retiredQuestIds=new Set(['recovery-action','clean-timeline','attendance']);
+    const retiredQuestIds=new Set(['recovery-action','clean-timeline','attendance','no-breach']);
     state.quests.daily=state.quests.daily&&typeof state.quests.daily==='object'&&!retiredQuestIds.has(state.quests.daily.id)?state.quests.daily:null;
     if(state.quests.daily)delete state.quests.daily.rerolled;
     state.quests.history=Array.isArray(state.quests.history)?state.quests.history.filter(item=>item&&typeof item==='object'&&!retiredQuestIds.has(item.id)).map(item=>{const clean={...item};delete clean.rerolled;return clean}).slice(-60):[];
