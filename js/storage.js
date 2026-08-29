@@ -6,8 +6,8 @@
   const SNAPSHOT_KEY='ascend_discipline_protocol_snapshots_v1';
   const ROLLBACK_KEY='ascend_discipline_protocol_rollbacks_v1';
   const LEGACY_KEYS=['ascend_discipline_protocol_v6','ascend_discipline_protocol_v5','ascend_discipline_protocol_v4','ascend_strict_system_v3','ascend_automatic_year_system_v2','ascend_personal_growth_system_v1'];
-  const VERSION=23;
-  const BACKUP_VERSION=5;
+  const VERSION=24;
+  const BACKUP_VERSION=6;
   const ROUTINE_LOG_LIMIT=420;
   const SNAPSHOT_LIMIT=7;
   const ROLLBACK_LIMIT=4;
@@ -45,6 +45,7 @@
     academicTasks:[],
     recurringTaskRules:[],
     tradingNotes:[],
+    directiveConfig:{version:1,protocols:{},history:[],updatedAt:null},
     quests:{daily:null,history:[]},
     weeklyDebriefs:[],
     settings:{sound:true,haptics:true,keepAwake:true,notifications:false,notificationLeadMinutes:10,timeFormat:'12',externalCalendarConfirmed:false,externalCalendarExportedAt:null,externalCalendarHorizonDays:60},
@@ -131,6 +132,33 @@
     classId:exception.classId||null,start:exception.start||'',end:exception.end||'',note:String(exception.note||'').slice(0,100),createdAt:exception.createdAt||nowIso(),active:exception.active!==false
   });
 
+  const DIRECTIVE_PROTOCOL_IDS=new Set(['wake','breakfast','workout','dinner','productivity','shutdown']);
+  const DIRECTIVE_STEP_TYPES=new Set(['tap','hold','timer','system','workout','audit','planner','trading']);
+  const cleanDirectiveTime=value=>/^([01]\d|2[0-3]):[0-5]\d$/.test(String(value||''))?String(value):'';
+  const cleanDirectiveId=value=>String(value||'').toLowerCase().replace(/[^a-z0-9_-]/g,'-').replace(/-+/g,'-').slice(0,64)||uid('directive');
+  const normalizeDirectiveStep=step=>{
+    const source=step&&typeof step==='object'?step:{};
+    const type=DIRECTIVE_STEP_TYPES.has(source.type)?source.type:'hold';
+    const copies=Array.isArray(source.copy)?source.copy:[source.copy||''];
+    return{
+      id:cleanDirectiveId(source.id),title:String(source.title||'Untitled Directive').slice(0,80),copy:copies.slice(0,2).map(value=>String(value||'').slice(0,320)),
+      icon:String(source.icon||'apex').slice(0,32),type,enabled:source.enabled!==false,
+      duration:Math.min(180,Math.max(1,Number(source.duration||15))),holdDuration:Math.min(10000,Math.max(600,Number(source.holdDuration||1800))),
+      minDuration:Math.min(180,Math.max(1,Number(source.minDuration||15))),recommendedMax:Math.min(240,Math.max(1,Number(source.recommendedMax||45))),autoComplete:Boolean(source.autoComplete)
+    };
+  };
+  const normalizeDirectiveProtocols=rawProtocols=>{
+    const source=rawProtocols&&typeof rawProtocols==='object'&&!Array.isArray(rawProtocols)?rawProtocols:{};const protocols={};
+    DIRECTIVE_PROTOCOL_IDS.forEach(id=>{const value=source[id];if(!value||typeof value!=='object'||Array.isArray(value))return;const item={
+      enabled:value.enabled!==false,name:String(value.name||'').slice(0,60),short:String(value.short||'').slice(0,16),prep:String(value.prep||'').slice(0,420),icon:String(value.icon||'').slice(0,32),
+      start:cleanDirectiveTime(value.start),end:cleanDirectiveTime(value.end),activeDays:Array.isArray(value.activeDays)?[...new Set(value.activeDays.map(Number).filter(day=>day>=0&&day<=6))]:undefined
+    };if(Array.isArray(value.subtasks))item.subtasks=value.subtasks.slice(0,24).map(normalizeDirectiveStep);protocols[id]=item});return protocols;
+  };
+  const normalizeDirectiveConfig=raw=>{
+    const source=raw&&typeof raw==='object'&&!Array.isArray(raw)?raw:{};const history=Array.isArray(source.history)?source.history.slice(-5).map(item=>({at:String(item?.at||nowIso()),protocols:normalizeDirectiveProtocols(item?.protocols)})):[];
+    return{version:1,protocols:normalizeDirectiveProtocols(source.protocols),history,updatedAt:source.updatedAt?String(source.updatedAt):null};
+  };
+
   const normalizeCurrent=raw=>{
     const base=initialState();
     if(!raw||typeof raw!=='object'||Array.isArray(raw))throw new Error('ASCEND state is not a valid object.');
@@ -164,6 +192,7 @@
     state.academicTasks.forEach(task=>{task.dependencyIds=task.dependencyIds.filter(id=>id!==task.id&&validTaskIds.has(id))});
     state.recurringTaskRules=Array.isArray(raw.recurringTaskRules)?raw.recurringTaskRules.map(normalizeRule):[];
     state.tradingNotes=Array.isArray(raw.tradingNotes)?raw.tradingNotes:[];
+    state.directiveConfig=normalizeDirectiveConfig(raw.directiveConfig);
     const normalizedLogs=(Array.isArray(raw.logs)?raw.logs:[]).map(log=>{
       let next=log?.type==='integrity'?{...log,type:'system'}:log;
       if(next?.type==='quest'&&/skill point/i.test(String(next.message||'')))next={...next,message:String(next.message||'').replace(/\s*(?:and|·)\s*\+1 Skill Point\.?/gi,'.').replace(/\.\./g,'.')};
@@ -256,7 +285,7 @@
       });
       state.settings.externalCalendarConfirmed=false;
     }
-    const migration={id:uid('migration'),at:nowIso(),fromVersion,toVersion:VERSION,label:'Recovery, achievements, and skills cleanup'};
+    const migration={id:uid('migration'),at:nowIso(),fromVersion,toVersion:VERSION,label:'Directive Studio configuration support'};
     state.system.migrationHistory.push(migration);
     state.logs.push({id:uid('log'),at:migration.at,type:'migration',message:`ASCEND data migrated from schema ${fromVersion||'legacy'} to ${VERSION}. A rollback point was retained.${currentDayXpRepair?` ${currentDayXpRepair} legacy current-day XP reopened for reconciliation.`:''}${legacyHeldXpReopened?` ${legacyHeldXpReopened} previously held XP reopened for immediate Profile synchronization.`:''}`});
     state.logs=pruneLogs(state.logs);return state;

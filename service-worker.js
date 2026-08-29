@@ -1,5 +1,5 @@
 const CACHE_PREFIX='ascend-discipline-';
-const CACHE=`${CACHE_PREFIX}v61-unverified-attendance`;
+const CACHE=`${CACHE_PREFIX}v62-directive-studio`;
 const APP_SHELL=[
   './',
   './index.html',

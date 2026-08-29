@@ -324,7 +324,7 @@
         <div class="config-sigil glyph-frame" aria-hidden="true"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-calendar"></use></svg></div>
         <p class="eyebrow">HIDDEN SCHEDULE ACCESS</p>
         <h2>Schedule Center</h2>
-        <p class="schedule-hint">Manage your weekly classes and review attendance from any ASCEND state.</p>
+        <p class="schedule-hint">Manage weekly classes, review attendance, and customize directives from any ASCEND state.</p>
         <div class="config-summary two-stat schedule-only-summary">
           <div><span>ACTIVE CLASSES</span><strong id="freeScheduleClassCount">0</strong></div>
           <div><span>ATTENDANCE</span><strong id="freeScheduleAttendanceRate">0%</strong></div>
@@ -332,6 +332,7 @@
         <div class="control-actions schedule-only-actions">
           <button class="system-button compact-button" id="openFreeSchedule" type="button"><b>Class Schedule</b></button>
           <button class="system-button compact-button secondary-system-button" id="openFreeAttendance" type="button"><b>Attendance Overview</b></button>
+          <button class="system-button compact-button secondary-system-button directive-studio-entry" id="openDirectiveStudio" type="button"><b>Directive Studio</b></button>
         </div>
         <button id="openPlayerProfile" type="button" hidden aria-hidden="true" tabindex="-1">Player Profile</button>
         <button id="openSettings" type="button" hidden aria-hidden="true" tabindex="-1">Settings</button>
@@ -600,6 +601,72 @@
           <button class="ghost-button" id="openEmergencyRecovery" type="button">Open Emergency Recovery</button>
         </div>
         <button class="ghost-button" id="recoverySystemBack" type="button">Back</button>
+      </section>
+
+      <section class="directive-studio-view" id="directiveStudioView" hidden>
+        <div class="config-sigil glyph-frame" aria-hidden="true"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-list"></use></svg></div>
+        <p class="eyebrow">HIDDEN DIRECTIVE ACCESS</p>
+        <h2>Directive Studio</h2>
+        <p class="schedule-hint">Edit how ASCEND guides each protocol while keeping system-linked behavior protected.</p>
+        <div class="directive-studio-meta" id="directiveStudioMeta">6 protocols</div>
+        <div class="directive-protocol-list" id="directiveProtocolList"></div>
+        <div class="directive-studio-actions">
+          <button class="ghost-button" id="directiveExport" type="button">Export</button>
+          <button class="ghost-button" id="directiveImport" type="button">Import</button>
+          <button class="ghost-button" id="directiveUndo" type="button">Undo Last Change</button>
+          <button class="ghost-button" id="directiveRestoreAll" type="button">Restore All Defaults</button>
+        </div>
+        <input id="directiveImportFile" type="file" accept="application/json,.json" hidden>
+        <button class="ghost-button" id="directiveStudioBack" type="button">Back</button>
+      </section>
+
+      <section class="directive-editor-view" id="directiveEditorView" hidden>
+        <p class="eyebrow" id="directiveEditorEyebrow">EDITABLE PROTOCOL</p>
+        <h2 id="directiveEditorTitle">Protocol</h2>
+        <p class="schedule-hint">Pending protocols can adopt saved changes. Active or completed protocol records keep their original snapshot.</p>
+        <div class="directive-editor-scroll">
+          <section class="directive-general-card">
+            <div class="directive-card-heading"><strong>Protocol Settings</strong><small id="directiveCoreNote" hidden>Core timing and active days are protected to preserve the daily lifecycle.</small></div>
+            <div class="directive-general-grid">
+              <label>Name<input class="selectable" id="directiveName" type="text" maxlength="60"></label>
+              <label class="directive-enabled-field">Enabled<span class="directive-switch"><input id="directiveProtocolEnabled" type="checkbox"><i></i></span></label>
+              <label>Start<span class="time-shell"><input class="selectable" id="directiveStart" type="time"></span></label>
+              <label>End<span class="time-shell"><input class="selectable" id="directiveEnd" type="time"></span></label>
+              <label class="directive-prep-field">Preparation message<textarea class="selectable" id="directivePrep" maxlength="420" rows="2"></textarea></label>
+            </div>
+            <div class="directive-days" id="directiveDayButtons" aria-label="Active protocol days"></div>
+          </section>
+          <section class="directive-steps-card">
+            <div class="directive-card-heading"><strong>Directives</strong><small>System-linked steps can be renamed and reworded, but their engine behavior stays protected.</small></div>
+            <div class="directive-step-list" id="directiveStepList"></div>
+            <button class="system-button compact-button" id="directiveAddStep" type="button"><b>Add Directive</b></button>
+          </section>
+        </div>
+        <p class="directive-unsaved" id="directiveUnsaved" hidden>Unsaved changes · Back discards them.</p>
+        <div class="directive-editor-actions">
+          <button class="ghost-button" id="directiveEditorBack" type="button">Back</button>
+          <button class="ghost-button" id="directiveRestoreProtocol" type="button">Restore Defaults</button>
+          <button class="system-button compact-button" id="directiveSave" type="button"><b>Save Changes</b></button>
+        </div>
+      </section>
+
+      <section class="directive-step-view" id="directiveStepView" hidden>
+        <p class="eyebrow" id="directiveStepEyebrow">CUSTOM DIRECTIVE</p>
+        <h2 id="directiveStepTitle">Edit Directive</h2>
+        <p class="schedule-hint" id="directiveStepLinkedNote" hidden>This directive is system-linked. Its title, instructions, and icon can change, but its completion engine remains locked.</p>
+        <div class="directive-step-form">
+          <label>Title<input class="selectable" id="directiveStepName" type="text" maxlength="80"></label>
+          <label>Completion<select class="selectable" id="directiveStepType"><option value="tap">Tap</option><option value="hold">Hold</option><option value="timer">Timer</option></select></label>
+          <label>Icon<select class="selectable" id="directiveStepIcon"><option value="apex">Apex</option><option value="confirm">Confirm</option><option value="wake">Wake</option><option value="water">Water</option><option value="shine">Hygiene</option><option value="stretch">Workout</option><option value="meal">Meal</option><option value="list">List</option><option value="work">Work</option><option value="grid">Reset</option><option value="trade">Trade</option><option value="sleep">Sleep</option><option value="success">Success</option></select></label>
+          <label id="directiveStepDurationWrap">Timer minutes<input class="selectable" id="directiveStepDuration" type="number" min="1" max="180" step="1"></label>
+          <label class="directive-step-copy-field">Primary instruction<textarea class="selectable" id="directiveStepCopy" maxlength="320" rows="3"></textarea></label>
+          <label class="directive-step-copy-field">Alternate instruction<textarea class="selectable" id="directiveStepAltCopy" maxlength="320" rows="3"></textarea></label>
+        </div>
+        <div class="directive-step-actions-footer">
+          <button class="ghost-button" id="directiveStepBack" type="button">Cancel</button>
+          <button class="danger-button compact-danger" id="directiveStepDelete" type="button"><b>Delete</b></button>
+          <button class="system-button compact-button" id="directiveStepSave" type="button"><b>Save Directive</b></button>
+        </div>
       </section>
 
       <section class="schedule-overview-view" id="scheduleOverviewView" hidden>

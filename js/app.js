@@ -40,6 +40,7 @@
   let launchDismissed=false;
   let orientationBlocked=false;
   let exceptionUi={index:0};
+  let directiveUi={protocolId:null,stepId:null,isNew:false,draft:null,dirty:false,restoreArmedUntil:0};
   let notificationSweepAt=0;
   let storageCheckAt=0;
   let advancedSyncDate='';
@@ -174,7 +175,7 @@
   const isWeeklyBossDate=date=>date.getDay()===6;
   const variants=(...copy)=>copy;
 
-  const protocolBlueprints=[
+  const protocolDefaults=[
     {
       id:'wake',short:'WAKE',name:'Wake Protocol',icon:'wake',start:'05:00',end:'06:00',xp:120,
       prep:'Water must be ready before sleep. The directive begins when your wake time is recorded.',
@@ -243,6 +244,23 @@
     }
   ];
 
+  const directiveDefaultDays={wake:[0,1,2,3,4,5,6],breakfast:[0,1,2,3,4,5,6],workout:[2,3,5,6],dinner:[0,1,2,3,4,5,6],productivity:[0,1,2,3,4,5,6],shutdown:[0,1,2,3,4,5,6]};
+  const directiveCoreProtocols=new Set(['wake','shutdown']);
+  const directiveLinkedSteps=new Set(['wake-confirm','bath','workout-dungeon','workout-cooldown','subject-audit','execution-plan','trading-review']);
+  const directiveStandardTypes=new Set(['tap','hold','timer']);
+  const directiveProtocolDefinition=id=>{
+    const base=protocolDefaults.find(protocol=>protocol.id===id);if(!base)return null;const override=state.directiveConfig?.protocols?.[id]||{};
+    const defaultSteps=base.subtasks(state.player.level).map(step=>({...clone(step),enabled:true}));const steps=Array.isArray(override.subtasks)?clone(override.subtasks):defaultSteps;
+    return{
+      id:base.id,xp:base.xp,enabled:directiveCoreProtocols.has(id)?true:override.enabled!==false,
+      name:override.name||base.name,short:override.short||base.short,prep:override.prep||base.prep,icon:normalizeGlyph(override.icon||base.icon),
+      start:directiveCoreProtocols.has(id)?base.start:(override.start||base.start),end:directiveCoreProtocols.has(id)?base.end:(override.end||base.end),
+      activeDays:directiveCoreProtocols.has(id)?clone(directiveDefaultDays[id]):(Array.isArray(override.activeDays)?clone(override.activeDays):clone(directiveDefaultDays[id])),subtasks:steps
+    };
+  };
+  const buildDirectiveBlueprints=()=>protocolDefaults.map(base=>{const def=directiveProtocolDefinition(base.id);const enabledSteps=def.subtasks.filter(step=>step.enabled!==false).map(step=>clone(step));return{...base,...def,subtasks:()=>clone(enabledSteps)}});
+  let protocolBlueprints=buildDirectiveBlueprints();
+  const refreshDirectiveBlueprints=()=>{protocolBlueprints=buildDirectiveBlueprints()};
   const blueprint=id=>protocolBlueprints.find(protocol=>protocol.id===id);
   const dayRecord=()=>state.dayRecords[currentKey()]||null;
   const activeProtocolRecord=()=>{
@@ -251,7 +269,6 @@
   };
   const subjectKey=value=>String(value||'').trim().toLowerCase();
   const activeSchedule=()=>state.classSchedule.filter(entry=>entry.active!==false);
-  const WORKOUT_DAYS=new Set([2,3,5,6]);
   const effectiveScheduleForDate=date=>{
     const key=S.dateKey(date),exceptions=(state.scheduleExceptions||[]).filter(item=>item.active!==false&&item.date===key);
     if(exceptions.some(item=>item.type==='no-classes'))return[];
@@ -269,7 +286,7 @@
       return classPriorityStart<minutes(workout.end)&&minutes(entry.end)>minutes(workout.start);
     });
   };
-  const protocolEligibleForDate=(config,date)=>config.id!=='workout'||(WORKOUT_DAYS.has(date.getDay())&&!workoutHasClassConflict(date));
+  const protocolEligibleForDate=(config,date)=>Boolean(config&&config.enabled!==false&&(config.activeDays||directiveDefaultDays[config.id]||[]).includes(date.getDay())&&(config.id!=='workout'||!workoutHasClassConflict(date)));
   const protocolConfigsForDate=date=>protocolBlueprints.filter(config=>protocolEligibleForDate(config,date));
   const protocolConfigsForRecord=record=>protocolBlueprints.filter(config=>Boolean(record?.protocols?.[config.id]));
   const requiredProtocolCountForRecord=record=>Object.keys(record?.protocols||{}).length;
@@ -312,9 +329,9 @@
       delete record.protocols.workout;record.completedProtocols=Object.values(record.protocols).filter(item=>item.status==='cleared').length;record.failedProtocols=Object.values(record.protocols).filter(item=>item.status==='failed').length;changed=true;
       state.logs.push({id:S.uid('log'),at:now.toISOString(),type:'schedule',message:'Workout Protocol suppressed because a class window takes priority.'});
     }
-    if(!record.protocols?.workout&&eligible&&todayMinutes(now)<minutes('08:00')){
+    if(!record.protocols?.workout&&eligible&&todayMinutes(now)<minutes(blueprint('workout').start)){
       record.protocols.workout=makeProtocolState(blueprint('workout'),record.weeklyBoss,now);changed=true;
-      state.logs.push({id:S.uid('log'),at:now.toISOString(),type:'protocol',message:'Workout Protocol added to today’s Tuesday/Wednesday/Friday/Saturday sequence.'});
+      state.logs.push({id:S.uid('log'),at:now.toISOString(),type:'protocol',message:'Workout Protocol added to today’s configured sequence.'});
     }
     if(syncWorkoutStepShape(record.protocols?.workout))changed=true;
     if(syncWakeBathForWorkout(record))changed=true;
@@ -573,7 +590,7 @@
   const finalizeDay=(record,now=new Date(),force=false)=>{
     if(!record||record.status!=='active')return;
     const resolved=Object.values(record.protocols).every(protocol=>['cleared','failed'].includes(protocol.status));
-    const cutoff=recordMoment(record,'23:00');
+    const cutoff=recordMoment(record,blueprint('shutdown')?.end||'23:00');
     if(!force&&!resolved&&now<cutoff)return;
     Object.values(record.protocols).forEach(protocol=>{if(!['cleared','failed'].includes(protocol.status))failProtocol(record,protocol,'The daily cutoff was reached before completion.',false,{defer:true})});
     record.completedProtocols=Object.values(record.protocols).filter(protocol=>protocol.status==='cleared').length;
@@ -776,7 +793,7 @@
     const minute=todayMinutes(now);
     if(!record.wakeCheckInAt&&minute>=300&&minute<360&&document.visibilityState==='visible')recordWakeCheckIn(record,now,'automatic-window');
     evaluateDeadlines(record,now);
-    if(now>=recordMoment(record,'23:00'))finalizeDay(record,now);
+    if(now>=recordMoment(record,blueprint('shutdown')?.end||'23:00'))finalizeDay(record,now);
     sweepNotifications(record,now);checkStoragePressure();
     return record;
   };
@@ -952,7 +969,7 @@
       if(attendance?.checkInAt&&untilEnd>0&&untilEnd<=5*60000)sendLocalNotification(`${S.dateKey(now)}:${entry.id}:dismissal`,`${entry.subject} ending soon`,'Prepare to confirm class dismissal and finalize attendance XP.');
       if(now>=end&&(!attendance||attendance.status==='unverified')&&now-end<=60*60000)sendLocalNotification(`${S.dateKey(now)}:${entry.id}:missed-checkin`,`${entry.subject} attendance unresolved`,'Open ASCEND and resolve the missed attendance confirmation.');
     });
-    if(record?.weeklyBoss&&record.weeklyBossPlan){const boss=record.protocols?.productivity,start=recordMoment(record,'20:30'),delta=start-now;if(boss?.status==='pending'&&delta>0&&delta<=lead)sendLocalNotification(`${record.date}:weekly-boss`, `Weekly Boss: ${record.weeklyBossPlan.title}`,record.weeklyBossPlan.copy)}
+    if(record?.weeklyBoss&&record.weeklyBossPlan){const boss=record.protocols?.productivity,start=recordMoment(record,blueprint('productivity')?.start||'20:30'),delta=start-now;if(boss?.status==='pending'&&delta>0&&delta<=lead)sendLocalNotification(`${record.date}:weekly-boss`, `Weekly Boss: ${record.weeklyBossPlan.title}`,record.weeklyBossPlan.copy)}
     Object.values(record?.protocols||{}).filter(protocol=>protocol.status==='failed'&&protocol.completedAt&&now-new Date(protocol.completedAt)<=60*60000).forEach(protocol=>sendLocalNotification(`${record.date}:${protocol.id}:failed`,`${protocol.name} failed`,protocol.failureReason||'The fixed deadline passed.'));
   };
   const storageReport=async()=>{
@@ -1727,8 +1744,8 @@
     return entries.sort((a,b)=>minutes(a.start)-minutes(b.start));
   };
   const developerProtocolConfigsForDate=date=>protocolBlueprints.filter(config=>{
+    if(config.enabled===false||!(config.activeDays||directiveDefaultDays[config.id]||[]).includes(date.getDay()))return false;
     if(config.id!=='workout')return true;
-    if(!WORKOUT_DAYS.has(date.getDay()))return false;
     const workout=blueprint('workout');return !developerClassesForDate(date).some(entry=>minutes(entry.start)-15<minutes(workout.end)&&minutes(entry.end)>minutes(workout.start));
   });
   const developerProtocolStepsForDate=(config,date)=>{
@@ -1887,7 +1904,7 @@
   const closeEmergencyRecovery=()=>{$('#emergencyRecoveryOverlay').hidden=true};
   const synchronizeAdvancedSystems=()=>{const before=JSON.stringify({quest:state.quests?.daily?.date,rules:state.academicTasks.length,debriefs:state.weeklyDebriefs?.length,pending:state.timezone?.pending});ensureDailyQuest();const generated=generateRecurringTasks();ensureWeeklyDebrief();const changedTimezone=detectTimezoneChange();const watchdogDate=state.system.watchdog?.lastRun?S.dateKey(new Date(state.system.watchdog.lastRun)):'';if(watchdogDate!==S.dateKey())runDataConsistencyWatchdog(false);if(generated||changedTimezone||before!==JSON.stringify({quest:state.quests?.daily?.date,rules:state.academicTasks.length,debriefs:state.weeklyDebriefs?.length,pending:state.timezone?.pending}))save({silent:true})};
 
-  const controlViews=['controlHomeView','academicHomeView','profileView','settingsView','attendanceView','systemReliabilityView','scheduleExceptionsView','dataBackupView','academicTasksView','conflictScanView','advancedSystemHomeView','updatesRollbackView','diagnosticsView','externalRemindersView','developerTestView','recoverySystemView','scheduleOverviewView','scheduleEditView'];
+  const controlViews=['controlHomeView','academicHomeView','profileView','settingsView','attendanceView','systemReliabilityView','scheduleExceptionsView','dataBackupView','academicTasksView','conflictScanView','advancedSystemHomeView','updatesRollbackView','diagnosticsView','externalRemindersView','developerTestView','recoverySystemView','scheduleOverviewView','scheduleEditView','directiveStudioView','directiveEditorView','directiveStepView'];
   const setControlView=view=>{
     controlUi.view=view;
     controlViews.forEach(id=>{const node=document.getElementById(id);if(node)node.hidden=id!==view});
@@ -2013,7 +2030,7 @@
   const profileAttendanceStatusCopy=status=>({early:'EARLY',present:'PRESENT',late:'LATE',absent:'ABSENT',cancelled:'CANCELLED',unverified:'UNVERIFIED'})[status]||String(status||'UNVERIFIED').toUpperCase();
   const profileDayDetailMarkup=dateKey=>{
     const {day,attendance}=profileDayRecordsFor(dateKey),xp=profileDayXp(dateKey),date=new Date(`${dateKey}T12:00:00`),status=profileDayState(dateKey),result=profileDayResultLabel(dateKey);
-    const directiveRows=day?protocolConfigsForRecord(day).map(config=>{const protocol=day.protocols[config.id],boss=Boolean(protocol?.boss),name=boss?(day.weeklyBossPlan?.title?`Weekly Boss · ${day.weeklyBossPlan.title}`:'Weekly Boss'):config.name.replace(/ Protocol$/,'');const applied=Math.max(0,Number(protocol?.profileXpAppliedAmount||0));return `<div class="profile-log-row ${protocol?.status||'pending'}"><section><strong>${escapeHtml(name)}</strong><small>${escapeHtml(config.start)}–${escapeHtml(config.end)}${applied?` · +${applied} XP`:''}</small></section><b>${profileProtocolStatusCopy(protocol||{})}</b></div>`}).join(''):'';
+    const directiveRows=day?protocolConfigsForRecord(day).map(config=>{const protocol=day.protocols[config.id],boss=Boolean(protocol?.boss),name=boss?(day.weeklyBossPlan?.title?`Weekly Boss · ${day.weeklyBossPlan.title}`:'Weekly Boss'):(protocol?.name||config.name).replace(/ Protocol$/,'');const applied=Math.max(0,Number(protocol?.profileXpAppliedAmount||0)),start=protocol?.start||config.start,end=protocol?.end||config.end;return `<div class="profile-log-row ${protocol?.status||'pending'}"><section><strong>${escapeHtml(name)}</strong><small>${escapeHtml(start)}–${escapeHtml(end)}${applied?` · +${applied} XP`:''}</small></section><b>${profileProtocolStatusCopy(protocol||{})}</b></div>`}).join(''):'';
     const attendanceRows=attendance.map(record=>{const name=record.code||record.subjectName||'Class',applied=Math.max(0,Number(record.profileXpAppliedAmount||0));return `<div class="profile-log-row attendance ${escapeHtml(record.status||'unverified')}"><section><strong>${escapeHtml(name)}</strong><small>${formatTime(record.scheduledStart||'00:00')}${record.subjectName&&record.code?` · ${escapeHtml(record.subjectName)}`:''}${applied?` · +${applied} XP`:''}</small></section><b>${profileAttendanceStatusCopy(record.status)}</b></div>`}).join('');
     return `<section class="profile-day-log-detail">
       <div class="profile-day-log-head"><div><span>DAY LOG</span><strong>${escapeHtml(date.toLocaleDateString(undefined,{weekday:'long',month:'long',day:'numeric'}))}</strong><small>${result}</small></div><div><span>PROFILE XP</span><strong>+${xp.total}</strong><small>${xp.directive} directive · ${xp.academic} attendance</small></div></div>
@@ -2320,6 +2337,74 @@
     clock.classList.remove('schedule-arming');
     clock.style.setProperty('--schedule-access-progress','0deg');
   };
+
+  const directiveDayLabels=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const directiveLongDayLabels=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  const directiveLinkedLabel=step=>directiveLinkedSteps.has(step.id)||!directiveStandardTypes.has(step.type);
+  const directiveDaysCopy=days=>{const normalized=[...days].sort((a,b)=>a-b);if(normalized.length===7)return'Every day';if(normalized.join(',')==='1,2,3,4,5')return'Weekdays';return normalized.map(day=>directiveDayLabels[day]).join(' · ')||'No active days'};
+  const directiveWorkingDefinition=id=>clone(directiveProtocolDefinition(id));
+  const directiveProtocolStatusCopy=def=>def.enabled===false?'DISABLED':directiveCoreProtocols.has(def.id)?'SYSTEM CORE':'ACTIVE';
+  const renderDirectiveStudio=()=>{
+    setControlView('directiveStudioView');directiveUi.protocolId=null;directiveUi.stepId=null;directiveUi.draft=null;directiveUi.dirty=false;
+    const definitions=protocolDefaults.map(item=>directiveProtocolDefinition(item.id)).sort((a,b)=>minutes(a.start)-minutes(b.start));
+    $('#directiveProtocolList').innerHTML=definitions.map(def=>{
+      const enabledCount=def.subtasks.filter(step=>step.enabled!==false).length;
+      return `<button class="directive-protocol-card ${def.enabled===false?'disabled':''}" type="button" data-directive-protocol="${escapeHtml(def.id)}"><span class="directive-protocol-time">${escapeHtml(formatTime(def.start))}<i></i>${escapeHtml(formatTime(def.end))}</span><section><strong>${escapeHtml(def.name)}</strong><small>${escapeHtml(directiveDaysCopy(def.activeDays))} · ${enabledCount} directive${enabledCount===1?'':'s'}</small></section><b>${directiveProtocolStatusCopy(def)}</b></button>`;
+    }).join('');
+    const historyCount=state.directiveConfig?.history?.length||0;$('#directiveStudioMeta').textContent=`${definitions.filter(def=>def.enabled!==false).length} protocols · ${historyCount} saved configuration ${historyCount===1?'version':'versions'}`;$('#directiveUndo').disabled=!historyCount;
+    $('#directiveRestoreAll').textContent='Restore All Defaults';directiveUi.restoreArmedUntil=0;
+  };
+  const renderDirectiveEditor=()=>{
+    const draft=directiveUi.draft;if(!draft){renderDirectiveStudio();return}setControlView('directiveEditorView');
+    $('#directiveEditorEyebrow').textContent=`${draft.short||draft.id.toUpperCase()} · ${directiveCoreProtocols.has(draft.id)?'SYSTEM CORE':'EDITABLE PROTOCOL'}`;
+    $('#directiveEditorTitle').textContent=draft.name;$('#directiveName').value=draft.name;$('#directivePrep').value=draft.prep||'';$('#directiveStart').value=draft.start;$('#directiveEnd').value=draft.end;
+    $('#directiveStart').disabled=directiveCoreProtocols.has(draft.id);$('#directiveEnd').disabled=directiveCoreProtocols.has(draft.id);$('#directiveProtocolEnabled').checked=draft.enabled!==false;$('#directiveProtocolEnabled').disabled=directiveCoreProtocols.has(draft.id);
+    $('#directiveCoreNote').hidden=!directiveCoreProtocols.has(draft.id);$('#directiveDayButtons').innerHTML=directiveLongDayLabels.map((label,day)=>`<button type="button" data-directive-day="${day}" class="${draft.activeDays.includes(day)?'selected':''}" ${directiveCoreProtocols.has(draft.id)?'disabled':''}>${label.slice(0,3)}</button>`).join('');
+    $('#directiveStepList').innerHTML=draft.subtasks.map((step,index)=>{const linked=directiveLinkedLabel(step);return `<div class="directive-step-row ${step.enabled===false?'disabled':''} ${linked?'linked':''}" data-directive-step="${escapeHtml(step.id)}"><span>${String(index+1).padStart(2,'0')}</span><section><strong>${escapeHtml(step.title)}</strong><small>${escapeHtml(step.type.toUpperCase())}${linked?' · SYSTEM-LINKED':''}${step.enabled===false?' · DISABLED':''}</small></section><div class="directive-step-actions"><button type="button" data-step-action="up" ${linked||index===0?'disabled':''} aria-label="Move directive up">↑</button><button type="button" data-step-action="down" ${linked||index===draft.subtasks.length-1?'disabled':''} aria-label="Move directive down">↓</button><button type="button" data-step-action="toggle" ${linked?'disabled':''}>${step.enabled===false?'On':'Off'}</button><button type="button" data-step-action="edit">Edit</button><button type="button" data-step-action="delete" ${linked?'disabled':''}>×</button></div></div>`}).join('');
+    $('#directiveUnsaved').hidden=!directiveUi.dirty;
+  };
+  const openDirectiveEditor=id=>{const def=directiveWorkingDefinition(id);if(!def)return;directiveUi={...directiveUi,protocolId:id,stepId:null,isNew:false,draft:def,dirty:false};renderDirectiveEditor()};
+  const directiveStepById=id=>directiveUi.draft?.subtasks?.find(step=>step.id===id)||null;
+  const openDirectiveStepEditor=(id=null)=>{
+    if(!directiveUi.draft)return;directiveUi.stepId=id;directiveUi.isNew=!id;const step=id?directiveStepById(id):{id:`custom-${Date.now().toString(36)}`,title:'New Directive',copy:['Complete this directive before continuing.',''],icon:'apex',type:'hold',enabled:true,duration:10,holdDuration:1800};
+    if(!step)return;setControlView('directiveStepView');const linked=id?directiveLinkedLabel(step):false;
+    $('#directiveStepEyebrow').textContent=linked?'SYSTEM-LINKED DIRECTIVE':'CUSTOM DIRECTIVE';$('#directiveStepTitle').textContent=id?'Edit Directive':'Add Directive';$('#directiveStepName').value=step.title||'';$('#directiveStepCopy').value=Array.isArray(step.copy)?step.copy[0]||'':step.copy||'';$('#directiveStepAltCopy').value=Array.isArray(step.copy)?step.copy[1]||'':'';$('#directiveStepIcon').value=normalizeGlyph(step.icon||'apex');$('#directiveStepType').value=directiveStandardTypes.has(step.type)?step.type:'hold';$('#directiveStepType').disabled=linked;$('#directiveStepDuration').value=Number(step.duration||10);$('#directiveStepDurationWrap').hidden=(linked?step.type:$('#directiveStepType').value)!=='timer';$('#directiveStepLinkedNote').hidden=!linked;$('#directiveStepDelete').hidden=!id||linked;
+  };
+  const captureDirectiveGeneralFields=()=>{
+    const draft=directiveUi.draft;if(!draft)return;draft.name=$('#directiveName').value.trim();draft.prep=$('#directivePrep').value.trim();if(!directiveCoreProtocols.has(draft.id)){draft.start=$('#directiveStart').value;draft.end=$('#directiveEnd').value;draft.enabled=$('#directiveProtocolEnabled').checked}directiveUi.dirty=true;
+  };
+  const validateDirectiveDraft=draft=>{
+    if(!draft.name)return'Protocol name is required.';if(!/^([01]\d|2[0-3]):[0-5]\d$/.test(draft.start)||!/^([01]\d|2[0-3]):[0-5]\d$/.test(draft.end)||minutes(draft.end)<=minutes(draft.start))return'Protocol end time must be later than its start time.';
+    if(draft.enabled!==false&&!draft.activeDays.length)return'Choose at least one active day.';if(draft.enabled!==false&&!draft.subtasks.some(step=>step.enabled!==false))return'At least one directive must remain enabled.';
+    const ids=new Set();for(const step of draft.subtasks){if(ids.has(step.id))return'Directive IDs must remain unique inside a protocol.';ids.add(step.id);if(!step.title.trim())return'Every directive needs a title.';if(step.type==='timer'&&(!Number(step.duration)||Number(step.duration)<1))return'Timer directives need a duration of at least one minute.'}
+    if(draft.enabled!==false&&!directiveCoreProtocols.has(draft.id)){
+      for(const base of protocolDefaults){if(base.id===draft.id)continue;const other=directiveProtocolDefinition(base.id);if(other.enabled===false)continue;const shared=draft.activeDays.some(day=>other.activeDays.includes(day));if(shared&&minutes(draft.start)<minutes(other.end)&&minutes(draft.end)>minutes(other.start))return`${draft.name} overlaps ${other.name} on an active day.`}
+    }
+    return'';
+  };
+  const pushDirectiveHistory=()=>{state.directiveConfig=state.directiveConfig||{version:1,protocols:{},history:[],updatedAt:null};state.directiveConfig.history=Array.isArray(state.directiveConfig.history)?state.directiveConfig.history:[];state.directiveConfig.history.push({at:new Date().toISOString(),protocols:clone(state.directiveConfig.protocols||{})});state.directiveConfig.history=state.directiveConfig.history.slice(-5)};
+  const syncCurrentDayDirectiveConfig=id=>{
+    const record=dayRecord(),config=blueprint(id);if(!record||record.date!==currentKey())return;const current=record.protocols?.[id];const eligible=protocolEligibleForDate(config,new Date());
+    if(current&&current.status==='pending'){if(!eligible)delete record.protocols[id];else record.protocols[id]=makeProtocolState(config,record.weeklyBoss,new Date())}
+    else if(!current&&eligible&&todayMinutes(new Date())<minutes(config.start))record.protocols[id]=makeProtocolState(config,record.weeklyBoss,new Date());
+    record.completedProtocols=Object.values(record.protocols||{}).filter(item=>item.status==='cleared').length;record.failedProtocols=Object.values(record.protocols||{}).filter(item=>item.status==='failed').length;syncWakeBathForWorkout(record);
+  };
+  const saveDirectiveProtocol=()=>{
+    captureDirectiveGeneralFields();const draft=directiveUi.draft;const active=activeProtocolRecord();if(active?.id===draft?.id){showBreachWarning('PROTOCOL CURRENTLY ACTIVE','Finish the active protocol before changing its configuration. This prevents its live deadline or directive engine from changing mid-session.');return}const issue=validateDirectiveDraft(draft);if(issue){showBreachWarning('DIRECTIVE CONFIGURATION BLOCKED',issue);return}
+    pushDirectiveHistory();state.directiveConfig.protocols[draft.id]=clone(draft);state.directiveConfig.updatedAt=new Date().toISOString();refreshDirectiveBlueprints();syncCurrentDayDirectiveConfig(draft.id);state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'system',message:`Directive Studio updated ${draft.name}.`});save();directiveUi.dirty=false;systemFeedback('clear','Directive configuration saved.');renderDirectiveStudio();
+  };
+  const restoreDirectiveProtocolDraft=()=>{const base=protocolDefaults.find(item=>item.id===directiveUi.protocolId);if(!base)return;directiveUi.draft={id:base.id,xp:base.xp,enabled:true,name:base.name,short:base.short,prep:base.prep,icon:base.icon,start:base.start,end:base.end,activeDays:clone(directiveDefaultDays[base.id]),subtasks:base.subtasks(state.player.level).map(step=>({...clone(step),enabled:true}))};directiveUi.dirty=true;renderDirectiveEditor();showSystemNotice('restore','DEFAULTS LOADED','Review the restored protocol, then Save Changes.',2200)};
+  const restoreAllDirectiveDefaults=()=>{if(activeProtocolRecord()){showBreachWarning('ACTIVE PROTOCOL PROTECTED','Finish the active protocol before restoring all directive defaults.');return}const now=Date.now();if(directiveUi.restoreArmedUntil<now){directiveUi.restoreArmedUntil=now+5000;$('#directiveRestoreAll').textContent='Click Again to Confirm';showSystemNotice('warning','CONFIRM RESTORE','Click Restore All Defaults again within five seconds.',2200);return}pushDirectiveHistory();state.directiveConfig.protocols={};state.directiveConfig.updatedAt=new Date().toISOString();refreshDirectiveBlueprints();protocolDefaults.forEach(item=>syncCurrentDayDirectiveConfig(item.id));state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'system',message:'Directive Studio restored all protocol defaults.'});save();renderDirectiveStudio();showSystemNotice('restore','DIRECTIVES RESTORED','All protocol definitions returned to ASCEND defaults.',2400)};
+  const saveDirectiveStep=()=>{
+    const draft=directiveUi.draft;if(!draft)return;const existing=directiveUi.stepId?directiveStepById(directiveUi.stepId):null,linked=existing?directiveLinkedLabel(existing):false;const title=$('#directiveStepName').value.trim(),copy=$('#directiveStepCopy').value.trim(),alt=$('#directiveStepAltCopy').value.trim(),type=linked?existing.type:$('#directiveStepType').value,duration=clamp(Number($('#directiveStepDuration').value||10),1,180),icon=normalizeGlyph($('#directiveStepIcon').value);
+    if(!title||!copy){showBreachWarning('DIRECTIVE INCOMPLETE','Title and primary instruction are required.');return}const next={...(existing||{}),id:existing?.id||`custom-${Date.now().toString(36)}`,title,copy:[copy,alt||copy],icon,type,enabled:existing?.enabled!==false,duration:linked?(existing?.duration||15):(type==='timer'?duration:(existing?.duration||15)),holdDuration:existing?.holdDuration||1800};
+    if(existing){const index=draft.subtasks.findIndex(step=>step.id===existing.id);draft.subtasks[index]=next}else draft.subtasks.push(next);directiveUi.dirty=true;directiveUi.stepId=null;directiveUi.isNew=false;renderDirectiveEditor();
+  };
+  const deleteDirectiveStep=id=>{const step=directiveStepById(id);if(!step||directiveLinkedLabel(step))return;directiveUi.draft.subtasks=directiveUi.draft.subtasks.filter(item=>item.id!==id);directiveUi.dirty=true;renderDirectiveEditor()};
+  const undoDirectiveConfig=()=>{if(activeProtocolRecord()){showBreachWarning('ACTIVE PROTOCOL PROTECTED','Finish the active protocol before restoring a previous directive version.');return}const history=state.directiveConfig?.history||[];if(!history.length){showSystemNotice('restore','NO PRIOR VERSION','No earlier directive configuration is stored yet.',1800);return}const previous=history.pop();state.directiveConfig.protocols=clone(previous.protocols||{});state.directiveConfig.updatedAt=new Date().toISOString();refreshDirectiveBlueprints();protocolDefaults.forEach(item=>syncCurrentDayDirectiveConfig(item.id));state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'system',message:'Directive Studio restored the previous configuration version.'});save();renderDirectiveStudio();showSystemNotice('restore','PREVIOUS VERSION RESTORED','The latest saved directive configuration was rolled back.',2300)};
+  const exportDirectiveConfig=()=>{const payload={app:'ASCEND',exportType:'directives',exportVersion:1,schemaVersion:S.schemaInfo().version,exportedAt:new Date().toISOString(),directiveConfig:clone(state.directiveConfig||{version:1,protocols:{},history:[],updatedAt:null})};downloadJson(JSON.stringify(payload,null,2),`ascend-directives-${S.dateKey()}.json`);showSystemNotice('save','DIRECTIVES EXPORTED','Directive configuration saved as a portable JSON file.',2200)};
+  const importDirectiveConfig=async file=>{if(!file)return;if(activeProtocolRecord()){showBreachWarning('ACTIVE PROTOCOL PROTECTED','Finish the active protocol before importing directive settings.');$('#directiveImportFile').value='';return}try{const text=await file.text(),payload=JSON.parse(text),raw=payload?.directiveConfig||payload?.data?.directiveConfig||payload;const merged=clone(state);merged.directiveConfig=raw;const validated=S.normalizeCurrent(merged);pushDirectiveHistory();const previousHistory=clone(state.directiveConfig.history||[]);state.directiveConfig=validated.directiveConfig;state.directiveConfig.history=[...previousHistory,...(state.directiveConfig.history||[])].slice(-5);state.directiveConfig.updatedAt=new Date().toISOString();refreshDirectiveBlueprints();protocolDefaults.forEach(item=>syncCurrentDayDirectiveConfig(item.id));save();renderDirectiveStudio();showSystemNotice('restore','DIRECTIVES IMPORTED','Configuration validated and applied safely.',2400)}catch(error){showBreachWarning('DIRECTIVE IMPORT FAILED',error.message||'The selected file is not a valid directive configuration.')}finally{$('#directiveImportFile').value=''}};
+
   const openControlOverlay=()=>{
     if(!$('#scheduleOverlay').hidden||!$('#emergencyOverlay').hidden||!$('#developerRunOverlay').hidden)return;
     cancelHold();resetClockAccessVisual();controlUi.directDeveloper=false;controlUi.directProfile=false;$('#scheduleOverlay').hidden=false;renderControlHome();haptic('tap');
@@ -2526,6 +2611,29 @@
     $('#openAcademicControl').addEventListener('click',renderAcademicHome);
     $('#openFreeSchedule').addEventListener('click',()=>{scheduleUi.day=defaultScheduleDay();scheduleUi.page=0;renderScheduleOverview()});
     $('#openFreeAttendance').addEventListener('click',()=>{controlUi.attendanceTab='overall';controlUi.subjectIndex=0;controlUi.subjectAbsencePage=0;controlUi.unverifiedIndex=0;controlUi.unverifiedResolveId=null;renderAttendance()});
+    $('#openDirectiveStudio').addEventListener('click',renderDirectiveStudio);
+    $('#directiveStudioBack').addEventListener('click',renderControlHome);
+    $('#directiveProtocolList').addEventListener('click',event=>{const button=event.target.closest('[data-directive-protocol]');if(button)openDirectiveEditor(button.dataset.directiveProtocol)});
+    $('#directiveExport').addEventListener('click',exportDirectiveConfig);
+    $('#directiveImport').addEventListener('click',()=>{const input=$('#directiveImportFile');input.value='';input.click()});
+    $('#directiveImportFile').addEventListener('change',event=>importDirectiveConfig(event.target.files?.[0]));
+    $('#directiveRestoreAll').addEventListener('click',restoreAllDirectiveDefaults);
+    $('#directiveUndo').addEventListener('click',undoDirectiveConfig);
+    $('#directiveEditorBack').addEventListener('click',renderDirectiveStudio);
+    $('#directiveSave').addEventListener('click',saveDirectiveProtocol);
+    $('#directiveRestoreProtocol').addEventListener('click',restoreDirectiveProtocolDraft);
+    $('#directiveName').addEventListener('input',()=>{directiveUi.dirty=true;$('#directiveUnsaved').hidden=false});
+    $('#directivePrep').addEventListener('input',()=>{directiveUi.dirty=true;$('#directiveUnsaved').hidden=false});
+    $('#directiveStart').addEventListener('change',()=>{directiveUi.dirty=true;$('#directiveUnsaved').hidden=false});
+    $('#directiveEnd').addEventListener('change',()=>{directiveUi.dirty=true;$('#directiveUnsaved').hidden=false});
+    $('#directiveProtocolEnabled').addEventListener('change',()=>{if(directiveUi.draft){directiveUi.draft.enabled=$('#directiveProtocolEnabled').checked;directiveUi.dirty=true;renderDirectiveEditor()}});
+    $('#directiveDayButtons').addEventListener('click',event=>{const button=event.target.closest('[data-directive-day]');if(!button||button.disabled||!directiveUi.draft)return;const day=Number(button.dataset.directiveDay),days=new Set(directiveUi.draft.activeDays);if(days.has(day))days.delete(day);else days.add(day);directiveUi.draft.activeDays=[...days].sort((a,b)=>a-b);directiveUi.dirty=true;renderDirectiveEditor()});
+    $('#directiveAddStep').addEventListener('click',()=>{captureDirectiveGeneralFields();openDirectiveStepEditor()});
+    $('#directiveStepList').addEventListener('click',event=>{const row=event.target.closest('[data-directive-step]'),button=event.target.closest('[data-step-action]');if(!row||!button||button.disabled||!directiveUi.draft)return;captureDirectiveGeneralFields();const id=row.dataset.directiveStep,action=button.dataset.stepAction,index=directiveUi.draft.subtasks.findIndex(step=>step.id===id),step=directiveUi.draft.subtasks[index];if(!step)return;if(action==='edit'){openDirectiveStepEditor(id);return}if(action==='delete'){deleteDirectiveStep(id);return}if(action==='toggle'){step.enabled=step.enabled===false;directiveUi.dirty=true;renderDirectiveEditor();return}if(action==='up'&&index>0){[directiveUi.draft.subtasks[index-1],directiveUi.draft.subtasks[index]]=[directiveUi.draft.subtasks[index],directiveUi.draft.subtasks[index-1]];directiveUi.dirty=true;renderDirectiveEditor();return}if(action==='down'&&index<directiveUi.draft.subtasks.length-1){[directiveUi.draft.subtasks[index+1],directiveUi.draft.subtasks[index]]=[directiveUi.draft.subtasks[index],directiveUi.draft.subtasks[index+1]];directiveUi.dirty=true;renderDirectiveEditor()}});
+    $('#directiveStepBack').addEventListener('click',renderDirectiveEditor);
+    $('#directiveStepSave').addEventListener('click',saveDirectiveStep);
+    $('#directiveStepDelete').addEventListener('click',()=>{const id=directiveUi.stepId;if(id){deleteDirectiveStep(id)}});
+    $('#directiveStepType').addEventListener('change',event=>{$('#directiveStepDurationWrap').hidden=event.target.value!=='timer'});
     $('#openAcademicTasks').addEventListener('click',()=>{controlUi.taskTab='tasks';renderAcademicTasks()});
     $('#openAdvancedSystem').addEventListener('click',renderAdvancedSystemHome);
     $('#openDataBackup').addEventListener('click',()=>{backupUi={pending:null,fileName:''};renderDataBackup()});
