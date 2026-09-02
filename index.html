@@ -206,11 +206,12 @@
             <button class="ghost-button danger-ghost class-action-danger" type="button" data-class-action="cancelled">Class Was Cancelled</button>
           </div>
 
-          <div class="class-action-grid" id="classResolveActions" hidden>
-            <button class="system-button compact-button" type="button" data-class-action="resolve-present">I Attended</button>
-            <button class="ghost-button class-action-secondary" type="button" data-class-action="resolve-late">I Was Late</button>
-            <button class="ghost-button class-action-secondary" type="button" data-class-action="cancelled">Class Was Cancelled</button>
-            <button class="ghost-button danger-ghost class-action-danger" type="button" data-class-action="absent">I Was Absent</button>
+          <div class="class-action-grid attendance-resolution-actions" id="classResolveActions" hidden>
+            <button class="system-button compact-button" type="button" data-class-action="resolve-present">Present</button>
+            <button class="ghost-button class-action-secondary" type="button" data-class-action="resolve-partial">Partial</button>
+            <button class="ghost-button class-action-secondary" type="button" data-class-action="resolve-excused">Excused</button>
+            <button class="ghost-button class-action-secondary" type="button" data-class-action="resolve-no-class">No Class</button>
+            <button class="ghost-button danger-ghost class-action-danger" type="button" data-class-action="absent">Absent</button>
           </div>
 
           <p class="class-footnote" id="classFootnote">Attendance XP is finalized after dismissal is recorded.</p>

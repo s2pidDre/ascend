@@ -6,8 +6,8 @@
   const SNAPSHOT_KEY='ascend_discipline_protocol_snapshots_v1';
   const ROLLBACK_KEY='ascend_discipline_protocol_rollbacks_v1';
   const LEGACY_KEYS=['ascend_discipline_protocol_v6','ascend_discipline_protocol_v5','ascend_discipline_protocol_v4','ascend_strict_system_v3','ascend_automatic_year_system_v2','ascend_personal_growth_system_v1'];
-  const VERSION=25;
-  const BACKUP_VERSION=6;
+  const VERSION=26;
+  const BACKUP_VERSION=7;
   const ROUTINE_LOG_LIMIT=420;
   const SNAPSHOT_LIMIT=7;
   const ROLLBACK_LIMIT=4;
@@ -40,6 +40,7 @@
     },
     dayRecords:{},
     classSchedule:[],
+    scheduleHistory:[],
     scheduleExceptions:[],
     attendanceRecords:[],
     academicTasks:[],
@@ -54,16 +55,22 @@
     logs:[]
   });
 
-  const normalizeAttendance=record=>({
-    id:record.id||uid('attendance'),meetingKey:record.meetingKey||'',classId:record.classId||null,
-    subjectKey:String(record.subjectKey||record.subjectName||'').trim().toLowerCase(),subjectName:record.subjectName||'Unknown Subject',code:record.code||'',
-    scheduledDate:record.scheduledDate||dateKey(new Date(record.createdAt||Date.now())),scheduledStart:record.scheduledStart||'00:00',scheduledEnd:record.scheduledEnd||'00:00',
-    room:record.room||'',modality:record.modality||'Onsite',status:record.status||'unverified',checkInAt:record.checkInAt||null,dismissedAt:record.dismissedAt||null,
-    dismissalStatus:record.dismissalStatus||null,minutesLate:Number(record.minutesLate||0),pendingXp:Number(record.pendingXp||0),xpAwarded:Number(record.xpAwarded||0),
-    profileXpAppliedAmount:Math.max(0,Number(record.profileXpAppliedAmount||0)),profileXpAppliedAt:record.profileXpAppliedAt||null,
-    finalized:Boolean(record.finalized),ongoingUntil:record.ongoingUntil||null,createdAt:record.createdAt||nowIso(),updatedAt:record.updatedAt||record.createdAt||nowIso(),
-    timezone:record.timezone||null,corrections:Array.isArray(record.corrections)?record.corrections:[]
-  });
+  const normalizeAttendance=record=>{
+    const allowed=new Set(['early','present','late','partial','absent','excused','no-class','unverified']);
+    const legacyStatus=record.status==='cancelled'?'no-class':record.status;
+    const status=allowed.has(legacyStatus)?legacyStatus:'unverified';
+    return{
+      id:record.id||uid('attendance'),meetingKey:record.meetingKey||'',classId:record.classId||null,
+      subjectKey:String(record.subjectKey||record.subjectName||'').trim().toLowerCase(),subjectName:record.subjectName||'Unknown Subject',code:record.code||'',
+      scheduledDate:record.scheduledDate||dateKey(new Date(record.createdAt||Date.now())),scheduledStart:record.scheduledStart||'00:00',scheduledEnd:record.scheduledEnd||'00:00',
+      room:record.room||'',modality:record.modality||'Onsite',status,checkInAt:record.checkInAt||null,dismissedAt:record.dismissedAt||null,
+      dismissalStatus:record.dismissalStatus==='cancelled'?'no-class':record.dismissalStatus||null,minutesLate:Number(record.minutesLate||0),pendingXp:Number(record.pendingXp||0),xpAwarded:Number(record.xpAwarded||0),
+      profileXpAppliedAmount:Math.max(0,Number(record.profileXpAppliedAmount||0)),profileXpAppliedAt:record.profileXpAppliedAt||null,
+      finalized:Boolean(record.finalized),ongoingUntil:record.ongoingUntil||null,arrivalTime:String(record.arrivalTime||'').slice(0,5),departureTime:String(record.departureTime||'').slice(0,5),note:String(record.note||'').slice(0,240),
+      resolvedManually:Boolean(record.resolvedManually),resolutionAt:record.resolutionAt||null,source:record.source||'runtime',createdAt:record.createdAt||nowIso(),updatedAt:record.updatedAt||record.createdAt||nowIso(),
+      timezone:record.timezone||null,corrections:Array.isArray(record.corrections)?record.corrections:[]
+    };
+  };
 
   const normalizeTask=task=>({
     id:task.id||uid('task'),subjectKey:String(task.subjectKey||task.subjectName||'general').trim().toLowerCase(),subjectName:task.subjectName||'General',
@@ -200,7 +207,8 @@
     state.settings.externalCalendarHorizonDays=Math.min(90,Math.max(30,Number(rawSettings.externalCalendarHorizonDays||60)));
     state.dayRecords=raw.dayRecords&&typeof raw.dayRecords==='object'&&!Array.isArray(raw.dayRecords)?raw.dayRecords:{};
     Object.values(state.dayRecords).forEach(normalizeProtocolState);
-    state.classSchedule=Array.isArray(raw.classSchedule)?raw.classSchedule.map(entry=>({...entry,modality:entry.modality||((entry.room||'').toLowerCase().includes('online')?'Online':'Onsite')})):[];
+    state.classSchedule=Array.isArray(raw.classSchedule)?raw.classSchedule.map(entry=>({...entry,modality:entry.modality||((entry.room||'').toLowerCase().includes('online')?'Online':'Onsite'),effectiveFrom:entry.effectiveFrom||dateKey(new Date(entry.createdAt||Date.now()))})):[];
+    state.scheduleHistory=Array.isArray(raw.scheduleHistory)?raw.scheduleHistory.map(entry=>({...entry,modality:entry.modality||((entry.room||'').toLowerCase().includes('online')?'Online':'Onsite'),effectiveFrom:entry.effectiveFrom||dateKey(new Date(entry.createdAt||Date.now())),effectiveTo:entry.effectiveTo||null})):[];
     state.scheduleExceptions=Array.isArray(raw.scheduleExceptions)?raw.scheduleExceptions.map(normalizeException):[];
     state.attendanceRecords=Array.isArray(raw.attendanceRecords)?raw.attendanceRecords.map(normalizeAttendance):[];
     state.academicTasks=Array.isArray(raw.academicTasks)?raw.academicTasks.map(normalizeTask):[];
@@ -301,7 +309,7 @@
       });
       state.settings.externalCalendarConfirmed=false;
     }
-    const migration={id:uid('migration'),at:nowIso(),fromVersion,toVersion:VERSION,label:'Directive Studio configuration support'};
+    const migration={id:uid('migration'),at:nowIso(),fromVersion,toVersion:VERSION,label:'Calendar and attendance history support'};
     state.system.migrationHistory.push(migration);
     state.logs.push({id:uid('log'),at:migration.at,type:'migration',message:`ASCEND data migrated from schema ${fromVersion||'legacy'} to ${VERSION}. A rollback point was retained.${currentDayXpRepair?` ${currentDayXpRepair} legacy current-day XP reopened for reconciliation.`:''}${legacyHeldXpReopened?` ${legacyHeldXpReopened} previously held XP reopened for immediate Profile synchronization.`:''}`});
     state.logs=pruneLogs(state.logs);return state;

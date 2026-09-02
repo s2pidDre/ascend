@@ -19,12 +19,13 @@
   let clockSuppressClick=false;
   let escapeTimer=null;
   let scheduleUi={view:'home',day:new Date().getDay(),page:0,editId:null,isNew:false};
-  let controlUi={view:'home',profilePage:0,profileMonth:null,profileDay:null,attendanceTab:'overall',subjectIndex:0,subjectAbsencePage:0,unverifiedIndex:0,unverifiedResolveId:null,historyIndex:0,correction:false,taskTab:'tasks',taskIndex:0,ruleIndex:0,dependencyIndex:0,rollbackIndex:0,directDeveloper:false,directProfile:false};
+  let controlUi={view:'home',profilePage:0,profileMonth:null,profileDay:null,attendanceTab:'overall',subjectIndex:0,subjectAbsencePage:0,subjectFilter:'all',unverifiedIndex:0,unverifiedResolveId:null,attendanceEditId:null,historyIndex:0,correction:false,taskTab:'tasks',taskIndex:0,ruleIndex:0,dependencyIndex:0,rollbackIndex:0,directDeveloper:false,directProfile:false};
   let developerRunSession=null;
   let developerClockTimer=null;
   let conflictUi={index:0,issues:[]};
   const processedConfirmationTokens=new Set();
   let currentClassContext=null;
+  let attendanceBackfillSignature='';
   let activeScreenId=null;
   let brandFlashTimer=null;
   let lastResultAnimationKey=null;
@@ -290,15 +291,24 @@
   };
   const subjectKey=value=>String(value||'').trim().toLowerCase();
   const activeSchedule=()=>state.classSchedule.filter(entry=>entry.active!==false);
-  const effectiveScheduleForDate=date=>{
+  const scheduleEntryStartKey=entry=>entry?.effectiveFrom||(entry?.createdAt?S.dateKey(new Date(entry.createdAt)):null);
+  const scheduleEntryActiveOnDate=(entry,key)=>{const start=scheduleEntryStartKey(entry),end=entry?.effectiveTo||null;return(!start||key>=start)&&(!end||key<end)};
+  const applyScheduleExceptions=(entries,date)=>{
     const key=S.dateKey(date),exceptions=(state.scheduleExceptions||[]).filter(item=>item.active!==false&&item.date===key);
     if(exceptions.some(item=>item.type==='no-classes'))return[];
-    let entries=activeSchedule().filter(entry=>Number(entry.day)===date.getDay()).map(entry=>({...entry}));
+    let result=entries.map(entry=>({...entry}));
     exceptions.forEach(exception=>{
-      if(exception.type==='cancel')entries=entries.filter(entry=>entry.id!==exception.classId);
-      if(['reschedule','special'].includes(exception.type))entries=entries.map(entry=>entry.id===exception.classId?{...entry,start:exception.start||entry.start,end:exception.end||entry.end,exceptionType:exception.type}:entry);
+      if(exception.type==='cancel')result=result.filter(entry=>entry.id!==exception.classId&&entry.classId!==exception.classId);
+      if(['reschedule','special'].includes(exception.type))result=result.map(entry=>(entry.id===exception.classId||entry.classId===exception.classId)?{...entry,start:exception.start||entry.start,end:exception.end||entry.end,exceptionType:exception.type}:entry);
     });
-    return entries.sort((a,b)=>minutes(a.start)-minutes(b.start));
+    return result.sort((a,b)=>minutes(a.start)-minutes(b.start));
+  };
+  const effectiveScheduleForDate=date=>applyScheduleExceptions(activeSchedule().filter(entry=>Number(entry.day)===date.getDay()),date);
+  const historicalScheduleForDate=date=>{
+    const key=S.dateKey(date),versions=[...(state.scheduleHistory||[]),...(state.classSchedule||[])];
+    const entries=versions.filter(entry=>scheduleEntryActiveOnDate(entry,key)&&Number(entry.day)===date.getDay()).map(entry=>({...entry,id:entry.classId||entry.id,classId:entry.classId||entry.id}));
+    const deduped=[];const seen=new Set();entries.sort((a,b)=>String(b.effectiveFrom||'').localeCompare(String(a.effectiveFrom||''))).forEach(entry=>{const id=entry.classId||entry.id;if(seen.has(id))return;seen.add(id);deduped.push(entry)});
+    return applyScheduleExceptions(deduped,date);
   };
   const workoutHasClassConflict=date=>{
     const workout=blueprint('workout');if(!workout||workout.enabled===false)return false;
@@ -608,14 +618,14 @@
   const classesForDate=date=>effectiveScheduleForDate(date);
   const meetingKey=(entry,date=new Date())=>`${S.dateKey(date)}::${entry.id}`;
   const attendanceFor=(entry,date=new Date())=>state.attendanceRecords.find(record=>record.meetingKey===meetingKey(entry,date))||null;
-  const nextClassAt=(date=new Date())=>classesForDate(date).find(entry=>minutes(entry.start)>todayMinutes(date)&&attendanceFor(entry,date)?.status!=='cancelled')||null;
-  const createAttendanceRecord=(entry,date=new Date())=>{
+  const nextClassAt=(date=new Date())=>classesForDate(date).find(entry=>minutes(entry.start)>todayMinutes(date)&&!['no-class'].includes(attendanceFor(entry,date)?.status))||null;
+  const createAttendanceRecord=(entry,date=new Date(),source='runtime')=>{
     const existing=attendanceFor(entry,date);if(existing)return existing;
     const record={
       id:S.uid('attendance'),meetingKey:meetingKey(entry,date),classId:entry.id,subjectKey:subjectKey(entry.subject),subjectName:entry.subject,code:entry.code||'',
       scheduledDate:S.dateKey(date),scheduledStart:entry.start,scheduledEnd:entry.end,room:entry.room||'',modality:entry.modality||'Onsite',
       status:'unverified',checkInAt:null,dismissedAt:null,dismissalStatus:null,minutesLate:0,pendingXp:0,xpAwarded:0,profileXpAppliedAmount:0,profileXpAppliedAt:null,finalized:false,
-      ongoingUntil:null,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),corrections:[],
+      ongoingUntil:null,arrivalTime:'',departureTime:'',note:'',resolvedManually:false,resolutionAt:null,source,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),corrections:[],
       timezone:{name:state.timezone?.name||S.timezoneName(),offset:state.timezone?.offset??S.timezoneOffset()}
     };
     state.attendanceRecords.push(record);return record;
@@ -624,34 +634,51 @@
     if(status==='early')return 30;
     if(status==='present')return 25;
     if(status==='late')return lateMinutes<=20?20:lateMinutes<=30?15:10;
+    if(status==='partial')return 10;
     return 0;
   };
   const scheduledMoment=(record,time)=>new Date(`${record.scheduledDate}T${time}:00`);
   const setAttendanceStatus=(record,status,when=new Date())=>{
     const start=scheduledMoment(record,record.scheduledStart);
     record.status=status;
-    if(['early','present','late'].includes(status)){
+    if(['early','present','late','partial'].includes(status)){
       record.checkInAt=when.toISOString();
       record.minutesLate=Math.max(0,Math.round((when-start)/60000));
       record.pendingXp=attendanceXpFor(status,record.minutesLate);
       record.finalized=false;record.xpAwarded=0;
     }else{
       record.checkInAt=null;record.minutesLate=0;record.pendingXp=0;record.xpAwarded=0;
-      record.finalized=['absent','cancelled'].includes(status);
+      record.finalized=['absent','excused','no-class'].includes(status);
       if(record.finalized){record.dismissedAt=when.toISOString();record.dismissalStatus=status;}
     }
     record.updatedAt=when.toISOString();
   };
   const finalizeAttendance=(record,dismissalStatus='dismissed',when=new Date())=>{
     if(!record)return;
-    if(dismissalStatus==='cancelled')setAttendanceStatus(record,'cancelled',when);
-    else if(['early','present','late'].includes(record.status)){
+    if(dismissalStatus==='no-class')setAttendanceStatus(record,'no-class',when);
+    else if(['early','present','late','partial'].includes(record.status)){
       record.dismissedAt=when.toISOString();record.dismissalStatus=dismissalStatus;record.finalized=true;record.xpAwarded=record.pendingXp||attendanceXpFor(record.status,record.minutesLate);
       record.updatedAt=when.toISOString();record.ongoingUntil=null;
     }
     const profileDelta=syncAttendanceProfileXp(record,when);
     state.logs.push({id:S.uid('log'),at:when.toISOString(),type:'attendance',message:`${record.subjectName}: ${record.status}${record.finalized?` · ${record.xpAwarded} XP`:''}${profileDelta>0?' · added to Profile':profileDelta<0?' · Profile XP adjusted':''}.`});
     save();
+  };
+  const attendanceDateStart=entry=>entry?.effectiveFrom||(entry?.createdAt?S.dateKey(new Date(entry.createdAt)):currentKey());
+  const syncHistoricalUnresolvedMeetings=(now=new Date())=>{
+    const today=S.dateKey(now),versions=[...(state.scheduleHistory||[]),...(state.classSchedule||[])],versionStamp=versions.map(entry=>`${entry.classId||entry.id}:${entry.effectiveFrom||''}:${entry.effectiveTo||''}:${entry.updatedAt||entry.createdAt||''}`).sort().join('|'),exceptionStamp=(state.scheduleExceptions||[]).map(item=>`${item.id}:${item.date}:${item.type}:${item.classId||''}:${item.start||''}:${item.end||''}:${item.active!==false}`).sort().join('|'),signature=`${today}|${versionStamp}|${exceptionStamp}`;
+    if(signature===attendanceBackfillSignature)return false;attendanceBackfillSignature=signature;
+    const floor=new Date(now);floor.setHours(12,0,0,0);floor.setDate(floor.getDate()-210);let changed=false;
+    const starts=versions.map(attendanceDateStart).filter(Boolean).sort();const first=starts[0]||today;let cursor=new Date(`${first}T12:00:00`);if(Number.isNaN(cursor.getTime())||cursor<floor)cursor=floor;
+    const limit=new Date(`${today}T12:00:00`);
+    while(cursor<=limit){
+      historicalScheduleForDate(cursor).forEach(entry=>{
+        const end=timeOnDate(cursor,entry.end);if(end>now||attendanceFor(entry,cursor))return;
+        const record=createAttendanceRecord(entry,cursor,'historical-backfill');record.status='unverified';record.finalized=false;record.updatedAt=now.toISOString();changed=true;
+      });
+      cursor.setDate(cursor.getDate()+1);
+    }
+    if(changed)save({silent:true});return changed;
   };
   const syncUnverifiedMeetings=(now=new Date())=>{
     let changed=false;
@@ -660,17 +687,18 @@
       if(now<end||attendanceFor(entry,now))return;
       const record=createAttendanceRecord(entry,now);record.status='unverified';record.finalized=false;record.updatedAt=now.toISOString();changed=true;
     });
-    if(changed)save();
+    if(changed)save({silent:true});
   };
   const unresolvedAttendance=(date=new Date())=>state.attendanceRecords
-    .filter(record=>record.scheduledDate===S.dateKey(date)&&!record.finalized)
-    .sort((a,b)=>`${a.scheduledDate}T${a.scheduledStart}`.localeCompare(`${b.scheduledDate}T${b.scheduledStart}`))[0]||null;
+    .filter(record=>record.status==='unverified'&&!record.finalized&&record.scheduledDate<=S.dateKey(date))
+    .filter(record=>{const end=scheduledMoment(record,record.scheduledEnd);return !Number.isNaN(end.getTime())&&end<=date})
+    .sort((a,b)=>`${b.scheduledDate}T${b.scheduledStart}`.localeCompare(`${a.scheduledDate}T${a.scheduledStart}`))[0]||null;
   const classStateAt=(now=new Date())=>{
-    syncUnverifiedMeetings(now);
+    syncHistoricalUnresolvedMeetings(now);syncUnverifiedMeetings(now);
     const classes=classesForDate(now);
     for(const entry of classes){
       const record=attendanceFor(entry,now),start=timeOnDate(now,entry.start),end=timeOnDate(now,entry.end);
-      if(record?.status==='cancelled'||record?.status==='absent'||record?.finalized)continue;
+      if(['no-class','excused','absent'].includes(record?.status)||record?.finalized)continue;
       if(record?.checkInAt){
         const extended=record.ongoingUntil?new Date(record.ongoingUntil):null;
         if(now<end||(extended&&now<extended))return{mode:'active',entry,record,start,end:extended&&extended>end?extended:end};
@@ -688,6 +716,26 @@
   };
   const classEntryFromContext=()=>currentClassContext?.entry||null;
   const classRecordFromContext=()=>currentClassContext?.record||null;
+  const attendanceTimeValue=value=>/^([01]\d|2[0-3]):[0-5]\d$/.test(String(value||''))?String(value):'';
+  const applyManualAttendanceResolution=(record,status,options={})=>{
+    if(!record||!['present','partial','absent','excused','no-class'].includes(status))return false;
+    const arrival=status==='partial'?attendanceTimeValue(options.arrivalTime):'',departure=status==='partial'?attendanceTimeValue(options.departureTime):'';
+    if(status==='partial'&&arrival&&departure&&minutes(departure)<minutes(arrival))return false;
+    const now=new Date(),before=record.status,priorXp=Math.max(0,Number(record.profileXpAppliedAmount||0));
+    record.corrections=Array.isArray(record.corrections)?record.corrections:[];
+    if(before!==status||record.finalized)record.corrections.push({at:now.toISOString(),from:before,to:status,note:String(options.note||'').slice(0,240)});
+    record.note=String(Object.prototype.hasOwnProperty.call(options,'note')?options.note:(record.note||'')).slice(0,240);record.arrivalTime='';record.departureTime='';record.resolvedManually=true;record.resolutionAt=now.toISOString();record.ongoingUntil=null;
+    if(status==='present'){
+      const check=scheduledMoment(record,record.scheduledStart),end=scheduledMoment(record,record.scheduledEnd);setAttendanceStatus(record,'present',check);finalizeAttendance(record,'dismissed',end);
+    }else if(status==='partial'){
+      const check=scheduledMoment(record,arrival||record.scheduledStart),end=scheduledMoment(record,departure||record.scheduledEnd);record.arrivalTime=arrival;record.departureTime=departure;setAttendanceStatus(record,'partial',check);record.arrivalTime=arrival;record.departureTime=departure;finalizeAttendance(record,'partial',end);
+    }else{
+      setAttendanceStatus(record,status,now);record.finalized=true;record.dismissalStatus=status;record.dismissedAt=now.toISOString();record.pendingXp=0;record.xpAwarded=0;record.updatedAt=now.toISOString();const delta=syncAttendanceProfileXp(record,now);state.logs.push({id:S.uid('log'),at:now.toISOString(),type:'attendance',message:`${record.subjectName}: ${status} · manually resolved.${delta?` Profile XP ${delta>0?'increased':'decreased'} by ${Math.abs(delta)}.`:''}`});save();
+    }
+    const currentXp=Math.max(0,Number(record.profileXpAppliedAmount||0));
+    if(before!==status||priorXp!==currentXp)state.logs.push({id:S.uid('log'),at:now.toISOString(),type:'attendance-correction',message:`${record.subjectName} resolved from ${before} to ${status}.${priorXp!==currentXp?` Profile XP adjusted by ${Math.abs(currentXp-priorXp)}.`:''}`});
+    save({silent:true});return true;
+  };
   const checkInClass=async()=>{
     const context=currentClassContext,entry=classEntryFromContext();if(!context||!entry)return;
     const now=new Date(),record=createAttendanceRecord(entry,now),start=timeOnDate(now,entry.start);
@@ -701,11 +749,17 @@
     if(action==='not-yet'){
       state.logs.push({id:S.uid('log'),at:now.toISOString(),type:'attendance',message:`Not there yet: ${entry.subject}.`});save();showBreachWarning('CHECK-IN PENDING',`${entry.subject} remains unverified until you confirm attendance.`);return;
     }
-    if(action==='cancelled'){
-      finalizeAttendance(record,'cancelled',now);systemFeedback('warning','Class cancelled.');await showOverlay('CLASS CANCELLED',entry.subject,'NO XP · NO PENALTY',800);renderApp();return;
+    if(action==='cancelled'||action==='resolve-no-class'){
+      applyManualAttendanceResolution(record,'no-class');systemFeedback('warning','No Class recorded.');if(action==='cancelled')await showOverlay('NO CLASS',entry.subject,'NO XP · NO PENALTY',800);renderApp();return;
     }
     if(action==='absent'){
-      setAttendanceStatus(record,'absent',now);record.finalized=true;record.dismissalStatus='absent';record.dismissedAt=now.toISOString();save();systemFeedback('warning','Absence recorded.');renderApp();return;
+      applyManualAttendanceResolution(record,'absent');systemFeedback('warning','Absence recorded.');renderApp();return;
+    }
+    if(action==='resolve-excused'){
+      applyManualAttendanceResolution(record,'excused');systemFeedback('attendance','Excused attendance recorded.');renderApp();return;
+    }
+    if(action==='resolve-partial'){
+      applyManualAttendanceResolution(record,'partial');systemFeedback('attendance','Partial attendance recorded.');renderApp();return;
     }
     if(action==='ongoing'){
       record.ongoingUntil=new Date(now.getTime()+15*60000).toISOString();record.dismissalStatus='still-ongoing';record.updatedAt=now.toISOString();save();systemFeedback('attendance','Class extension recorded.');renderApp();return;
@@ -713,11 +767,8 @@
     if(action==='dismissed'||action==='dismissed-early'){
       finalizeAttendance(record,action==='dismissed-early'?'dismissed-early':'dismissed',now);systemFeedback('dismissal','Class dismissal recorded.');await showOverlay('CLASS COMPLETE',entry.subject,`+${record.xpAwarded} XP`,850);renderApp();return;
     }
-    if(action==='resolve-present'||action==='resolve-late'){
-      const start=scheduledMoment(record,record.scheduledStart);const check=new Date(start);
-      check.setMinutes(check.getMinutes()+(action==='resolve-late'?15:0));
-      setAttendanceStatus(record,action==='resolve-late'?'late':'present',check);finalizeAttendance(record,'dismissed',scheduledMoment(record,record.scheduledEnd));
-      systemFeedback('attendance','Attendance record resolved.');renderApp();
+    if(action==='resolve-present'){
+      applyManualAttendanceResolution(record,'present');systemFeedback('attendance','Attendance record resolved.');renderApp();
     }
   };
   const renderClassScreen=(context,now=new Date())=>{
@@ -1478,7 +1529,7 @@
     state.scheduleExceptions=state.scheduleExceptions.filter(item=>!(item.date===date&&item.type===type&&item.classId===classId));
     state.scheduleExceptions.push({id:S.uid('exception'),date,type,classId,start:['reschedule','special'].includes(type)?start:'',end:['reschedule','special'].includes(type)?end:'',note,active:true,createdAt:new Date().toISOString()});
     state.attendanceRecords.filter(record=>record.scheduledDate===date&&!record.finalized&&(type==='no-classes'||record.classId===classId)).forEach(record=>{
-      if(['no-classes','cancel'].includes(type)){record.status='cancelled';record.finalized=true;record.dismissalStatus='cancelled';record.dismissedAt=new Date().toISOString();record.pendingXp=0;record.xpAwarded=0}
+      if(['no-classes','cancel'].includes(type)){record.status='no-class';record.finalized=true;record.dismissalStatus='no-class';record.dismissedAt=new Date().toISOString();record.pendingXp=0;record.xpAwarded=0;record.updatedAt=new Date().toISOString()}
       else{record.scheduledStart=start;record.scheduledEnd=end;record.updatedAt=new Date().toISOString()}
     });
     invalidateExternalCalendar();state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'schedule',message:`Schedule exception saved for ${date}: ${type}.`});save();exceptionUi.index=0;renderScheduleExceptions();showSystemNotice('snapshot','SCHEDULE EXCEPTION SAVED','Only the selected date is affected.',2400);
@@ -1541,7 +1592,7 @@
 
   const buildWeeklyDebrief=(startDate,endDate,key)=>{
     const start=S.dateKey(startDate),end=S.dateKey(endDate),days=Object.values(state.dayRecords).filter(day=>day.date>=start&&day.date<=end),records=state.attendanceRecords.filter(record=>record.scheduledDate>=start&&record.scheduledDate<=end&&record.finalized),tasks=state.academicTasks.filter(task=>String(task.completedAt||'').slice(0,10)>=start&&String(task.completedAt||'').slice(0,10)<=end);
-    const clears=days.filter(day=>day.status==='cleared').length,failures=days.filter(day=>day.status==='failed').length,attended=records.filter(record=>['early','present','late'].includes(record.status)).length,required=records.filter(record=>record.status!=='cancelled').length;
+    const clears=days.filter(day=>day.status==='cleared').length,failures=days.filter(day=>day.status==='failed').length,attended=records.filter(record=>['early','present','late','partial'].includes(record.status)).length,required=records.filter(record=>['early','present','late','partial','absent'].includes(record.status)).length;
     const bestDay=[...days].sort((a,b)=>Number(b.completedProtocols||0)-Number(a.completedProtocols||0))[0];
     const reasons={};days.filter(day=>day.status==='failed').forEach(day=>{const reason=day.failureReason||'Missed sequence';reasons[reason]=(reasons[reason]||0)+1});
     const commonReason=Object.entries(reasons).sort((a,b)=>b[1]-a[1])[0]?.[0]||'No repeated failure pattern';
@@ -1898,23 +1949,24 @@
     const map=new Map();
     const add=(key,name,code='')=>{const normalized=subjectKey(key||name);if(!normalized)return;if(!map.has(normalized))map.set(normalized,{key:normalized,name:name||key,code});};
     state.classSchedule.forEach(entry=>add(entry.subject,entry.subject,entry.code||''));
+    (state.scheduleHistory||[]).forEach(entry=>add(entry.subject,entry.subject,entry.code||''));
     state.attendanceRecords.forEach(record=>add(record.subjectKey,record.subjectName,record.code||''));
     state.academicTasks.forEach(task=>add(task.subjectKey,task.subjectName,''));
     return [...map.values()].sort((a,b)=>a.name.localeCompare(b.name));
   };
   const streakSummary=records=>{
-    const usable=[...records].filter(record=>record.finalized&&record.status!=='cancelled').sort((a,b)=>`${a.scheduledDate}T${a.scheduledStart}`.localeCompare(`${b.scheduledDate}T${b.scheduledStart}`));
+    const usable=[...records].filter(record=>record.finalized&&!['no-class','excused'].includes(record.status)).sort((a,b)=>`${a.scheduledDate}T${a.scheduledStart}`.localeCompare(`${b.scheduledDate}T${b.scheduledStart}`));
     let current=0,best=0,run=0,punctual=0;
-    usable.forEach(record=>{if(['early','present','late'].includes(record.status)){run+=1;best=Math.max(best,run)}else if(record.status==='absent')run=0});
-    for(let index=usable.length-1;index>=0;index-=1){if(['early','present','late'].includes(usable[index].status))current+=1;else break}
+    usable.forEach(record=>{if(['early','present','late','partial'].includes(record.status)){run+=1;best=Math.max(best,run)}else if(record.status==='absent')run=0});
+    for(let index=usable.length-1;index>=0;index-=1){if(['early','present','late','partial'].includes(usable[index].status))current+=1;else break}
     for(let index=usable.length-1;index>=0;index-=1){if(['early','present'].includes(usable[index].status))punctual+=1;else break}
     return{current,best,punctual};
   };
   const subjectStats=key=>{
     const subject=subjectCatalog().find(item=>item.key===key)||{key,name:key,code:''};
     const records=state.attendanceRecords.filter(record=>record.subjectKey===key);
-    const counts={early:0,present:0,late:0,absent:0,cancelled:0,unverified:0};records.forEach(record=>{if(counts[record.status]!==undefined)counts[record.status]+=1});
-    const attended=counts.early+counts.present+counts.late,required=attended+counts.absent;
+    const counts={early:0,present:0,late:0,partial:0,absent:0,excused:0,'no-class':0,unverified:0};records.forEach(record=>{if(counts[record.status]!==undefined)counts[record.status]+=1});
+    const attended=counts.early+counts.present+counts.late+counts.partial,required=attended+counts.absent;
     const tasks=state.academicTasks.filter(task=>task.subjectKey===key),completedTasks=tasks.filter(task=>task.status==='completed').length;
     const workMinutes=tasks.reduce((sum,task)=>sum+Number(task.workMinutes||0),0);
     const attendanceXp=records.reduce((sum,record)=>sum+Number(record.xpAwarded||0),0);
@@ -1925,8 +1977,8 @@
   };
   const overallAcademicStats=()=>{
     const subjects=subjectCatalog().map(subject=>subjectStats(subject.key));
-    const counts={early:0,present:0,late:0,absent:0,cancelled:0,unverified:0};state.attendanceRecords.forEach(record=>{if(counts[record.status]!==undefined)counts[record.status]+=1});
-    const attended=counts.early+counts.present+counts.late,required=attended+counts.absent;
+    const counts={early:0,present:0,late:0,partial:0,absent:0,excused:0,'no-class':0,unverified:0};state.attendanceRecords.forEach(record=>{if(counts[record.status]!==undefined)counts[record.status]+=1});
+    const attended=counts.early+counts.present+counts.late+counts.partial,required=attended+counts.absent;
     return{subjects,counts,attended,required,attendanceRate:required?Math.round(attended/required*100):0,punctualityRate:attended?Math.round((counts.early+counts.present)/attended*100):0,xp:subjects.reduce((sum,item)=>sum+item.xp,0),streaks:streakSummary(state.attendanceRecords)};
   };
   const renderControlHome=()=>{setControlView('controlHomeView');const academic=overallAcademicStats();$('#freeScheduleClassCount').textContent=activeSchedule().length;$('#freeScheduleAttendanceRate').textContent=`${academic.attendanceRate}%`};
@@ -1961,25 +2013,33 @@
   const profileMonthDate=key=>{const [year,month]=String(key||profileMonthKey(new Date())).split('-').map(Number);return new Date(year,Math.max(0,(month||1)-1),1,12,0,0,0)};
   const shiftProfileMonth=(key,delta)=>{const date=profileMonthDate(key);date.setMonth(date.getMonth()+delta);return profileMonthKey(date)};
   const profileDayRecordsFor=dateKey=>({day:state.dayRecords?.[dateKey]||null,attendance:state.attendanceRecords.filter(record=>record.scheduledDate===dateKey).sort((a,b)=>String(a.scheduledStart||'').localeCompare(String(b.scheduledStart||'')))});
+  const profileProtocolProgress=protocol=>{
+    const steps=(protocol?.steps||[]).filter(step=>step.required!==false),completed=steps.filter(step=>step.status==='completed').length,skipped=steps.filter(step=>step.status==='skipped').length;
+    return{total:steps.length,completed,skipped};
+  };
+  const profileDayProtocolStats=day=>{
+    const required=Object.values(day?.protocols||{}).filter(protocol=>protocol?.required!==false),excused=required.filter(protocol=>protocol.excused&&protocol.status==='skipped'),applicable=required.filter(protocol=>!protocol.excused);
+    const cleared=applicable.filter(protocol=>protocol.status==='cleared').length;
+    const directives=applicable.reduce((sum,protocol)=>{const progress=profileProtocolProgress(protocol);sum.total+=progress.total;sum.completed+=progress.completed;sum.skipped+=progress.skipped;return sum},{total:0,completed:0,skipped:0});
+    const touched=cleared>0||directives.completed>0||directives.skipped>0||applicable.some(protocol=>protocol.status==='active'||Boolean(protocol.startedAt));
+    return{required,excused,applicable,cleared,directives,touched};
+  };
   const profileDayState=dateKey=>{
     if(dateKey>currentKey())return'future';
-    const {day,attendance}=profileDayRecordsFor(dateKey);
-    if(day?.status==='cleared')return'clear';
-    if(day?.status==='failed')return'failed';
-    if(day){
-      const protocols=Object.values(day.protocols||{}),touched=protocols.some(protocol=>['active','cleared','failed'].includes(protocol.status));
-      if(touched)return'partial';
-    }
-    if(attendance.some(record=>record.finalized||record.status!=='unverified'))return'partial';
+    const {day}=profileDayRecordsFor(dateKey);if(!day)return'none';const stats=profileDayProtocolStats(day);
+    if(day.status==='cleared')return stats.excused.length?'excused':'clear';
+    if(day.status==='failed')return stats.touched?'partial':'missed';
+    if(day.status==='active')return stats.touched?'partial':'none';
     return'none';
   };
   const profileDayResultLabel=dateKey=>{
-    const {day,attendance}=profileDayRecordsFor(dateKey),status=profileDayState(dateKey);
+    const {day}=profileDayRecordsFor(dateKey),status=profileDayState(dateKey);
     if(status==='clear')return'DAILY CLEAR';
-    if(status==='failed')return'FAILED';
-    if(status==='partial')return day?.status==='active'&&dateKey===currentKey()?'IN PROGRESS':day?'PARTIAL':'ATTENDANCE ONLY';
+    if(status==='excused')return'EXCUSED';
+    if(status==='missed')return'MISSED';
+    if(status==='partial')return day?.status==='active'&&dateKey===currentKey()?'IN PROGRESS':'PARTIAL';
     if(status==='future')return'FUTURE';
-    return attendance.length?'NO FINAL RESULT':'NO RECORD';
+    return'NO PROTOCOL RECORD';
   };
   const profileDayXp=dateKey=>{
     const {day,attendance}=profileDayRecordsFor(dateKey);
@@ -1988,37 +2048,39 @@
     return{directive,academic,total:directive+academic};
   };
   const profileMonthSummary=key=>{
-    const date=profileMonthDate(key),year=date.getFullYear(),month=date.getMonth(),last=new Date(year,month+1,0,12).getDate(),counts={clear:0,partial:0,failed:0};
+    const date=profileMonthDate(key),year=date.getFullYear(),month=date.getMonth(),last=new Date(year,month+1,0,12).getDate(),counts={clear:0,partial:0,missed:0,excused:0};
     for(let day=1;day<=last;day+=1){const dayKey=S.dateKey(new Date(year,month,day,12));if(dayKey>currentKey())continue;const status=profileDayState(dayKey);if(counts[status]!==undefined)counts[status]+=1}
     return counts;
   };
+  const profileDayCellLabel=(status,dateKey)=>status==='clear'?'CLEAR':status==='excused'?'EXCUSED':status==='missed'?'MISSED':status==='partial'?(dateKey===currentKey()?'ACTIVE':'PARTIAL'):'';
   const profileCalendarMarkup=()=>{
     const currentMonth=profileMonthKey(new Date());controlUi.profileMonth=controlUi.profileMonth||currentMonth;
     const monthDate=profileMonthDate(controlUi.profileMonth),year=monthDate.getFullYear(),month=monthDate.getMonth(),daysInMonth=new Date(year,month+1,0,12).getDate(),offset=(new Date(year,month,1,12).getDay()+6)%7,summary=profileMonthSummary(controlUi.profileMonth);
     const cells=[];for(let index=0;index<offset;index+=1)cells.push('<span class="profile-calendar-spacer" aria-hidden="true"></span>');
     for(let day=1;day<=daysInMonth;day+=1){
-      const key=S.dateKey(new Date(year,month,day,12)),status=profileDayState(key),today=key===currentKey(),disabled=status==='future';
-      cells.push(`<button type="button" class="profile-calendar-day ${status}${today?' today':''}" data-profile-action="calendar-day" data-date="${key}" ${disabled?'disabled':''} aria-label="${escapeHtml(new Date(`${key}T12:00:00`).toLocaleDateString(undefined,{month:'long',day:'numeric',year:'numeric'}))} · ${profileDayResultLabel(key)}"><span>${day}</span><i aria-hidden="true"></i></button>`);
+      const key=S.dateKey(new Date(year,month,day,12)),status=profileDayState(key),today=key===currentKey(),disabled=status==='future',cellLabel=profileDayCellLabel(status,key);
+      cells.push(`<button type="button" class="profile-calendar-day ${status}${today?' today':''}" data-profile-action="calendar-day" data-date="${key}" ${disabled?'disabled':''} aria-label="${escapeHtml(new Date(`${key}T12:00:00`).toLocaleDateString(undefined,{month:'long',day:'numeric',year:'numeric'}))} · ${profileDayResultLabel(key)}"><span>${day}</span>${cellLabel?`<small>${cellLabel}</small>`:''}<i aria-hidden="true"></i></button>`);
     }
     while(cells.length<42)cells.push('<span class="profile-calendar-spacer" aria-hidden="true"></span>');
     const monthLabel=monthDate.toLocaleDateString(undefined,{month:'long',year:'numeric'}),nextDisabled=controlUi.profileMonth>=currentMonth;
     return `<section class="profile-daily-log">
-      <div class="profile-calendar-head"><div><span>DAILY LOG</span><strong>${escapeHtml(monthLabel)}</strong><small>${summary.clear} Clear · ${summary.partial} Partial · ${summary.failed} Failed</small></div><nav aria-label="Daily log month navigation"><button type="button" data-profile-action="calendar-prev" aria-label="Previous month">‹</button><button type="button" data-profile-action="calendar-next" aria-label="Next month" ${nextDisabled?'disabled':''}>›</button></nav></div>
+      <div class="profile-calendar-head"><div><span>DAILY LOG</span><strong>${escapeHtml(monthLabel)}</strong><small>${summary.clear} Clear · ${summary.partial} Partial · ${summary.missed} Missed · ${summary.excused} Excused</small></div><nav aria-label="Daily log month navigation"><button type="button" data-profile-action="calendar-prev" aria-label="Previous month">‹</button><button type="button" data-profile-action="calendar-next" aria-label="Next month" ${nextDisabled?'disabled':''}>›</button></nav></div>
       <div class="profile-calendar-weekdays" aria-hidden="true"><span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span><span>S</span></div>
       <div class="profile-calendar-grid">${cells.join('')}</div>
-      <div class="profile-calendar-legend"><span class="clear"><i></i>Clear</span><span class="partial"><i></i>Partial</span><span class="failed"><i></i>Failed</span></div>
+      <div class="profile-calendar-legend"><span class="clear"><i></i>Clear</span><span class="partial"><i></i>Partial</span><span class="missed"><i></i>Missed</span><span class="excused"><i></i>Excused</span></div>
     </section>`;
   };
-  const profileProtocolStatusCopy=protocol=>protocol.status==='cleared'?'DONE':protocol.status==='failed'?'MISSED':protocol.status==='active'?'IN PROGRESS':'PENDING';
-  const profileAttendanceStatusCopy=status=>({early:'EARLY',present:'PRESENT',late:'LATE',absent:'ABSENT',cancelled:'CANCELLED',unverified:'UNVERIFIED'})[status]||String(status||'UNVERIFIED').toUpperCase();
+  const profileProtocolStatusCopy=protocol=>{if(protocol?.status==='cleared')return'DONE';if(protocol?.status==='skipped'&&protocol?.excused)return'EXCUSED';if(protocol?.status==='failed'){const progress=profileProtocolProgress(protocol);return progress.completed||progress.skipped?'PARTIAL':'MISSED'}if(protocol?.status==='active')return'IN PROGRESS';return'PENDING'};
+  const profileAttendanceStatusCopy=status=>({early:'PRESENT · EARLY',present:'PRESENT',late:'PRESENT · LATE',partial:'PARTIAL',absent:'ABSENT',excused:'EXCUSED','no-class':'NO CLASS',unverified:'UNRESOLVED'})[status]||String(status||'UNRESOLVED').toUpperCase();
   const profileDayDetailMarkup=dateKey=>{
-    const {day,attendance}=profileDayRecordsFor(dateKey),xp=profileDayXp(dateKey),date=new Date(`${dateKey}T12:00:00`),status=profileDayState(dateKey),result=profileDayResultLabel(dateKey);
-    const directiveRows=day?protocolConfigsForRecord(day).map(config=>{const protocol=day.protocols[config.id],boss=Boolean(protocol?.boss),name=boss?(day.weeklyBossPlan?.title?`Weekly Boss · ${day.weeklyBossPlan.title}`:'Weekly Boss'):(protocol?.name||config.name).replace(/ Protocol$/,'');const applied=Math.max(0,Number(protocol?.profileXpAppliedAmount||0)),start=protocol?.start||config.start,end=protocol?.end||config.end;return `<div class="profile-log-row ${protocol?.status||'pending'}"><section><strong>${escapeHtml(name)}</strong><small>${escapeHtml(start)}–${escapeHtml(end)}${applied?` · +${applied} XP`:''}</small></section><b>${profileProtocolStatusCopy(protocol||{})}</b></div>`}).join(''):'';
-    const attendanceRows=attendance.map(record=>{const name=record.code||record.subjectName||'Class',applied=Math.max(0,Number(record.profileXpAppliedAmount||0));return `<div class="profile-log-row attendance ${escapeHtml(record.status||'unverified')}"><section><strong>${escapeHtml(name)}</strong><small>${formatTime(record.scheduledStart||'00:00')}${record.subjectName&&record.code?` · ${escapeHtml(record.subjectName)}`:''}${applied?` · +${applied} XP`:''}</small></section><b>${profileAttendanceStatusCopy(record.status)}</b></div>`}).join('');
+    const {day,attendance}=profileDayRecordsFor(dateKey),xp=profileDayXp(dateKey),date=new Date(`${dateKey}T12:00:00`),result=profileDayResultLabel(dateKey),dayStats=profileDayProtocolStats(day);
+    const directiveRows=day?protocolConfigsForRecord(day).map(config=>{const protocol=day.protocols[config.id],boss=Boolean(protocol?.boss),name=boss?(day.weeklyBossPlan?.title?`Weekly Boss · ${day.weeklyBossPlan.title}`:'Weekly Boss'):(protocol?.name||config.name).replace(/ Protocol$/,'');const applied=Math.max(0,Number(protocol?.profileXpAppliedAmount||0)),start=protocol?.start||config.start,end=protocol?.end||config.end,progress=profileProtocolProgress(protocol);const stepRows=(protocol?.steps||[]).map(step=>`<div class="profile-directive-row ${escapeHtml(step.status||'pending')}"><span>${escapeHtml(step.title||'Directive')}</span><b>${step.status==='completed'?'DONE':step.status==='skipped'?'SKIPPED':step.status==='active'?'ACTIVE':'PENDING'}</b></div>`).join('');return `<details class="profile-protocol-log ${escapeHtml(protocol?.status||'pending')}"><summary><section><strong>${escapeHtml(name)}</strong><small>${escapeHtml(start)}–${escapeHtml(end)} · ${progress.completed}/${progress.total} required directives${applied?` · +${applied} XP`:''}</small></section><b>${profileProtocolStatusCopy(protocol||{})}</b></summary><div class="profile-directive-list">${stepRows||'<div class="profile-log-empty">No directives recorded.</div>'}</div></details>`}).join(''):'';
+    const attendanceRows=attendance.map(record=>{const name=record.code||record.subjectName||'Class',applied=Math.max(0,Number(record.profileXpAppliedAmount||0)),detail=[formatTime(record.scheduledStart||'00:00'),record.subjectName&&record.code?record.subjectName:'',record.arrivalTime?`Arr ${formatTime(record.arrivalTime)}`:'',record.departureTime?`Left ${formatTime(record.departureTime)}`:'',applied?`+${applied} XP`:''].filter(Boolean).join(' · ');return `<div class="profile-log-row attendance ${escapeHtml(record.status||'unverified')}"><section><strong>${escapeHtml(name)}</strong><small>${escapeHtml(detail)}</small></section><b>${profileAttendanceStatusCopy(record.status)}</b></div>`}).join('');
+    const protocolSummary=day?`${dayStats.cleared}/${dayStats.applicable.length} required protocols · ${dayStats.directives.completed}/${dayStats.directives.total} required directives${dayStats.excused.length?` · ${dayStats.excused.length} excused`:''}`:'No protocol activity recorded.';
     return `<section class="profile-day-log-detail">
-      <div class="profile-day-log-head"><div><span>DAY LOG</span><strong>${escapeHtml(date.toLocaleDateString(undefined,{weekday:'long',month:'long',day:'numeric'}))}</strong><small>${result}</small></div><div><span>PROFILE XP</span><strong>+${xp.total}</strong><small>${xp.directive} directive · ${xp.academic} attendance</small></div></div>
+      <div class="profile-day-log-head"><div><span>DAY LOG</span><strong>${escapeHtml(date.toLocaleDateString(undefined,{weekday:'long',month:'long',day:'numeric'}))}</strong><small>${result} · ${escapeHtml(protocolSummary)}</small></div><div><span>PROFILE XP</span><strong>+${xp.total}</strong><small>${xp.directive} directive · ${xp.academic} attendance</small></div></div>
       <div class="profile-day-log-scroll">
-        <div class="profile-log-section"><span>DIRECTIVES</span>${directiveRows||'<div class="profile-log-empty">No directive activity recorded.</div>'}</div>
+        <div class="profile-log-section"><span>PROTOCOLS & DIRECTIVES</span>${directiveRows||'<div class="profile-log-empty">No directive activity recorded.</div>'}</div>
         <div class="profile-log-section"><span>ATTENDANCE</span>${attendanceRows||'<div class="profile-log-empty">No attendance records for this day.</div>'}</div>
       </div>
       <button class="ghost-button profile-log-back" type="button" data-profile-action="calendar-back">Back to Calendar</button>
@@ -2047,8 +2109,8 @@
     const now=new Date(),weekday=now.getDay()||7,start=new Date(now);start.setHours(0,0,0,0);start.setDate(start.getDate()-(weekday-1));
     const end=new Date(start);end.setDate(end.getDate()+7);
     const records=state.attendanceRecords.filter(record=>{const date=new Date(`${record.scheduledDate}T12:00:00`);return date>=start&&date<end});
-    const counts={early:0,present:0,late:0,absent:0,cancelled:0,unverified:0};records.forEach(record=>{if(counts[record.status]!==undefined)counts[record.status]+=1});
-    const attended=counts.early+counts.present+counts.late,required=attended+counts.absent;
+    const counts={early:0,present:0,late:0,partial:0,absent:0,excused:0,'no-class':0,unverified:0};records.forEach(record=>{if(counts[record.status]!==undefined)counts[record.status]+=1});
+    const attended=counts.early+counts.present+counts.late+counts.partial,required=attended+counts.absent;
     return{records,counts,attended,required,start,end};
   };
   const attendanceDateLabel=value=>{
@@ -2058,134 +2120,54 @@
   const resolvableUnverifiedRecords=(now=new Date())=>state.attendanceRecords
     .filter(record=>{
       if(record.status!=='unverified'||record.finalized||!record.scheduledDate||!record.scheduledEnd)return false;
-      const end=scheduledMoment(record,record.scheduledEnd);
-      return !Number.isNaN(end.getTime())&&end<=now;
+      const end=scheduledMoment(record,record.scheduledEnd);return !Number.isNaN(end.getTime())&&end<=now;
     })
     .sort((a,b)=>`${b.scheduledDate}T${b.scheduledStart}`.localeCompare(`${a.scheduledDate}T${a.scheduledStart}`));
-  const resolveUnverifiedAttendanceRecord=(record,status)=>{
-    if(!record||record.status!=='unverified'||record.finalized)return;
-    if(!['present','late','cancelled','absent'].includes(status))return;
-    const end=scheduledMoment(record,record.scheduledEnd),resolvedAt=Number.isNaN(end.getTime())?new Date():end;
-    if(status==='present'||status==='late'){
-      const start=scheduledMoment(record,record.scheduledStart),check=Number.isNaN(start.getTime())?new Date(resolvedAt):new Date(start);
-      if(status==='late')check.setMinutes(check.getMinutes()+15);
-      setAttendanceStatus(record,status,check);
-      finalizeAttendance(record,'dismissed',resolvedAt);
-    }else if(status==='cancelled'){
-      finalizeAttendance(record,'cancelled',resolvedAt);
-    }else{
-      setAttendanceStatus(record,'absent',resolvedAt);
-      const profileDelta=syncAttendanceProfileXp(record,resolvedAt);
-      state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'attendance',message:`${record.subjectName}: absent · resolved from unverified.${profileDelta?` Profile XP adjusted by ${Math.abs(profileDelta)}.`:''}`});
-      save();
-    }
-    controlUi.unverifiedResolveId=null;
-    const remaining=resolvableUnverifiedRecords();
-    controlUi.unverifiedIndex=clamp(controlUi.unverifiedIndex,0,Math.max(0,remaining.length-1));
-    systemFeedback(status==='absent'?'warning':'attendance','Attendance record resolved.');
-    renderAttendance();
+  const attendanceStatusLabel=status=>({early:'Present · Early',present:'Present',late:'Present · Late',partial:'Partial',absent:'Absent',excused:'Excused','no-class':'No Class',unverified:'Unresolved'})[status]||'Unresolved';
+  const canonicalAttendanceChoice=status=>['early','present','late'].includes(status)?'present':['partial','absent','excused','no-class'].includes(status)?status:'present';
+  const attendanceEditorMarkup=record=>{
+    const choice=canonicalAttendanceChoice(record.status),isPartial=choice==='partial';
+    return `<section class="attendance-resolution-editor" data-record-id="${escapeHtml(record.id)}">
+      <div class="attendance-resolution-head"><div><span>${record.status==='unverified'?'RESOLVE ATTENDANCE':'EDIT ATTENDANCE'}</span><strong>${escapeHtml(record.subjectName||record.code||'Class')}</strong><small>${escapeHtml(attendanceDateLabel(record.scheduledDate))} · ${formatTime(record.scheduledStart)}–${formatTime(record.scheduledEnd)}</small></div><b>${escapeHtml(attendanceStatusLabel(record.status))}</b></div>
+      <label>Status<select id="attendanceResolutionStatus"><option value="present" ${choice==='present'?'selected':''}>Present</option><option value="partial" ${choice==='partial'?'selected':''}>Partial</option><option value="absent" ${choice==='absent'?'selected':''}>Absent</option><option value="excused" ${choice==='excused'?'selected':''}>Excused</option><option value="no-class" ${choice==='no-class'?'selected':''}>No Class</option></select></label>
+      <div class="attendance-partial-fields" id="attendancePartialFields" ${isPartial?'':'hidden'}><label>Arrival <input id="attendanceArrivalTime" type="time" value="${escapeHtml(record.arrivalTime||'')}"></label><label>Departure <input id="attendanceDepartureTime" type="time" value="${escapeHtml(record.departureTime||'')}"></label></div>
+      <label>Note <input id="attendanceResolutionNote" type="text" maxlength="240" value="${escapeHtml(record.note||'')}" placeholder="Optional context"></label>
+      <div class="attendance-resolution-buttons"><button type="button" class="system-button compact-button" data-attendance-action="save-resolution"><b>Save Attendance</b></button><button type="button" class="ghost-button" data-attendance-action="cancel-resolution">Cancel</button></div>
+    </section>`;
+  };
+  const saveAttendanceResolution=()=>{
+    const record=state.attendanceRecords.find(item=>item.id===controlUi.attendanceEditId);if(!record)return;
+    const status=$('#attendanceResolutionStatus')?.value,arrival=$('#attendanceArrivalTime')?.value||'',departure=$('#attendanceDepartureTime')?.value||'',note=$('#attendanceResolutionNote')?.value||'';
+    if(status==='partial'&&arrival&&departure&&minutes(departure)<minutes(arrival)){showBreachWarning('INVALID PARTIAL ATTENDANCE','Departure time cannot be earlier than arrival time.');return}
+    if(!applyManualAttendanceResolution(record,status,{arrivalTime:arrival,departureTime:departure,note})){showBreachWarning('ATTENDANCE NOT SAVED','Review the selected attendance details and try again.');return}
+    controlUi.attendanceEditId=null;controlUi.unverifiedResolveId=null;controlUi.unverifiedIndex=clamp(controlUi.unverifiedIndex,0,Math.max(0,resolvableUnverifiedRecords().length-1));systemFeedback(status==='absent'?'warning':'attendance','Attendance saved.');renderAttendance();
   };
   const unverifiedAttendanceMarkup=records=>{
     if(!records.length){controlUi.unverifiedIndex=0;controlUi.unverifiedResolveId=null;return''}
-    const resolving=records.find(record=>record.id===controlUi.unverifiedResolveId)||null;
-    if(controlUi.unverifiedResolveId&&!resolving)controlUi.unverifiedResolveId=null;
-    if(resolving){
-      return `<section class="attendance-unverified-panel resolving">
-        <div class="attendance-unverified-heading"><div><span>UNVERIFIED RECORD</span><strong>${escapeHtml(resolving.subjectName||resolving.code||'Class')}</strong></div><small>${escapeHtml(attendanceDateLabel(resolving.scheduledDate))}</small></div>
-        <div class="attendance-unverified-meta"><span>${formatTime(resolving.scheduledStart)}–${formatTime(resolving.scheduledEnd)}</span><span>${escapeHtml([resolving.code,resolving.room].filter(Boolean).join(' · ')||'Scheduled class')}</span></div>
-        <p class="attendance-unverified-question">What happened in this class?</p>
-        <div class="attendance-unverified-resolve-grid">
-          <button type="button" data-unverified-status="present">I Attended</button>
-          <button type="button" data-unverified-status="late">I Was Late</button>
-          <button type="button" data-unverified-status="cancelled">Class Cancelled</button>
-          <button type="button" class="danger" data-unverified-status="absent">I Was Absent</button>
-        </div>
-        <button type="button" class="attendance-unverified-cancel" data-attendance-action="cancel-unverified-resolution">Cancel</button>
-      </section>`;
-    }
-    controlUi.unverifiedIndex=clamp(controlUi.unverifiedIndex,0,records.length-1);
-    const record=records[controlUi.unverifiedIndex];
-    return `<section class="attendance-unverified-panel">
-      <div class="attendance-unverified-heading"><div><span>UNVERIFIED RECORDS</span><strong>${records.length} need${records.length===1?'s':''} confirmation</strong></div><small>${controlUi.unverifiedIndex+1} / ${records.length}</small></div>
-      <div class="attendance-unverified-record"><div><strong>${escapeHtml(record.subjectName||record.code||'Class')}</strong><small>${escapeHtml(attendanceDateLabel(record.scheduledDate))} · ${formatTime(record.scheduledStart)}–${formatTime(record.scheduledEnd)}</small></div><button type="button" data-attendance-action="resolve-unverified" data-record-id="${escapeHtml(record.id)}">Resolve</button></div>
-      <div class="attendance-unverified-nav" ${records.length<=1?'hidden':''}><button type="button" data-attendance-action="unverified-prev" ${controlUi.unverifiedIndex===0?'disabled':''} aria-label="Previous unverified record">${glyphMarkup('chevron-left')}</button><span>Past unresolved classes</span><button type="button" data-attendance-action="unverified-next" ${controlUi.unverifiedIndex>=records.length-1?'disabled':''} aria-label="Next unverified record">${glyphMarkup('chevron-right')}</button></div>
-    </section>`;
+    const editing=records.find(record=>record.id===controlUi.attendanceEditId)||null;if(editing)return attendanceEditorMarkup(editing);
+    controlUi.unverifiedIndex=clamp(controlUi.unverifiedIndex,0,records.length-1);const record=records[controlUi.unverifiedIndex];
+    return `<section class="attendance-unverified-panel"><div class="attendance-unverified-heading"><div><span>UNRESOLVED</span><strong>${records.length} class${records.length===1?'':'es'} need your input</strong></div><small>${controlUi.unverifiedIndex+1} / ${records.length}</small></div><div class="attendance-unverified-record"><div><strong>${escapeHtml(record.subjectName||record.code||'Class')}</strong><small>${escapeHtml(attendanceDateLabel(record.scheduledDate))} · ${formatTime(record.scheduledStart)}–${formatTime(record.scheduledEnd)}</small></div><button type="button" data-attendance-action="edit-record" data-record-id="${escapeHtml(record.id)}">Resolve</button></div><div class="attendance-unverified-nav" ${records.length<=1?'hidden':''}><button type="button" data-attendance-action="unverified-prev" ${controlUi.unverifiedIndex===0?'disabled':''} aria-label="Previous unresolved record">${glyphMarkup('chevron-left')}</button><span>Past unresolved classes</span><button type="button" data-attendance-action="unverified-next" ${controlUi.unverifiedIndex>=records.length-1?'disabled':''} aria-label="Next unresolved record">${glyphMarkup('chevron-right')}</button></div></section>`;
   };
   const attendanceModeSwitch=active=>`<div class="attendance-mode-switch" role="group" aria-label="Attendance view"><button type="button" data-attendance-action="show-overall" class="${active==='overall'?'active':''}">Overview</button><button type="button" data-attendance-action="show-subjects" class="${active==='subjects'?'active':''}">Per Subject</button></div>`;
-  const attendanceAbsencePageSize=()=>window.innerHeight<=620?3:4;
-  const renderAttendance=()=>{
-    setControlView('attendanceView');controlUi.correction=false;
-    const academic=overallAcademicStats(),week=currentWeekAttendance(),records=historyRecords(),latest=records[0]||null;
-    $('#attendanceNav').hidden=true;
-    const content=$('#attendanceContent');
-    if(controlUi.attendanceTab==='subjects'){
-      const subjects=academic.subjects;
-      if(!subjects.length){
-        content.innerHTML=`${attendanceModeSwitch('subjects')}<div class="schedule-empty attendance-empty"><strong>No Subjects Yet</strong><span>Add a class schedule or complete an attendance check first.</span></div>`;
-        return;
-      }
-      controlUi.subjectIndex=clamp(controlUi.subjectIndex,0,subjects.length-1);
-      const stats=subjects[controlUi.subjectIndex],absences=[...stats.records].filter(record=>record.status==='absent').sort((a,b)=>`${b.scheduledDate}T${b.scheduledStart}`.localeCompare(`${a.scheduledDate}T${a.scheduledStart}`));
-      const perPage=attendanceAbsencePageSize(),totalPages=Math.max(1,Math.ceil(absences.length/perPage));controlUi.subjectAbsencePage=clamp(controlUi.subjectAbsencePage,0,totalPages-1);
-      const pageStart=controlUi.subjectAbsencePage*perPage,pageAbsences=absences.slice(pageStart,pageStart+perPage);
-      const absenceList=pageAbsences.length?pageAbsences.map(record=>`<div class="subject-absence-record"><span>${escapeHtml(attendanceDateLabel(record.scheduledDate))}</span><strong>${formatTime(record.scheduledStart)}</strong></div>`).join(''):'<div class="subject-absence-empty"><strong>No Absences</strong><span>No absence dates are recorded for this subject.</span></div>';
-      $('#attendanceNav').hidden=subjects.length<=1;$('#attendancePageLabel').textContent=`${controlUi.subjectIndex+1} / ${subjects.length}`;
-      content.innerHTML=`
-        ${attendanceModeSwitch('subjects')}
-        <div class="subject-attendance-heading">
-          <span>SUBJECT ATTENDANCE</span>
-          <strong>${escapeHtml(stats.subject.name)}</strong>
-          <small>${escapeHtml(stats.subject.code||'No subject code')} · ${stats.required} required class${stats.required===1?'':'es'}</small>
-        </div>
-        <div class="subject-attendance-stats">
-          <div><span>ATTENDANCE</span><strong>${stats.attendanceRate}%</strong></div>
-          <div><span>REQUIRED</span><strong>${stats.required}</strong></div>
-          <div><span>ABSENT</span><strong>${stats.counts.absent}</strong></div>
-          <div><span>LATE</span><strong>${stats.counts.late}</strong></div>
-        </div>
-        <div class="subject-absence-panel">
-          <div class="subject-absence-heading"><div><span>ABSENCE HISTORY</span><strong>${absences.length} recorded</strong></div><small>${absences.length?`${pageStart+1}-${Math.min(pageStart+perPage,absences.length)} of ${absences.length}`:'No dates'}</small></div>
-          <div class="subject-absence-list">${absenceList}</div>
-          <div class="subject-absence-nav" ${totalPages<=1?'hidden':''}><button type="button" data-attendance-action="absence-prev" ${controlUi.subjectAbsencePage===0?'disabled':''} aria-label="Previous absence dates">${glyphMarkup('chevron-left')}</button><span>Dates ${controlUi.subjectAbsencePage+1} / ${totalPages}</span><button type="button" data-attendance-action="absence-next" ${controlUi.subjectAbsencePage>=totalPages-1?'disabled':''} aria-label="Next absence dates">${glyphMarkup('chevron-right')}</button></div>
-        </div>`;
-      return;
-    }
-    controlUi.attendanceTab='overall';
-    const weekRate=week.required?Math.round(week.attended/week.required*100):0;
-    const onTime=academic.counts.early+academic.counts.present;
-    const unverified=resolvableUnverifiedRecords();
-    const latestForDisplay=unverified.length?records.find(record=>record.status!=='unverified'||record.finalized)||null:latest;
-    const latestMarkup=latestForDisplay?`<div class="attendance-latest-card"><div><span>LATEST RECORD</span><strong>${escapeHtml(latestForDisplay.subjectName)}</strong><small>${escapeHtml(attendanceDateLabel(latestForDisplay.scheduledDate))} · ${formatTime(latestForDisplay.scheduledStart)}</small></div><b class="attendance-status-${escapeHtml(latestForDisplay.status)}">${escapeHtml(latestForDisplay.status.toUpperCase())}</b></div>`:unverified.length?'':'<div class="schedule-empty attendance-empty"><strong>No Attendance Records</strong><span>Your first completed class check-in will appear here.</span></div>';
-    content.innerHTML=`
-      ${attendanceModeSwitch('overall')}
-      <div class="attendance-overview-stats">
-        <div><span>ATTENDANCE</span><strong>${academic.attendanceRate}%</strong></div>
-        <div><span>PUNCTUALITY</span><strong>${academic.punctualityRate}%</strong></div>
-        <div><span>THIS WEEK</span><strong>${week.required?`${week.attended}/${week.required}`:'—'}</strong><small>${week.required?`${weekRate}% attended`:'No required classes yet'}</small></div>
-        <div><span>CURRENT STREAK</span><strong>${academic.streaks.current}</strong></div>
-      </div>
-      <div class="attendance-counts simplified-attendance-counts">
-        <div><span>ON TIME</span><strong>${onTime}</strong></div>
-        <div><span>LATE</span><strong>${academic.counts.late}</strong></div>
-        <div><span>ABSENT</span><strong>${academic.counts.absent}</strong></div>
-        <div><span>UNVERIFIED</span><strong>${academic.counts.unverified}</strong></div>
-        <div><span>CANCELLED</span><strong>${academic.counts.cancelled}</strong></div>
-        <div><span>TOTAL</span><strong>${records.length}</strong></div>
-      </div>
-      <div class="attendance-overview-lower">${unverifiedAttendanceMarkup(unverified)}${latestMarkup}</div>`;
+  const attendanceFilterMatches=(record,filter)=>filter==='all'||(filter==='present'&&['early','present','late'].includes(record.status))||record.status===filter;
+  const subjectAttendanceRow=record=>{
+    const time=[formatTime(record.scheduledStart),record.arrivalTime?`Arr ${formatTime(record.arrivalTime)}`:'',record.departureTime?`Left ${formatTime(record.departureTime)}`:''].filter(Boolean).join(' · '),unresolved=record.status==='unverified';
+    return `<div class="subject-session-row ${escapeHtml(record.status)}"><div class="subject-session-date"><strong>${escapeHtml(attendanceDateLabel(record.scheduledDate))}</strong><small>${escapeHtml(time)}</small></div><div class="subject-session-status"><b>${escapeHtml(attendanceStatusLabel(record.status))}</b>${record.note?`<small>${escapeHtml(record.note)}</small>`:''}</div><button type="button" data-attendance-action="edit-record" data-record-id="${escapeHtml(record.id)}">${unresolved?'Resolve':'Edit'}</button></div>`;
   };
-  const correctAttendanceRecord=(record,status)=>{
-    const before=record.status,now=new Date();record.corrections=record.corrections||[];record.corrections.push({at:now.toISOString(),from:before,to:status});
-    if(['early','present','late'].includes(status)){
-      const start=scheduledMoment(record,record.scheduledStart),check=new Date(start);if(status==='early')check.setMinutes(check.getMinutes()-10);if(status==='late')check.setMinutes(check.getMinutes()+15);
-      setAttendanceStatus(record,status,check);finalizeAttendance(record,record.dismissalStatus||'dismissed',record.dismissedAt?new Date(record.dismissedAt):scheduledMoment(record,record.scheduledEnd));
-    }else if(status==='unverified'){
-      setAttendanceStatus(record,'unverified',now);record.finalized=false;record.dismissedAt=null;record.dismissalStatus=null;save();
-    }else{
-      setAttendanceStatus(record,status,now);record.finalized=true;record.dismissalStatus=status;record.dismissedAt=now.toISOString();save();
+  const renderAttendance=()=>{
+    syncHistoricalUnresolvedMeetings();setControlView('attendanceView');controlUi.correction=false;
+    const academic=overallAcademicStats(),week=currentWeekAttendance(),records=historyRecords(),latest=records[0]||null;$('#attendanceNav').hidden=true;const content=$('#attendanceContent');
+    if(controlUi.attendanceTab==='subjects'){
+      const subjects=academic.subjects;if(!subjects.length){content.innerHTML=`${attendanceModeSwitch('subjects')}<div class="schedule-empty attendance-empty"><strong>No Subjects Yet</strong><span>Add a class schedule first.</span></div>`;return}
+      controlUi.subjectIndex=clamp(controlUi.subjectIndex,0,subjects.length-1);const stats=subjects[controlUi.subjectIndex],subjectRecords=[...stats.records].sort((a,b)=>`${b.scheduledDate}T${b.scheduledStart}`.localeCompare(`${a.scheduledDate}T${a.scheduledStart}`));
+      const filters=[['all','All'],['present','Present'],['partial','Partial'],['absent','Absent'],['unverified','Unresolved']];if(!filters.some(([value])=>value===controlUi.subjectFilter))controlUi.subjectFilter='all';const filtered=subjectRecords.filter(record=>attendanceFilterMatches(record,controlUi.subjectFilter));
+      const editing=state.attendanceRecords.find(record=>record.id===controlUi.attendanceEditId&&record.subjectKey===stats.subject.key)||null;$('#attendanceNav').hidden=subjects.length<=1;$('#attendancePageLabel').textContent=`${controlUi.subjectIndex+1} / ${subjects.length}`;
+      const presentTotal=stats.counts.early+stats.counts.present+stats.counts.late;
+      content.innerHTML=`${attendanceModeSwitch('subjects')}<div class="subject-attendance-heading"><span>SUBJECT LOG</span><strong>${escapeHtml(stats.subject.name)}</strong><small>${escapeHtml(stats.subject.code||'No subject code')} · complete chronological attendance history</small></div><div class="subject-log-summary"><div><span>PRESENT</span><strong>${presentTotal}</strong></div><div><span>PARTIAL</span><strong>${stats.counts.partial}</strong></div><div><span>ABSENT</span><strong>${stats.counts.absent}</strong></div><div><span>UNRESOLVED</span><strong>${stats.counts.unverified}</strong></div></div>${editing?attendanceEditorMarkup(editing):''}<div class="subject-log-filters">${filters.map(([value,label])=>`<button type="button" data-attendance-action="subject-filter" data-filter="${value}" class="${controlUi.subjectFilter===value?'active':''}">${label}</button>`).join('')}</div><div class="subject-session-list">${filtered.length?filtered.map(subjectAttendanceRow).join(''):'<div class="subject-session-empty">No sessions match this filter.</div>'}</div>`;return;
     }
-    const xpDelta=syncAttendanceProfileXp(record,now);
-    state.logs.push({id:S.uid('log'),at:now.toISOString(),type:'attendance-correction',message:`${record.subjectName} corrected from ${before} to ${status}.${xpDelta?` Profile XP ${xpDelta>0?'increased':'decreased'} by ${Math.abs(xpDelta)}.`:''}`});save();controlUi.correction=false;renderAttendance();
+    controlUi.attendanceTab='overall';const weekRate=week.required?Math.round(week.attended/week.required*100):0,onTime=academic.counts.early+academic.counts.present,unverified=resolvableUnverifiedRecords(),latestForDisplay=unverified.length?records.find(record=>record.status!=='unverified'||record.finalized)||null:latest;
+    const latestMarkup=latestForDisplay?`<div class="attendance-latest-card"><div><span>LATEST RECORD</span><strong>${escapeHtml(latestForDisplay.subjectName)}</strong><small>${escapeHtml(attendanceDateLabel(latestForDisplay.scheduledDate))} · ${formatTime(latestForDisplay.scheduledStart)}</small></div><b class="attendance-status-${escapeHtml(latestForDisplay.status)}">${escapeHtml(attendanceStatusLabel(latestForDisplay.status).toUpperCase())}</b></div>`:unverified.length?'':'<div class="schedule-empty attendance-empty"><strong>No Attendance Records</strong><span>Scheduled sessions will appear here automatically.</span></div>';
+    content.innerHTML=`${attendanceModeSwitch('overall')}<div class="attendance-overview-stats"><div><span>ATTENDANCE</span><strong>${academic.attendanceRate}%</strong></div><div><span>PUNCTUALITY</span><strong>${academic.punctualityRate}%</strong></div><div><span>THIS WEEK</span><strong>${week.required?`${week.attended}/${week.required}`:'—'}</strong><small>${week.required?`${weekRate}% attended`:'No required classes yet'}</small></div><div><span>CURRENT STREAK</span><strong>${academic.streaks.current}</strong></div></div><div class="attendance-counts simplified-attendance-counts"><div><span>PRESENT</span><strong>${onTime+academic.counts.late}</strong></div><div><span>PARTIAL</span><strong>${academic.counts.partial}</strong></div><div><span>ABSENT</span><strong>${academic.counts.absent}</strong></div><div><span>UNRESOLVED</span><strong>${academic.counts.unverified}</strong></div><div><span>EXCUSED</span><strong>${academic.counts.excused}</strong></div><div><span>NO CLASS</span><strong>${academic.counts['no-class']}</strong></div></div><div class="attendance-overview-lower">${unverifiedAttendanceMarkup(unverified)}${latestMarkup}</div>`;
   };
   const SETTINGS_EXPORT_VERSION=1;
   const progressExportKeys=['player','dayRecords','attendanceRecords','academicTasks','recurringTaskRules','tradingNotes','quests','weeklyDebriefs'];
@@ -2201,7 +2183,7 @@
     if(kind==='full')return S.createBackup(state);
     const data={};
     if(kind==='progress')progressExportKeys.forEach(key=>{data[key]=clone(state[key])});
-    else if(kind==='schedule'){data.classSchedule=clone(state.classSchedule||[]);data.scheduleExceptions=clone(state.scheduleExceptions||[])}
+    else if(kind==='schedule'){data.classSchedule=clone(state.classSchedule||[]);data.scheduleHistory=clone(state.scheduleHistory||[]);data.scheduleExceptions=clone(state.scheduleExceptions||[])}
     else throw new Error('Unknown export type.');
     return JSON.stringify({app:'ASCEND',exportType:kind,exportVersion:SETTINGS_EXPORT_VERSION,schemaVersion:S.schemaInfo().version,exportedAt:new Date().toISOString(),data},null,2);
   };
@@ -2210,8 +2192,8 @@
     return{title:`${player.codename||player.name||'Player'} · Level ${Number(player.level||1)} · ${player.rank||'E'}-Rank`,details:`${Object.keys(data.dayRecords||{}).length} days · ${(data.attendanceRecords||[]).length} attendance · ${(data.academicTasks||[]).length} tasks · ${(data.quests?.history||[]).length} quest records`};
   };
   const settingsScheduleSummary=data=>{
-    const classes=Array.isArray(data.classSchedule)?data.classSchedule:[],exceptions=Array.isArray(data.scheduleExceptions)?data.scheduleExceptions:[],subjects=new Set(classes.map(item=>String(item.subject||'').trim().toLowerCase()).filter(Boolean));
-    return{title:`${classes.length} class${classes.length===1?'':'es'} · ${subjects.size} subject${subjects.size===1?'':'s'}`,details:`${exceptions.length} schedule exception${exceptions.length===1?'':'s'} · Only schedule data will be replaced`};
+    const classes=Array.isArray(data.classSchedule)?data.classSchedule:[],history=Array.isArray(data.scheduleHistory)?data.scheduleHistory:[],exceptions=Array.isArray(data.scheduleExceptions)?data.scheduleExceptions:[],subjects=new Set([...classes,...history].map(item=>String(item.subject||'').trim().toLowerCase()).filter(Boolean));
+    return{title:`${classes.length} active class${classes.length===1?'':'es'} · ${subjects.size} subject${subjects.size===1?'':'s'}`,details:`${history.length} historical schedule revision${history.length===1?'':'s'} · ${exceptions.length} exception${exceptions.length===1?'':'s'}`};
   };
   const parseSettingsImport=(text,kind)=>{
     if(kind==='full'){const imported=S.parseBackup(text),summary=S.summarize(imported);return{kind,state:imported,summary:{title:`${summary.playerName} · Level ${summary.level} · ${summary.rank}-Rank`,details:`${summary.days} days · ${summary.attendance} attendance · ${summary.tasks} tasks · ${summary.schedules} classes`}}}
@@ -2227,7 +2209,7 @@
       return{kind,data:validatedData,summary:settingsProgressSummary(validatedData)};
     }
     if(!Array.isArray(data.classSchedule)||!Array.isArray(data.scheduleExceptions))throw new Error('The schedule backup is missing class or exception records.');
-    const merged=clone(state);merged.classSchedule=clone(data.classSchedule);merged.scheduleExceptions=clone(data.scheduleExceptions);const validated=S.normalizeCurrent(merged),validatedData={classSchedule:clone(validated.classSchedule),scheduleExceptions:clone(validated.scheduleExceptions)};
+    const merged=clone(state);merged.classSchedule=clone(data.classSchedule);merged.scheduleHistory=Array.isArray(data.scheduleHistory)?clone(data.scheduleHistory):[];merged.scheduleExceptions=clone(data.scheduleExceptions);const validated=S.normalizeCurrent(merged),validatedData={classSchedule:clone(validated.classSchedule),scheduleHistory:clone(validated.scheduleHistory||[]),scheduleExceptions:clone(validated.scheduleExceptions)};
     return{kind,data:validatedData,summary:settingsScheduleSummary(validatedData)};
   };
   const clearSettingsImport=()=>{
@@ -2256,7 +2238,7 @@
     const kind=settingsUi.kind,fileName=settingsUi.fileName;
     try{
       S.createDailySnapshot(state,true);S.createPreUpdateRollback(clone(state),Number(state.version||S.schemaInfo().version),`Before Settings ${kind} import`);
-      if(kind==='full')state=settingsUi.pending.state;else{const merged=clone(state);if(kind==='progress')progressExportKeys.forEach(key=>{merged[key]=clone(settingsUi.pending.data[key])});else{merged.classSchedule=clone(settingsUi.pending.data.classSchedule);merged.scheduleExceptions=clone(settingsUi.pending.data.scheduleExceptions)}state=S.normalizeCurrent(merged)}
+      if(kind==='full')state=settingsUi.pending.state;else{const merged=clone(state);if(kind==='progress')progressExportKeys.forEach(key=>{merged[key]=clone(settingsUi.pending.data[key])});else{merged.classSchedule=clone(settingsUi.pending.data.classSchedule);merged.scheduleHistory=clone(settingsUi.pending.data.scheduleHistory||[]);merged.scheduleExceptions=clone(settingsUi.pending.data.scheduleExceptions)}state=S.normalizeCurrent(merged)}
       state.logs=Array.isArray(state.logs)?state.logs:[];state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'restore',message:`Settings ${kind} backup restored${fileName?`: ${fileName}`:''}.`});
       if(kind==='schedule')invalidateExternalCalendar();
       save({silent:true});settingsUi={pending:null,fileName:'',kind:''};controlUi.correction=false;scheduleUi.editId=null;activeScreenId=null;
@@ -2383,7 +2365,7 @@
     if(!$('#scheduleOverlay').hidden||!$('#emergencyOverlay').hidden||!$('#developerRunOverlay').hidden)return;
     cancelHold();resetClockAccessVisual();controlUi.directDeveloper=false;controlUi.directProfile=false;$('#scheduleOverlay').hidden=false;renderControlHome();haptic('tap');
   };
-  const closeScheduleOverlay=()=>{$('#scheduleOverlay').hidden=true;cancelHold('schedule-delete');cancelHold('clock-schedule');cancelHold('profile-settings');resetClockAccessVisual();controlUi.correction=false;controlUi.directDeveloper=false;controlUi.directProfile=false;backupUi={pending:null,fileName:''};settingsUi={pending:null,fileName:'',kind:''};if($('#backupFileInput'))$('#backupFileInput').value='';['settingsProgressFile','settingsScheduleFile','settingsFullFile'].forEach(id=>{const input=$(`#${id}`);if(input)input.value=''});renderApp();if(activeProtocolRecord())requestWakeLock()};
+  const closeScheduleOverlay=()=>{$('#scheduleOverlay').hidden=true;cancelHold('schedule-delete');cancelHold('clock-schedule');cancelHold('profile-settings');resetClockAccessVisual();controlUi.correction=false;controlUi.attendanceEditId=null;controlUi.unverifiedResolveId=null;controlUi.directDeveloper=false;controlUi.directProfile=false;backupUi={pending:null,fileName:''};settingsUi={pending:null,fileName:'',kind:''};if($('#backupFileInput'))$('#backupFileInput').value='';['settingsProgressFile','settingsScheduleFile','settingsFullFile'].forEach(id=>{const input=$(`#${id}`);if(input)input.value=''});renderApp();if(activeProtocolRecord())requestWakeLock()};
   const renderScheduleOverview=()=>{
     setControlView('scheduleOverviewView');scheduleUi.day=Number(scheduleUi.day);const entries=scheduleEntriesForDay(scheduleUi.day);const totalPages=Math.max(1,Math.ceil(entries.length/schedulePageSize));scheduleUi.page=clamp(scheduleUi.page,0,totalPages-1);
     $('#scheduleWeekTabs').innerHTML=scheduleDays.map(day=>{const count=scheduleEntriesForDay(day.value).length;return`<button type="button" data-day="${day.value}" class="${day.value===scheduleUi.day?'selected':''}"><strong>${day.label}</strong><small>${count}</small></button>`}).join('');
@@ -2393,6 +2375,11 @@
     $('#schedulePageNav').hidden=totalPages<=1;$('#schedulePageLabel').textContent=`${scheduleUi.page+1} / ${totalPages}`;$('#schedulePagePrev').disabled=scheduleUi.page===0;$('#schedulePageNext').disabled=scheduleUi.page>=totalPages-1;
   };
   const currentScheduleEntry=()=>state.classSchedule.find(entry=>entry.id===scheduleUi.editId&&entry.active!==false)||null;
+  const archiveScheduleVersion=(entry,effectiveTo=currentKey())=>{
+    if(!entry)return;state.scheduleHistory=Array.isArray(state.scheduleHistory)?state.scheduleHistory:[];
+    const version={...clone(entry),id:S.uid('schedule-version'),classId:entry.id,effectiveFrom:entry.effectiveFrom||(entry.createdAt?S.dateKey(new Date(entry.createdAt)):effectiveTo),effectiveTo,active:false,archivedAt:new Date().toISOString()};
+    state.scheduleHistory.push(version);state.scheduleHistory=state.scheduleHistory.slice(-240);
+  };
   const openScheduleEditor=id=>{scheduleUi.editId=id||null;scheduleUi.isNew=!id;setControlView('scheduleEditView');fillScheduleForm()};
   const fillScheduleForm=()=>{
     const entry=currentScheduleEntry(),defaults={subject:'',code:'',day:scheduleUi.day,room:'',modality:'Onsite',start:'08:00',end:'09:00'};const value=entry||defaults;
@@ -2407,20 +2394,21 @@
     if(conflicting){showBreachWarning('SCHEDULE CONFLICT',`${subject} overlaps ${conflicting.subject}. Adjust the class time first.`);return}
     const entry=currentScheduleEntry();
     if(entry){
-      const oldKey=subjectKey(entry.subject),newKey=subjectKey(subject),oldSubject=entry.subject;const oldSubjectStillLinked=activeSchedule().some(item=>item.id!==entry.id&&subjectKey(item.subject)===oldKey);
-      Object.assign(entry,{subject,code,day,room,modality,start,end,active:true,updatedAt:new Date().toISOString()});
+      const oldKey=subjectKey(entry.subject),newKey=subjectKey(subject),oldSubject=entry.subject;const oldSubjectStillLinked=activeSchedule().some(item=>item.id!==entry.id&&subjectKey(item.subject)===oldKey),changed=['subject','code','day','room','modality','start','end'].some(key=>String(entry[key]??'')!==String(({subject,code,day,room,modality,start,end})[key]??''));
+      if(changed)archiveScheduleVersion(entry,currentKey());
+      Object.assign(entry,{subject,code,day,room,modality,start,end,active:true,effectiveFrom:changed?currentKey():(entry.effectiveFrom||(entry.createdAt?S.dateKey(new Date(entry.createdAt)):currentKey())),updatedAt:new Date().toISOString()});
       if(oldKey!==newKey&&!oldSubjectStillLinked){
         state.academicTasks.filter(task=>task.subjectKey===oldKey).forEach(task=>{task.subjectKey=newKey;task.subjectName=subject});
         state.attendanceRecords.filter(record=>record.subjectKey===oldKey).forEach(record=>{record.subjectKey=newKey;record.subjectName=subject;record.code=code||record.code});
         state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'schedule',message:`Academic tasks and attendance relinked from ${oldSubject} to ${subject}.`});
       }
-    }else state.classSchedule.push({id:S.uid('class'),subject,code,day,room,modality,start,end,active:true,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()});
+    }else state.classSchedule.push({id:S.uid('class'),subject,code,day,room,modality,start,end,active:true,effectiveFrom:currentKey(),createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()});
     invalidateExternalCalendar();state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'schedule',message:`Class schedule saved: ${subject}, ${scheduleDayName(day)} ${start}-${end}.`});
     save();scheduleUi.day=day;scheduleUi.page=0;scheduleUi.editId=null;scheduleUi.isNew=false;renderScheduleOverview();showBreachWarning('SCHEDULE UPDATED',`${subject} now synchronizes with attendance, subject XP, and task tracking.`);
   };
   const deleteScheduleEntry=()=>{
     const entry=currentScheduleEntry();if(!entry)return;
-    state.classSchedule=state.classSchedule.filter(item=>item.id!==entry.id);invalidateExternalCalendar();
+    archiveScheduleVersion(entry,currentKey());state.classSchedule=state.classSchedule.filter(item=>item.id!==entry.id);invalidateExternalCalendar();
     state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'schedule',message:`Class removed from future schedule: ${entry.subject}. Attendance, XP, and task history preserved.`});
     save();scheduleUi.day=Number(entry.day);scheduleUi.page=0;scheduleUi.editId=null;scheduleUi.isNew=false;renderScheduleOverview();showBreachWarning('CLASS DELETED',`${entry.subject} was removed from future meetings. Existing records were preserved.`);
   };
@@ -2586,7 +2574,7 @@
     $('#openSettings').addEventListener('click',()=>{settingsUi={pending:null,fileName:'',kind:''};renderSettings()});
     $('#openAcademicControl').addEventListener('click',renderAcademicHome);
     $('#openFreeSchedule').addEventListener('click',()=>{scheduleUi.day=defaultScheduleDay();scheduleUi.page=0;renderScheduleOverview()});
-    $('#openFreeAttendance').addEventListener('click',()=>{controlUi.attendanceTab='overall';controlUi.subjectIndex=0;controlUi.subjectAbsencePage=0;controlUi.unverifiedIndex=0;controlUi.unverifiedResolveId=null;renderAttendance()});
+    $('#openFreeAttendance').addEventListener('click',()=>{controlUi.attendanceTab='overall';controlUi.subjectIndex=0;controlUi.subjectFilter='all';controlUi.unverifiedIndex=0;controlUi.unverifiedResolveId=null;controlUi.attendanceEditId=null;renderAttendance()});
     $('#openDirectiveStudio').addEventListener('click',renderDirectiveStudio);
     $('#directiveStudioBack').addEventListener('click',renderControlHome);
     $('#directiveAddProtocol').addEventListener('click',openNewDirectiveProtocol);
@@ -2695,7 +2683,7 @@
     $('#cancelBackupRestore').addEventListener('click',clearBackupPreview);
     $('#confirmBackupRestore').addEventListener('click',confirmBackupRestore);
     $('#scheduleConfigEdit').addEventListener('click',()=>{scheduleUi.day=defaultScheduleDay();scheduleUi.page=0;renderScheduleOverview()});
-    $('#openAttendance').addEventListener('click',()=>{controlUi.attendanceTab='overall';controlUi.correction=false;controlUi.unverifiedIndex=0;controlUi.unverifiedResolveId=null;renderAttendance()});
+    $('#openAttendance').addEventListener('click',()=>{controlUi.attendanceTab='overall';controlUi.correction=false;controlUi.unverifiedIndex=0;controlUi.unverifiedResolveId=null;controlUi.attendanceEditId=null;renderAttendance()});
     $('#openScheduleExceptions').addEventListener('click',()=>{exceptionUi.index=0;renderScheduleExceptions()});
     $('#openConflictScan').addEventListener('click',()=>renderConflictScan(true));
     $('#conflictScanBack').addEventListener('click',renderAcademicHome);
@@ -2732,29 +2720,20 @@
       }
     });
 
-    $('#attendancePrev').addEventListener('click',()=>{if(controlUi.attendanceTab==='subjects'){controlUi.subjectIndex=Math.max(0,controlUi.subjectIndex-1);controlUi.subjectAbsencePage=0}else if(controlUi.attendanceTab==='history')controlUi.historyIndex=Math.max(0,controlUi.historyIndex-1);renderAttendance()});
-    $('#attendanceNext').addEventListener('click',()=>{if(controlUi.attendanceTab==='subjects'){controlUi.subjectIndex=Math.min(Math.max(0,subjectCatalog().length-1),controlUi.subjectIndex+1);controlUi.subjectAbsencePage=0}else if(controlUi.attendanceTab==='history')controlUi.historyIndex=Math.min(Math.max(0,historyRecords().length-1),controlUi.historyIndex+1);renderAttendance()});
+    $('#attendancePrev').addEventListener('click',()=>{if(controlUi.attendanceTab==='subjects'){controlUi.subjectIndex=Math.max(0,controlUi.subjectIndex-1);controlUi.attendanceEditId=null}renderAttendance()});
+    $('#attendanceNext').addEventListener('click',()=>{if(controlUi.attendanceTab==='subjects'){controlUi.subjectIndex=Math.min(Math.max(0,subjectCatalog().length-1),controlUi.subjectIndex+1);controlUi.attendanceEditId=null}renderAttendance()});
     $('#attendanceContent').addEventListener('click',event=>{
-      const action=event.target.closest('[data-attendance-action]');
-      if(action){
-        const type=action.dataset.attendanceAction;
-        if(type==='show-overall'){controlUi.attendanceTab='overall';controlUi.subjectAbsencePage=0;renderAttendance();return}
-        if(type==='show-subjects'){controlUi.attendanceTab='subjects';controlUi.subjectIndex=clamp(controlUi.subjectIndex,0,Math.max(0,subjectCatalog().length-1));controlUi.subjectAbsencePage=0;controlUi.unverifiedResolveId=null;renderAttendance();return}
-        if(type==='resolve-unverified'){const record=state.attendanceRecords.find(item=>item.id===action.dataset.recordId&&item.status==='unverified'&&!item.finalized);if(record){controlUi.unverifiedResolveId=record.id;renderAttendance()}return}
-        if(type==='cancel-unverified-resolution'){controlUi.unverifiedResolveId=null;renderAttendance();return}
-        if(type==='unverified-prev'){controlUi.unverifiedIndex=Math.max(0,controlUi.unverifiedIndex-1);renderAttendance();return}
-        if(type==='unverified-next'){controlUi.unverifiedIndex=Math.min(Math.max(0,resolvableUnverifiedRecords().length-1),controlUi.unverifiedIndex+1);renderAttendance();return}
-        if(type==='absence-prev'){controlUi.subjectAbsencePage=Math.max(0,controlUi.subjectAbsencePage-1);renderAttendance();return}
-        if(type==='absence-next'){
-          const subject=overallAcademicStats().subjects[controlUi.subjectIndex],total=Math.max(1,Math.ceil((subject?.records||[]).filter(record=>record.status==='absent').length/attendanceAbsencePageSize()));
-          controlUi.subjectAbsencePage=Math.min(total-1,controlUi.subjectAbsencePage+1);renderAttendance();return
-        }
-        if(type==='correct'){controlUi.correction=true;renderAttendance();return}
-      }
-      const resolution=event.target.closest('[data-unverified-status]');
-      if(resolution){const record=state.attendanceRecords.find(item=>item.id===controlUi.unverifiedResolveId);if(record)resolveUnverifiedAttendanceRecord(record,resolution.dataset.unverifiedStatus);return}
-      const correction=event.target.closest('[data-correct-status]');if(correction){const record=historyRecords()[controlUi.historyIndex];if(record)correctAttendanceRecord(record,correction.dataset.correctStatus)}
+      const action=event.target.closest('[data-attendance-action]');if(!action)return;const type=action.dataset.attendanceAction;
+      if(type==='show-overall'){controlUi.attendanceTab='overall';controlUi.attendanceEditId=null;renderAttendance();return}
+      if(type==='show-subjects'){controlUi.attendanceTab='subjects';controlUi.subjectIndex=clamp(controlUi.subjectIndex,0,Math.max(0,subjectCatalog().length-1));controlUi.attendanceEditId=null;renderAttendance();return}
+      if(type==='edit-record'){const record=state.attendanceRecords.find(item=>item.id===action.dataset.recordId);if(record){controlUi.attendanceEditId=record.id;controlUi.unverifiedResolveId=record.status==='unverified'?record.id:null;renderAttendance()}return}
+      if(type==='cancel-resolution'){controlUi.attendanceEditId=null;controlUi.unverifiedResolveId=null;renderAttendance();return}
+      if(type==='save-resolution'){saveAttendanceResolution();return}
+      if(type==='unverified-prev'){controlUi.unverifiedIndex=Math.max(0,controlUi.unverifiedIndex-1);renderAttendance();return}
+      if(type==='unverified-next'){controlUi.unverifiedIndex=Math.min(Math.max(0,resolvableUnverifiedRecords().length-1),controlUi.unverifiedIndex+1);renderAttendance();return}
+      if(type==='subject-filter'){controlUi.subjectFilter=action.dataset.filter||'all';renderAttendance();return}
     });
+    $('#attendanceContent').addEventListener('change',event=>{if(event.target?.id!=='attendanceResolutionStatus')return;const fields=$('#attendancePartialFields');if(fields)fields.hidden=event.target.value!=='partial'});
 
     $('#scheduleOverviewBack').addEventListener('click',renderControlHome);$('#scheduleBack').addEventListener('click',renderScheduleOverview);$('#scheduleSave').addEventListener('click',saveScheduleEntry);
     $('#scheduleAdd').addEventListener('click',()=>openScheduleEditor(null));

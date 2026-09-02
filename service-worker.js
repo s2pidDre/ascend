@@ -1,5 +1,5 @@
 const CACHE_PREFIX='ascend-discipline-';
-const CACHE=`${CACHE_PREFIX}v63-protocol-builder`;
+const CACHE=`${CACHE_PREFIX}v64-calendar-attendance-history`;
 const APP_SHELL=[
   './',
   './index.html',
