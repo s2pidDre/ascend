@@ -171,7 +171,7 @@
       schedulingMode:DIRECTIVE_SCHEDULE_MODES.has(value.schedulingMode)?value.schedulingMode:'fixed',priority:DIRECTIVE_PRIORITIES.has(value.priority)?value.priority:'normal',
       allowSkipToday:value.allowSkipToday!==false,xpMode:DIRECTIVE_XP_MODES.has(value.xpMode)?value.xpMode:(core?'custom':'automatic'),xp:Math.min(500,Math.max(10,Number(value.xp||100)))
     };
-    if(Array.isArray(value.subtasks))item.subtasks=value.subtasks.slice(0,32).map(normalizeDirectiveStep);
+    if(Array.isArray(value.subtasks)&&(value.subtasks.length||!core))item.subtasks=value.subtasks.slice(0,32).map(normalizeDirectiveStep);
     return item;
   };
   const normalizeDirectiveProtocols=rawProtocols=>{

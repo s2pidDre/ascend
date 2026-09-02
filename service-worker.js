@@ -1,5 +1,5 @@
 const CACHE_PREFIX='ascend-discipline-';
-const CACHE=`${CACHE_PREFIX}v65-calendar-tracked-day-fix`;
+const CACHE=`${CACHE_PREFIX}v66-directive-default-fallback`;
 const APP_SHELL=[
   './',
   './index.html',
