@@ -4681,6 +4681,10 @@ body.orientation-blocked .developer-run-overlay{display:none!important}
 .profile-calendar-day.missed i{background:var(--red);box-shadow:0 0 7px rgba(255,83,108,.48)}
 .profile-calendar-day.excused{border-color:rgba(255,189,87,.27);background:rgba(255,189,87,.07);color:#ffe6b7}
 .profile-calendar-day.excused i{background:var(--amber);box-shadow:0 0 7px rgba(255,189,87,.42)}
+
+.profile-calendar-day.pending{border-color:rgba(75,199,255,.26);background:rgba(75,199,255,.06);color:#d7f3ff}
+.profile-calendar-day.pending i{background:var(--blue);box-shadow:0 0 7px rgba(75,199,255,.42)}
+.profile-calendar-day.untracked{opacity:.18;background:rgba(4,14,31,.28);border-color:rgba(75,199,255,.05)}
 .profile-calendar-legend{flex-wrap:wrap}
 .profile-calendar-legend .missed i{background:var(--red)}
 .profile-calendar-legend .excused i{background:var(--amber)}

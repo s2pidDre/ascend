@@ -32,6 +32,7 @@
     version:VERSION,
     initialized:false,
     createdAt:nowIso(),
+    activatedAt:null,
     updatedAt:nowIso(),
     player:{
       name:'Player',codename:'',emblem:'apex',title:'Discipline Initiate',level:1,maxLevel:50,streak:0,bestStreak:0,totalClearDays:0,totalFailedDays:0,
@@ -196,6 +197,11 @@
     };
     delete state.integrity;delete state.recovery;delete state.skills;delete state.player.failureScar;delete state.player.achievementUnlocks;delete state.player.achievementSeen;
     state.version=VERSION;
+    if(!state.activatedAt){
+      const activationLog=(Array.isArray(raw.logs)?raw.logs:[]).filter(log=>/Discipline System activated/i.test(String(log?.message||''))&&log?.at).sort((a,b)=>String(a.at).localeCompare(String(b.at)))[0];
+      const earliestDay=Object.keys(raw.dayRecords&&typeof raw.dayRecords==='object'&&!Array.isArray(raw.dayRecords)?raw.dayRecords:{}).sort()[0];
+      state.activatedAt=activationLog?.at||(earliestDay?`${earliestDay}T00:00:00`:raw.createdAt||base.createdAt);
+    }
     state.settings.sound=typeof rawSettings.sound==='boolean'?rawSettings.sound:base.settings.sound;
     state.settings.haptics=typeof rawSettings.haptics==='boolean'?rawSettings.haptics:base.settings.haptics;
     state.settings.keepAwake=typeof rawSettings.keepAwake==='boolean'?rawSettings.keepAwake:base.settings.keepAwake;

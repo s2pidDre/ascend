@@ -2013,6 +2013,12 @@
   const profileMonthDate=key=>{const [year,month]=String(key||profileMonthKey(new Date())).split('-').map(Number);return new Date(year,Math.max(0,(month||1)-1),1,12,0,0,0)};
   const shiftProfileMonth=(key,delta)=>{const date=profileMonthDate(key);date.setMonth(date.getMonth()+delta);return profileMonthKey(date)};
   const profileDayRecordsFor=dateKey=>({day:state.dayRecords?.[dateKey]||null,attendance:state.attendanceRecords.filter(record=>record.scheduledDate===dateKey).sort((a,b)=>String(a.scheduledStart||'').localeCompare(String(b.scheduledStart||'')))});
+  const profileTrackingStartKey=()=>{
+    const candidates=[],activation=state.activatedAt||state.createdAt;
+    if(activation){const date=new Date(activation);if(!Number.isNaN(date.getTime()))candidates.push(S.dateKey(date))}
+    const earliestRecord=Object.keys(state.dayRecords||{}).sort()[0];if(earliestRecord)candidates.push(earliestRecord);
+    return candidates.sort()[0]||currentKey();
+  };
   const profileProtocolProgress=protocol=>{
     const steps=(protocol?.steps||[]).filter(step=>step.required!==false),completed=steps.filter(step=>step.status==='completed').length,skipped=steps.filter(step=>step.status==='skipped').length;
     return{total:steps.length,completed,skipped};
@@ -2025,21 +2031,27 @@
     return{required,excused,applicable,cleared,directives,touched};
   };
   const profileDayState=dateKey=>{
-    if(dateKey>currentKey())return'future';
-    const {day}=profileDayRecordsFor(dateKey);if(!day)return'none';const stats=profileDayProtocolStats(day);
+    const today=currentKey();
+    if(dateKey>today)return'future';
+    if(dateKey<profileTrackingStartKey())return'untracked';
+    const {day}=profileDayRecordsFor(dateKey);
+    if(!day)return dateKey===today?'pending':'missed';
+    const stats=profileDayProtocolStats(day);
     if(day.status==='cleared')return stats.excused.length?'excused':'clear';
     if(day.status==='failed')return stats.touched?'partial':'missed';
-    if(day.status==='active')return stats.touched?'partial':'none';
-    return'none';
+    if(day.status==='active'||day.status==='pending')return stats.touched?'partial':dateKey===today?'pending':'missed';
+    return dateKey===today?'pending':'missed';
   };
   const profileDayResultLabel=dateKey=>{
     const {day}=profileDayRecordsFor(dateKey),status=profileDayState(dateKey);
     if(status==='clear')return'DAILY CLEAR';
     if(status==='excused')return'EXCUSED';
     if(status==='missed')return'MISSED';
+    if(status==='pending')return'PENDING';
     if(status==='partial')return day?.status==='active'&&dateKey===currentKey()?'IN PROGRESS':'PARTIAL';
+    if(status==='untracked')return'NOT TRACKED';
     if(status==='future')return'FUTURE';
-    return'NO PROTOCOL RECORD';
+    return'PENDING';
   };
   const profileDayXp=dateKey=>{
     const {day,attendance}=profileDayRecordsFor(dateKey);
@@ -2052,13 +2064,13 @@
     for(let day=1;day<=last;day+=1){const dayKey=S.dateKey(new Date(year,month,day,12));if(dayKey>currentKey())continue;const status=profileDayState(dayKey);if(counts[status]!==undefined)counts[status]+=1}
     return counts;
   };
-  const profileDayCellLabel=(status,dateKey)=>status==='clear'?'CLEAR':status==='excused'?'EXCUSED':status==='missed'?'MISSED':status==='partial'?(dateKey===currentKey()?'ACTIVE':'PARTIAL'):'';
+  const profileDayCellLabel=(status,dateKey)=>status==='clear'?'CLEAR':status==='excused'?'EXCUSED':status==='missed'?'MISSED':status==='pending'?'PENDING':status==='partial'?(dateKey===currentKey()?'ACTIVE':'PARTIAL'):'';
   const profileCalendarMarkup=()=>{
     const currentMonth=profileMonthKey(new Date());controlUi.profileMonth=controlUi.profileMonth||currentMonth;
     const monthDate=profileMonthDate(controlUi.profileMonth),year=monthDate.getFullYear(),month=monthDate.getMonth(),daysInMonth=new Date(year,month+1,0,12).getDate(),offset=(new Date(year,month,1,12).getDay()+6)%7,summary=profileMonthSummary(controlUi.profileMonth);
     const cells=[];for(let index=0;index<offset;index+=1)cells.push('<span class="profile-calendar-spacer" aria-hidden="true"></span>');
     for(let day=1;day<=daysInMonth;day+=1){
-      const key=S.dateKey(new Date(year,month,day,12)),status=profileDayState(key),today=key===currentKey(),disabled=status==='future',cellLabel=profileDayCellLabel(status,key);
+      const key=S.dateKey(new Date(year,month,day,12)),status=profileDayState(key),today=key===currentKey(),disabled=status==='future'||status==='untracked',cellLabel=profileDayCellLabel(status,key);
       cells.push(`<button type="button" class="profile-calendar-day ${status}${today?' today':''}" data-profile-action="calendar-day" data-date="${key}" ${disabled?'disabled':''} aria-label="${escapeHtml(new Date(`${key}T12:00:00`).toLocaleDateString(undefined,{month:'long',day:'numeric',year:'numeric'}))} · ${profileDayResultLabel(key)}"><span>${day}</span>${cellLabel?`<small>${cellLabel}</small>`:''}<i aria-hidden="true"></i></button>`);
     }
     while(cells.length<42)cells.push('<span class="profile-calendar-spacer" aria-hidden="true"></span>');
@@ -2076,11 +2088,13 @@
     const {day,attendance}=profileDayRecordsFor(dateKey),xp=profileDayXp(dateKey),date=new Date(`${dateKey}T12:00:00`),result=profileDayResultLabel(dateKey),dayStats=profileDayProtocolStats(day);
     const directiveRows=day?protocolConfigsForRecord(day).map(config=>{const protocol=day.protocols[config.id],boss=Boolean(protocol?.boss),name=boss?(day.weeklyBossPlan?.title?`Weekly Boss · ${day.weeklyBossPlan.title}`:'Weekly Boss'):(protocol?.name||config.name).replace(/ Protocol$/,'');const applied=Math.max(0,Number(protocol?.profileXpAppliedAmount||0)),start=protocol?.start||config.start,end=protocol?.end||config.end,progress=profileProtocolProgress(protocol);const stepRows=(protocol?.steps||[]).map(step=>`<div class="profile-directive-row ${escapeHtml(step.status||'pending')}"><span>${escapeHtml(step.title||'Directive')}</span><b>${step.status==='completed'?'DONE':step.status==='skipped'?'SKIPPED':step.status==='active'?'ACTIVE':'PENDING'}</b></div>`).join('');return `<details class="profile-protocol-log ${escapeHtml(protocol?.status||'pending')}"><summary><section><strong>${escapeHtml(name)}</strong><small>${escapeHtml(start)}–${escapeHtml(end)} · ${progress.completed}/${progress.total} required directives${applied?` · +${applied} XP`:''}</small></section><b>${profileProtocolStatusCopy(protocol||{})}</b></summary><div class="profile-directive-list">${stepRows||'<div class="profile-log-empty">No directives recorded.</div>'}</div></details>`}).join(''):'';
     const attendanceRows=attendance.map(record=>{const name=record.code||record.subjectName||'Class',applied=Math.max(0,Number(record.profileXpAppliedAmount||0)),detail=[formatTime(record.scheduledStart||'00:00'),record.subjectName&&record.code?record.subjectName:'',record.arrivalTime?`Arr ${formatTime(record.arrivalTime)}`:'',record.departureTime?`Left ${formatTime(record.departureTime)}`:'',applied?`+${applied} XP`:''].filter(Boolean).join(' · ');return `<div class="profile-log-row attendance ${escapeHtml(record.status||'unverified')}"><section><strong>${escapeHtml(name)}</strong><small>${escapeHtml(detail)}</small></section><b>${profileAttendanceStatusCopy(record.status)}</b></div>`}).join('');
-    const protocolSummary=day?`${dayStats.cleared}/${dayStats.applicable.length} required protocols · ${dayStats.directives.completed}/${dayStats.directives.total} required directives${dayStats.excused.length?` · ${dayStats.excused.length} excused`:''}`:'No protocol activity recorded.';
+    const dayState=profileDayState(dateKey);
+    const protocolSummary=day?`${dayStats.cleared}/${dayStats.applicable.length} required protocols · ${dayStats.directives.completed}/${dayStats.directives.total} required directives${dayStats.excused.length?` · ${dayStats.excused.length} excused`:''}`:dayState==='missed'?'Tracked day · no protocol activity was saved.':dayState==='pending'?'Tracked day · no protocol activity yet.':dayState==='untracked'?'ASCEND was not active on this date.':'No protocol activity recorded.';
+    const emptyProtocolCopy=dayState==='missed'?'No detailed protocol snapshot exists for this tracked day.':dayState==='pending'?'No directives have been started yet.':'No directive activity recorded.';
     return `<section class="profile-day-log-detail">
       <div class="profile-day-log-head"><div><span>DAY LOG</span><strong>${escapeHtml(date.toLocaleDateString(undefined,{weekday:'long',month:'long',day:'numeric'}))}</strong><small>${result} · ${escapeHtml(protocolSummary)}</small></div><div><span>PROFILE XP</span><strong>+${xp.total}</strong><small>${xp.directive} directive · ${xp.academic} attendance</small></div></div>
       <div class="profile-day-log-scroll">
-        <div class="profile-log-section"><span>PROTOCOLS & DIRECTIVES</span>${directiveRows||'<div class="profile-log-empty">No directive activity recorded.</div>'}</div>
+        <div class="profile-log-section"><span>PROTOCOLS & DIRECTIVES</span>${directiveRows||`<div class="profile-log-empty">${escapeHtml(emptyProtocolCopy)}</div>`}</div>
         <div class="profile-log-section"><span>ATTENDANCE</span>${attendanceRows||'<div class="profile-log-empty">No attendance records for this day.</div>'}</div>
       </div>
       <button class="ghost-button profile-log-back" type="button" data-profile-action="calendar-back">Back to Calendar</button>
@@ -2544,7 +2558,7 @@
     window.addEventListener('blur',()=>cancelHold());
     document.addEventListener('pointerup',()=>cancelHold());
     document.addEventListener('pointercancel',()=>cancelHold());
-    $('#activateButton').addEventListener('click',()=>{const name=$('#playerName').value.trim();if(!name){$('#playerName').focus();return}state.player.name=name;state.initialized=true;state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'system',message:'Discipline System activated at Level 1.'});save();requestPersistentStorage();renderApp()});
+    $('#activateButton').addEventListener('click',()=>{const name=$('#playerName').value.trim();if(!name){$('#playerName').focus();return}state.player.name=name;state.initialized=true;state.activatedAt=state.activatedAt||new Date().toISOString();state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'system',message:'Discipline System activated at Level 1.'});save();requestPersistentStorage();renderApp()});
     $('#earlyWakeButton').addEventListener('pointerdown',event=>{event.preventDefault();beginHold('early-wake',2000,progress=>{$('#earlyWakeFill').style.width=`${progress*100}%`},confirmEarlyWake)});
     ['pointerup','pointercancel','pointerleave'].forEach(type=>$('#earlyWakeButton').addEventListener(type,()=>cancelHold('early-wake')));
     $('#notYetButton').addEventListener('click',()=>{earlyWakeDismissedSession=true;haptic('tap');renderApp()});
