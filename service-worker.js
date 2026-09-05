@@ -1,5 +1,5 @@
 const CACHE_PREFIX='ascend-discipline-';
-const CACHE=`${CACHE_PREFIX}v66-directive-default-fallback`;
+const CACHE=`${CACHE_PREFIX}v67-performance-stability`;
 const APP_SHELL=[
   './',
   './index.html',

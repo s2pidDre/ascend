@@ -11,6 +11,9 @@
   const ROUTINE_LOG_LIMIT=420;
   const SNAPSHOT_LIMIT=7;
   const ROLLBACK_LIMIT=4;
+  const SNAPSHOT_MIN_INTERVAL_MS=5*60*1000;
+  const RECOVERY_MIN_INTERVAL_MS=30*1000;
+  let lastRecoveryWriteAt=0;
   const PERMANENT_LOG_TYPES=new Set(['system','level','rank','mastery','backup','restore','emergency','attendance-correction','recovery','snapshot','boss','migration','quest','weekly','test','watchdog','reminder']);
   const nowIso=()=>new Date().toISOString();
   const dateKey=(date=new Date())=>`${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
@@ -50,7 +53,7 @@
     directiveConfig:{version:2,protocols:{},history:[],updatedAt:null},
     quests:{daily:null,history:[]},
     weeklyDebriefs:[],
-    settings:{sound:true,haptics:true,keepAwake:true,notifications:false,notificationLeadMinutes:10,timeFormat:'12',externalCalendarConfirmed:false,externalCalendarExportedAt:null,externalCalendarHorizonDays:60},
+    settings:{sound:true,haptics:true,keepAwake:true,notifications:false,notificationLeadMinutes:10,timeFormat:'12',performanceMode:'adaptive',externalCalendarConfirmed:false,externalCalendarExportedAt:null,externalCalendarHorizonDays:60},
     timezone:{name:timezoneName(),offset:timezoneOffset(),confirmedAt:nowIso(),pending:null,ignoredDevice:null,history:[]},
     system:{recoveredFrom:null,lastStorageWarningAt:null,notificationLedger:{},safeMode:false,lastSuccessfulBoot:null,migrationHistory:[],auditTrail:[],watchdog:{lastRun:null,issues:0,repairs:0,summary:'Not run'},reminderBridge:{lastCheckAt:null,missedCount:0,lastMissedAt:null,lastExportAt:null,lastExportEvents:0},profileXpReconciliation:{version:0,completedAt:null,date:null,repairedMarkers:0,recoveredDirectiveXp:0,recoveredAttendanceXp:0,status:'pending'},developerTest:{enabled:false,unlocked:false,scenario:'free',simulatedDate:null,runs:0,lastResult:null,sandboxMode:'profile',reports:[],labHistory:[]}},
     logs:[]
@@ -208,6 +211,7 @@
     state.settings.notifications=typeof rawSettings.notifications==='boolean'?rawSettings.notifications:base.settings.notifications;
     state.settings.notificationLeadMinutes=Math.min(30,Math.max(5,Number(rawSettings.notificationLeadMinutes||10)));
     state.settings.timeFormat=rawSettings.timeFormat==='24'?'24':'12';
+    state.settings.performanceMode=['adaptive','full','reduced'].includes(rawSettings.performanceMode)?rawSettings.performanceMode:'adaptive';
     state.settings.externalCalendarConfirmed=Boolean(rawSettings.externalCalendarConfirmed);
     state.settings.externalCalendarExportedAt=rawSettings.externalCalendarExportedAt||null;
     state.settings.externalCalendarHorizonDays=Math.min(90,Math.max(30,Number(rawSettings.externalCalendarHorizonDays||60)));
@@ -262,9 +266,14 @@
   const snapshotState=state=>clone({...state,system:{...(state.system||{}),recoveredFrom:null}});
   const snapshotLimitFor=()=>SNAPSHOT_LIMIT;
 
-  const createDailySnapshot=(state,force=false)=>{
-    const normalized=normalizeCurrent(snapshotState(state));
-    const serialized=JSON.stringify(normalized),hash=hashText(serialized),today=dateKey(),snapshots=readList(SNAPSHOT_KEY),last=snapshots[snapshots.length-1];
+  const createDailySnapshot=(state,force=false,preNormalized=false)=>{
+    const today=dateKey(),snapshots=readList(SNAPSHOT_KEY),last=snapshots[snapshots.length-1];
+    if(!force&&last&&last.date===today){
+      const lastAt=new Date(last.createdAt||0).getTime();
+      if(Number.isFinite(lastAt)&&Date.now()-lastAt<SNAPSHOT_MIN_INTERVAL_MS)return last;
+    }
+    const normalized=preNormalized?snapshotState(state):normalizeCurrent(snapshotState(state));
+    const serialized=JSON.stringify(normalized),hash=hashText(serialized);
     if(!force&&last&&last.date===today&&last.hash===hash)return last;
     const item={id:uid('snapshot'),date:today,createdAt:nowIso(),hash,state:normalized};
     const filtered=snapshots.filter(snapshot=>snapshot.date!==today);filtered.push(item);writeList(SNAPSHOT_KEY,filtered,snapshotLimitFor(normalized));return item;
@@ -344,14 +353,19 @@
     }catch(error){console.error('ASCEND load failed. Attempting recovery.',error);return recoverState()}
   };
 
-  const persist=state=>{
-    const normalized=normalizeCurrent(state);normalized.updatedAt=nowIso();normalized.version=VERSION;normalized.logs=pruneLogs(normalized.logs);
-    const previous=store.getItem(KEY);if(previous){try{JSON.parse(previous);store.setItem(RECOVERY_KEY,previous)}catch(error){}}
+  const persist=(state,options={})=>{
+    const normalized=options.trusted?state:normalizeCurrent(state);normalized.updatedAt=nowIso();normalized.version=VERSION;normalized.logs=pruneLogs(normalized.logs);
+    const previous=store.getItem(KEY);
+    if(previous&&(options.forceRecovery||Date.now()-lastRecoveryWriteAt>=RECOVERY_MIN_INTERVAL_MS)){
+      try{JSON.parse(previous);store.setItem(RECOVERY_KEY,previous);lastRecoveryWriteAt=Date.now()}catch(error){}
+    }
     try{store.setItem(KEY,JSON.stringify(normalized))}catch(error){normalized.logs=pruneLogs(normalized.logs).slice(-Math.floor(ROUTINE_LOG_LIMIT/2));store.setItem(KEY,JSON.stringify(normalized))}
-    createDailySnapshot(normalized,false);Object.keys(state).forEach(key=>delete state[key]);Object.assign(state,normalized);return state;
+    createDailySnapshot(normalized,Boolean(options.forceSnapshot),true);
+    if(normalized!==state){Object.keys(state).forEach(key=>delete state[key]);Object.assign(state,normalized)}
+    return state;
   };
 
-  const save=state=>persist(state);
+  const save=(state,options={})=>persist(state,options);
   const createBackup=state=>JSON.stringify({app:'ASCEND',backupVersion:BACKUP_VERSION,schemaVersion:VERSION,exportedAt:nowIso(),state:normalizeCurrent(clone(state))},null,2);
   const parseBackup=text=>{
     let parsed;try{parsed=JSON.parse(text)}catch(error){throw new Error('The selected file is not valid JSON.')}

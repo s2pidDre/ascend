@@ -46,6 +46,17 @@
   let bootCompletionTimer=null;
   let timezonePromptShown=false;
   let customFormEditing=false;
+  let pendingSaveTimer=null;
+  let saveDirty=false;
+  let pendingSaveOptions={silent:true,forceSnapshot:false,critical:false};
+  let lastRuntimeMinute='';
+  let adaptivePerformancePressure=0;
+  let audioContext=null;
+  let performanceObserver=null;
+  const intlFormatters=new Map();
+  let liveProtocolPhase='';
+  let lastResumeAt=0;
+  let actionClickSuppressedUntil=0;
   const BOOT_GUARD_KEY='ascend_boot_guard_v1';
 
   const $=selector=>document.querySelector(selector);
@@ -71,9 +82,10 @@
   const clone=value=>JSON.parse(JSON.stringify(value));
   const minutes=time=>{const[h,m]=time.split(':').map(Number);return h*60+m};
   const todayMinutes=date=>date.getHours()*60+date.getMinutes()+date.getSeconds()/60;
-  const formatClock=date=>state.settings?.timeFormat==='24'?new Intl.DateTimeFormat(undefined,{hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(date):new Intl.DateTimeFormat(undefined,{hour:'numeric',minute:'2-digit',hour12:true}).format(date);
-  const formatDate=date=>new Intl.DateTimeFormat(undefined,{weekday:'short',month:'short',day:'numeric'}).format(date);
-  const formatShortDate=value=>{const date=value instanceof Date?value:new Date(value);return Number.isNaN(date.getTime())?'Unknown':new Intl.DateTimeFormat(undefined,{month:'short',day:'numeric',year:'numeric'}).format(date)};
+  const intlFormatter=(key,options)=>{if(!intlFormatters.has(key))intlFormatters.set(key,new Intl.DateTimeFormat(undefined,options));return intlFormatters.get(key)};
+  const formatClock=date=>state.settings?.timeFormat==='24'?intlFormatter('clock-24',{hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(date):intlFormatter('clock-12',{hour:'numeric',minute:'2-digit',hour12:true}).format(date);
+  const formatDate=date=>intlFormatter('date-header',{weekday:'short',month:'short',day:'numeric'}).format(date);
+  const formatShortDate=value=>{const date=value instanceof Date?value:new Date(value);return Number.isNaN(date.getTime())?'Unknown':intlFormatter('date-short',{month:'short',day:'numeric',year:'numeric'}).format(date)};
   const formatTime=time=>{const d=new Date();const[h,m]=time.split(':').map(Number);d.setHours(h,m,0,0);return formatClock(d)};
   const timeOnDate=(date,time)=>{const d=new Date(date);const[h,m]=time.split(':').map(Number);d.setHours(h,m,0,0);return d};
   const minuteInWindow=(minute,start,end)=>start<=end?(minute>=start&&minute<end):(minute>=start||minute<end);
@@ -111,7 +123,25 @@
       lastSaveNoticeAt=now;showSystemNotice('save','LOCAL DATA SAVED','Device record synchronized.',1500);
     },520);
   };
-  const save=(options={})=>{reconcileStateMachine();const saved=S.save(state);if(!options.silent)queueSaveNotice();return saved};
+  const flushSave=(options={})=>{
+    clearTimeout(pendingSaveTimer);pendingSaveTimer=null;if(!saveDirty)return state;
+    const merged={...pendingSaveOptions,...options};pendingSaveOptions={silent:true,forceSnapshot:false,critical:false};
+    reconcileStateMachine();
+    const saved=S.save(state,{trusted:true,forceRecovery:Boolean(merged.critical),forceSnapshot:Boolean(merged.forceSnapshot)});saveDirty=false;
+    if(!merged.silent)queueSaveNotice();
+    return saved;
+  };
+  const save=(options={})=>{
+    reconcileStateMachine();saveDirty=true;
+    pendingSaveOptions={
+      silent:pendingSaveOptions.silent&&Boolean(options.silent),
+      forceSnapshot:pendingSaveOptions.forceSnapshot||Boolean(options.forceSnapshot),
+      critical:pendingSaveOptions.critical||Boolean(options.critical)
+    };
+    if(options.immediate||options.critical||options.forceSnapshot)return flushSave(options);
+    clearTimeout(pendingSaveTimer);pendingSaveTimer=setTimeout(()=>flushSave(),220);
+    return state;
+  };
   const dismissLaunchSplash=()=>{
     const splash=$('#launchSplash');if(!splash||launchDismissed)return;
     const delay=Math.max(0,430-performance.now());
@@ -123,6 +153,33 @@
     document.body.classList.toggle('orientation-blocked',orientationBlocked);
     const guard=$('#orientationGuard');if(guard)guard.hidden=!orientationBlocked;
     if(orientationBlocked){cancelHold();releaseWakeLock()}else if(activeProtocolRecord())requestWakeLock();
+    if(state.settings?.performanceMode==='adaptive')applyPerformanceMode();
+  };
+  const resolvedPerformanceMode=()=>{
+    const requested=state.settings?.performanceMode||'adaptive';
+    if(requested==='full'||requested==='reduced')return requested;
+    const reducedMotion=window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    const coarse=window.matchMedia?.('(pointer: coarse)').matches;
+    const memory=Number(navigator.deviceMemory||0),cores=Number(navigator.hardwareConcurrency||0);
+    const constrained=(memory&&memory<=4)||(cores&&cores<=4)||(coarse&&innerWidth<=900);
+    return reducedMotion||constrained||adaptivePerformancePressure>=3?'reduced':'full';
+  };
+  const applyPerformanceMode=()=>{
+    const resolved=resolvedPerformanceMode(),requested=state.settings?.performanceMode||'adaptive';
+    document.body.classList.toggle('performance-reduced',resolved==='reduced');
+    document.body.classList.toggle('performance-full',resolved==='full');
+    document.body.dataset.performance=resolved;document.body.dataset.performancePreference=requested;
+    return resolved;
+  };
+  const watchRuntimePressure=()=>{
+    if(performanceObserver){try{performanceObserver.disconnect()}catch(error){}performanceObserver=null}
+    if(!('PerformanceObserver' in window)||state.settings?.performanceMode!=='adaptive')return;
+    try{
+      performanceObserver=new PerformanceObserver(list=>{
+        if(list.getEntries().some(entry=>entry.duration>=120)){adaptivePerformancePressure=Math.min(5,adaptivePerformancePressure+1);if(adaptivePerformancePressure>=3)applyPerformanceMode()}
+      });
+      performanceObserver.observe({entryTypes:['longtask']});
+    }catch(error){performanceObserver=null}
   };
   const currentKey=()=>S.dateKey(new Date());
   const protocolTransitions={pending:new Set(['active','failed','skipped']),active:new Set(['cleared','failed']),cleared:new Set(),failed:new Set(),skipped:new Set()};
@@ -147,17 +204,16 @@
     return true;
   };
   const reconcileStateMachine=()=>{
-    Object.values(state.dayRecords||{}).forEach(day=>{
-      const protocols=Object.values(day.protocols||{});let activeFound=false;
-      protocols.sort((a,b)=>String(a.startedAt||'').localeCompare(String(b.startedAt||''))).forEach(protocol=>{
-        if(!['pending','active','cleared','failed','skipped'].includes(protocol.status))protocol.status='pending';
-        if(protocol.status==='active'){if(activeFound)protocol.status='pending';else activeFound=true}
-        (protocol.steps||[]).forEach(step=>{if(!['pending','active','completed','skipped'].includes(step.status))step.status='pending'});
-        if(protocol.status==='cleared')(protocol.steps||[]).forEach(step=>{if(!['completed','skipped'].includes(step.status))transitionStep(step,'completed',protocol.completedAt||new Date().toISOString())});
-      });
-      day.completedProtocols=protocols.filter(protocol=>protocol.status==='cleared').length;
-      day.failedProtocols=protocols.filter(protocol=>protocol.status==='failed').length;
+    const day=state.dayRecords?.[currentKey()];if(!day)return;
+    const protocols=Object.values(day.protocols||{});let activeFound=false;
+    protocols.sort((a,b)=>String(a.startedAt||'').localeCompare(String(b.startedAt||''))).forEach(protocol=>{
+      if(!['pending','active','cleared','failed','skipped'].includes(protocol.status))protocol.status='pending';
+      if(protocol.status==='active'){if(activeFound)protocol.status='pending';else activeFound=true}
+      (protocol.steps||[]).forEach(step=>{if(!['pending','active','completed','skipped'].includes(step.status))step.status='pending'});
+      if(protocol.status==='cleared')(protocol.steps||[]).forEach(step=>{if(!['completed','skipped'].includes(step.status))transitionStep(step,'completed',protocol.completedAt||new Date().toISOString())});
     });
+    day.completedProtocols=protocols.filter(protocol=>protocol.status==='cleared').length;
+    day.failedProtocols=protocols.filter(protocol=>protocol.status==='failed').length;
   };
   const recordMoment=(record,time)=>new Date(`${record.date}T${time}:00`);
   const stages=[
@@ -447,7 +503,7 @@
     const protocol=startProtocol(record,wakeConfig,now);
     const first=protocol?.steps?.[0];if(first?.type==='system')transitionStep(first,'completed',now.toISOString());
     state.logs.push({id:S.uid('log'),at:now.toISOString(),type:'wake',message:`Wake recorded at ${formatClock(now)} (${record.wakeStatus}, ${source}).`});
-    save();systemFeedback('start',record.wakeStatus==='late'?'Late wake recorded. Begin immediately.':'Wake state confirmed.',`wake-${record.date}`);
+    save({immediate:true});systemFeedback('start',record.wakeStatus==='late'?'Late wake recorded. Begin immediately.':'Wake state confirmed.',`wake-${record.date}`);
   };
 
   const protocolOnTime=(record,protocol)=>{
@@ -514,7 +570,7 @@
     record.completedProtocols+=1;
     const creditedXp=creditProtocolProfileXp(protocol,new Date(completedAt));
     state.logs.push({id:S.uid('log'),at:protocol.completedAt,type:'clear',message:`${protocol.name} cleared for ${protocol.earnedXp} XP${creditedXp?' · added to Profile':''}.`});
-    save();
+    save({immediate:true});
     const config=blueprint(protocol.id);
     show('protocolResultScreen');
     $('#protocolResultEmblem').classList.remove('failed');setGlyph('protocolResultEmblem','success');
@@ -537,7 +593,7 @@
     protocol.completedAt=at;protocol.resolutionKey=protocol.resolutionKey||`${record.date}:${protocol.id}:failed`;protocol.earnedXp=0;protocol.failureReason=reason;
     record.failedProtocols=Object.values(record.protocols).filter(item=>item.status==='failed').length;
     if(log)state.logs.push({id:S.uid('log'),at,type:'failure',message:`${protocol.name} failed: ${reason}`});
-    if(!options.defer){save();systemFeedback('warning','Protocol failed.',`failed-${record.date}-${protocol.id}`)}return true;
+    if(!options.defer){save({immediate:true});systemFeedback('warning','Protocol failed.',`failed-${record.date}-${protocol.id}`)}return true;
   };
 
   const evaluateDeadlines=(record,now=new Date())=>{
@@ -663,7 +719,7 @@
     }
     const profileDelta=syncAttendanceProfileXp(record,when);
     state.logs.push({id:S.uid('log'),at:when.toISOString(),type:'attendance',message:`${record.subjectName}: ${record.status}${record.finalized?` · ${record.xpAwarded} XP`:''}${profileDelta>0?' · added to Profile':profileDelta<0?' · Profile XP adjusted':''}.`});
-    save();
+    save({immediate:true});
   };
   const attendanceDateStart=entry=>entry?.effectiveFrom||(entry?.createdAt?S.dateKey(new Date(entry.createdAt)):currentKey());
   const syncHistoricalUnresolvedMeetings=(now=new Date())=>{
@@ -695,7 +751,7 @@
     .filter(record=>{const end=scheduledMoment(record,record.scheduledEnd);return !Number.isNaN(end.getTime())&&end<=date})
     .sort((a,b)=>`${b.scheduledDate}T${b.scheduledStart}`.localeCompare(`${a.scheduledDate}T${a.scheduledStart}`))[0]||null;
   const classStateAt=(now=new Date())=>{
-    syncHistoricalUnresolvedMeetings(now);syncUnverifiedMeetings(now);
+    syncUnverifiedMeetings(now);
     const classes=classesForDate(now);
     for(const entry of classes){
       const record=attendanceFor(entry,now),start=timeOnDate(now,entry.start),end=timeOnDate(now,entry.end);
@@ -783,25 +839,27 @@
     const dismissedButton=$('#classActiveActions [data-class-action="dismissed"]');const earlyButton=$('#classActiveActions [data-class-action="dismissed-early"]');
     if(dismissedButton)dismissedButton.hidden=mode!=='dismissal';if(earlyButton)earlyButton.hidden=mode!=='active';
     if(mode==='approaching'){
-      $('#classEyebrow').textContent='CLASS APPROACHING';$('#classStatusChip').textContent='CHECK-IN';$('#classQuestion').textContent='Are you already in class?';$('#classCountdown').textContent=formatDuration(start-now);$('#classFootnote').textContent='Early confirmation earns the highest attendance XP.';
+      $('#classEyebrow').textContent='CLASS APPROACHING';$('#classStatusChip').textContent='CHECK-IN';$('#classQuestion').textContent='Are you already in class?';setLiveCountdown('#classCountdown',start);$('#classFootnote').textContent='Early confirmation earns the highest attendance XP.';
     }else if(mode==='checkin'){
-      $('#classEyebrow').textContent='ATTENDANCE CHECK';$('#classStatusChip').textContent='UNVERIFIED';$('#classQuestion').textContent='Confirm your attendance now.';$('#classCountdown').textContent=formatDuration(end-now);$('#classFootnote').textContent='Attendance remains unverified until you respond.';
+      $('#classEyebrow').textContent='ATTENDANCE CHECK';$('#classStatusChip').textContent='UNVERIFIED';$('#classQuestion').textContent='Confirm your attendance now.';setLiveCountdown('#classCountdown',end);$('#classFootnote').textContent='Attendance remains unverified until you respond.';
     }else if(mode==='active'){
-      $('#classEyebrow').textContent='CLASS IN SESSION';$('#classStatusChip').textContent=(record?.status||'present').toUpperCase();$('#classQuestion').textContent='Class attendance is active.';$('#classCountdown').textContent=formatDuration(end-now);$('#classFootnote').textContent=`${record?.pendingXp||0} XP is pending until dismissal is recorded.`;
+      $('#classEyebrow').textContent='CLASS IN SESSION';$('#classStatusChip').textContent=(record?.status||'present').toUpperCase();$('#classQuestion').textContent='Class attendance is active.';setLiveCountdown('#classCountdown',end);$('#classFootnote').textContent=`${record?.pendingXp||0} XP is pending until dismissal is recorded.`;
     }else if(mode==='dismissal'){
-      $('#classEyebrow').textContent='CLASS STATUS';$('#classStatusChip').textContent='END CHECK';$('#classQuestion').textContent='Has the class been dismissed?';$('#classCountdown').textContent='00:00:00';$('#classFootnote').textContent='Confirm dismissal to finalize attendance XP.';
+      $('#classEyebrow').textContent='CLASS STATUS';$('#classStatusChip').textContent='END CHECK';$('#classQuestion').textContent='Has the class been dismissed?';setLiveCountdown('#classCountdown',null);$('#classCountdown').textContent='00:00:00';$('#classFootnote').textContent='Confirm dismissal to finalize attendance XP.';
     }else{
-      $('#classEyebrow').textContent='ATTENDANCE RESOLUTION';$('#classStatusChip').textContent='UNVERIFIED';$('#classQuestion').textContent='What happened during this class?';$('#classCountdown').textContent='00:00:00';$('#classFootnote').textContent='Resolve the record before its XP and statistics can be finalized.';
+      $('#classEyebrow').textContent='ATTENDANCE RESOLUTION';$('#classStatusChip').textContent='UNVERIFIED';$('#classQuestion').textContent='What happened during this class?';setLiveCountdown('#classCountdown',null);$('#classCountdown').textContent='00:00:00';$('#classFootnote').textContent='Resolve the record before its XP and statistics can be finalized.';
     }
   };
 
   const formatHeaderClock=date=>{
     const compactHeader=!!window.matchMedia?.('(max-width:480px)').matches;
+    const is24=state.settings?.timeFormat==='24';
+    const key=`header-${compactHeader?'compact':'full'}-${is24?'24':'12'}`;
     const options={hour:'2-digit',minute:'2-digit'};
     if(!compactHeader)options.second='2-digit';
-    if(state.settings?.timeFormat==='24')options.hourCycle='h23';
+    if(is24)options.hourCycle='h23';
     else options.hour12=true;
-    return new Intl.DateTimeFormat(undefined,options).format(date);
+    return intlFormatter(key,options).format(date);
   };
 
   const updateClock=()=>{
@@ -810,14 +868,18 @@
     $('#clockDate').textContent=formatDate(now);
   };
 
-  const updateCheckInAndEvaluation=()=>{
+  const updateCheckInAndEvaluation=(maintenance=false)=>{
     if(!state.initialized)return null;
-    finalizePastDays();
-    reconcileCurrentDayProfileXp();
-    if(Object.values(state.dayRecords||{}).some(day=>day.status==='cleared'&&!day.rewardApplied)||pendingProfileXp())syncOutstandingProfileXp();
     const now=new Date();
+    if(maintenance){
+      finalizePastDays();
+      reconcileCurrentDayProfileXp();
+      syncHistoricalUnresolvedMeetings(now);
+      if(Object.values(state.dayRecords||{}).some(day=>day.status==='cleared'&&!day.rewardApplied)||pendingProfileXp())syncOutstandingProfileXp();
+    }
     const record=createDayRecord(now);
     if(syncConditionalProtocols(record,now))save({silent:true});
+    syncUnverifiedMeetings(now);
     const minute=todayMinutes(now),wakeStart=minutes(systemWakeTime()),wakeEnd=minutes(blueprint('wake')?.end||'06:00');
     if(!record.wakeCheckInAt&&minute>=wakeStart&&minute<wakeEnd&&document.visibilityState==='visible')recordWakeCheckIn(record,now,'automatic-window');
     evaluateDeadlines(record,now);
@@ -832,15 +894,37 @@
     return `${pad(h)}:${pad(m)}:${pad(s)}`;
   };
 
+  const updateLiveNode=(element,now=Date.now())=>{
+    if(!element)return;
+    const target=Number(element.dataset.liveTarget||0),start=Number(element.dataset.liveStart||0),format=element.dataset.liveFormat||'full';
+    let value='';
+    if(target>0)value=formatDuration(Math.max(0,target-now));
+    else if(start>0)value=formatDuration(Math.max(0,now-start));
+    else return;
+    if(format==='short')value=value.slice(3);
+    else if(format==='deadline')value=`${value} LEFT`;
+    element.textContent=value;
+  };
+  const setLiveCountdown=(target,deadline,format='full')=>{
+    const element=typeof target==='string'?$(target):target;if(!element)return;
+    if(!deadline){delete element.dataset.liveTarget;delete element.dataset.liveStart;delete element.dataset.liveFormat;return}
+    element.dataset.liveTarget=String(deadline instanceof Date?deadline.getTime():Number(deadline));delete element.dataset.liveStart;element.dataset.liveFormat=format;updateLiveNode(element);
+  };
+  const updateLiveCountdowns=()=>document.querySelectorAll('[data-live-target],[data-live-start]').forEach(element=>updateLiveNode(element));
+
   const tone=(kind='clear')=>{
     if(!state.settings.sound)return;
     try{
       const Audio=window.AudioContext||window.webkitAudioContext;if(!Audio)return;
-      const context=new Audio(),oscillator=context.createOscillator(),gain=context.createGain();
+      audioContext=audioContext||new Audio();
+      const context=audioContext;if(context.state==='suspended')context.resume().catch(()=>{});
+      const oscillator=context.createOscillator(),gain=context.createGain();
       const frequency={clear:620,protocol:760,warning:155,level:880,start:360,emergency:110,boss:520,attendance:700,dismissal:560}[kind]||440;
       oscillator.type=['warning','emergency','boss'].includes(kind)?'sawtooth':'sine';oscillator.frequency.value=frequency;
       gain.gain.setValueAtTime(.0001,context.currentTime);gain.gain.exponentialRampToValueAtTime(.065,context.currentTime+.02);gain.gain.exponentialRampToValueAtTime(.0001,context.currentTime+.34);
-      oscillator.connect(gain);gain.connect(context.destination);oscillator.start();oscillator.stop(context.currentTime+.36);
+      oscillator.connect(gain);gain.connect(context.destination);
+      oscillator.onended=()=>{try{oscillator.disconnect();gain.disconnect()}catch(error){}};
+      oscillator.start();oscillator.stop(context.currentTime+.36);
     }catch(error){}
   };
   const haptic=kind=>{
@@ -896,7 +980,7 @@
     state.system.notificationLedger=state.system.notificationLedger||{};
     if(state.system.notificationLedger[tag]||safeSession.get(`notify:${tag}`))return;
     safeSession.set(`notify:${tag}`,'1');state.system.notificationLedger[tag]=new Date().toISOString();
-    const ledgerEntries=Object.entries(state.system.notificationLedger).sort((a,b)=>String(b[1]).localeCompare(String(a[1]))).slice(0,100);state.system.notificationLedger=Object.fromEntries(ledgerEntries);S.save(state);
+    const ledgerEntries=Object.entries(state.system.notificationLedger).sort((a,b)=>String(b[1]).localeCompare(String(a[1]))).slice(0,100);state.system.notificationLedger=Object.fromEntries(ledgerEntries);save({silent:true});
     try{const registration=await navigator.serviceWorker?.ready;if(registration?.showNotification)await registration.showNotification(title,{body,tag,icon:'assets/icon-192.png?v=20260803',badge:'assets/icon-192.png?v=20260803',silent:true,renotify:false});else new Notification(title,{body,tag,icon:'assets/icon-192.png?v=20260803',silent:true})}catch(error){}
   };
   const reminderBridgeState=()=>state.system.reminderBridge||(state.system.reminderBridge={lastCheckAt:null,missedCount:0,lastMissedAt:null,lastExportAt:null,lastExportEvents:0});
@@ -952,13 +1036,13 @@
   };
   const checkReminderGap=(now=new Date())=>{
     const bridge=reminderBridgeState(),last=bridge.lastCheckAt?new Date(bridge.lastCheckAt):null;
-    if(!last||Number.isNaN(last.getTime())){bridge.lastCheckAt=now.toISOString();S.save(state);return}
+    if(!last||Number.isNaN(last.getTime())){bridge.lastCheckAt=now.toISOString();save({silent:true});return}
     const gap=now-last;if(gap<60000)return;
     if(gap>=120000){
       const events=scheduledReminderMomentsBetween(last,now);
       if(events.length){bridge.missedCount=Number(bridge.missedCount||0)+events.length;bridge.lastMissedAt=now.toISOString();state.logs.push({id:S.uid('log'),at:now.toISOString(),type:'reminder',message:`Reminder gap detected after ASCEND was inactive: ${events.length} scheduled event(s).`});if(document.visibilityState==='visible'&&launchDismissed)showSystemNotice('alert','REMINDER GAP DETECTED',`${events.length} scheduled event(s) passed while ASCEND was inactive. Device calendar alarms are the external fallback.`,3600)}
     }
-    bridge.lastCheckAt=now.toISOString();S.save(state);
+    bridge.lastCheckAt=now.toISOString();save({silent:true});
   };
   const renderExternalReminders=()=>{
     setControlView('externalRemindersView');const bridge=reminderBridgeState(),permission=('Notification' in window)?Notification.permission:'unsupported',local=state.settings.notifications&&permission==='granted';
@@ -1021,14 +1105,14 @@
 
   const renderSetup=()=>{releaseWakeLock();show('setupScreen');document.body.dataset.state='standby'};
 
-  const renderEarlyWake=()=>{releaseWakeLock();show('earlyWakeScreen');document.body.dataset.state='active';currentClassContext=null;$('#earlyWakeFill').style.width='0%';const wake=systemWakeTime();$('#earlyWakeScreen .early-time strong').textContent=formatTime(wake);$('#earlyWakeScreen .lead').textContent=`Available during the hour before ${formatTime(wake)}. Confirm only when you are ready to begin. The completed hold time becomes your official wake time.`};
+  const renderEarlyWake=()=>{releaseWakeLock();show('earlyWakeScreen');document.body.dataset.state='active';currentClassContext=null;setHoldProgress('#earlyWakeFill',0);const wake=systemWakeTime();$('#earlyWakeScreen .early-time strong').textContent=formatTime(wake);$('#earlyWakeScreen .lead').textContent=`Available during the hour before ${formatTime(wake)}. Confirm only when you are ready to begin. The completed hold time becomes your official wake time.`};
 
   const renderSleep=(now=new Date(),earlyDismissed=false)=>{
     releaseWakeLock();show('sleepScreen');document.body.dataset.state='standby';currentClassContext=null;
     const earlyMinute=earlyWakeStartMinute(),earlyTime=`${pad(Math.floor(earlyMinute/60))}:${pad(earlyMinute%60)}`;$('#sleepScreen .sleep-range').textContent=`${formatTime(systemDailyCutoff())} – ${formatTime(earlyTime)}`;
     const nextWake=nextWakeMoment(now);
     const sameDay=S.dateKey(nextWake)===S.dateKey(now);
-    $('#sleepCountdown').textContent=formatDuration(nextWake-now);
+    setLiveCountdown('#sleepCountdown',nextWake);
     $('#sleepNextTime').textContent=`${sameDay?'Today':'Tomorrow'} at ${formatTime(systemWakeTime())}`;
     if(earlyDismissed){
       $('#sleepMessage').textContent=`Early Wake Sign-In remains available until ${formatTime(systemWakeTime())}. Reopen ASCEND when you are fully awake.`;
@@ -1058,7 +1142,7 @@
     const required=clearDaysRequired(state.player.level);
 
     const flexible=findAvailableFlexibleProtocol(record,now);$('#startFlexibleProtocolButton').hidden=!flexible;$('#startFlexibleProtocolButton').dataset.protocolId=flexible?.id||'';
-    if(flexible){const deadline=timeOnDate(now,flexible.end);$('#freeEyebrow').textContent='FLEXIBLE WINDOW';$('#freeKicker').textContent='PROTOCOL AVAILABLE';$('#freeTitle').textContent=flexible.name;$('#freeNextTime').textContent=`Available until ${formatTime(flexible.end)}`;$('#freeCountdown').textContent=formatDuration(deadline-now);$('#freePrep').textContent=flexible.prep;return}
+    if(flexible){const deadline=timeOnDate(now,flexible.end);$('#freeEyebrow').textContent='FLEXIBLE WINDOW';$('#freeKicker').textContent='PROTOCOL AVAILABLE';$('#freeTitle').textContent=flexible.name;$('#freeNextTime').textContent=`Available until ${formatTime(flexible.end)}`;setLiveCountdown('#freeCountdown',deadline);$('#freePrep').textContent=flexible.prep;return}
     const nextClass=nextClassAt(now);
     const nextProtocol=findNextProtocol(record,now);
     let event=null;
@@ -1067,16 +1151,16 @@
     if(!event){
       $('#freeEyebrow').textContent='SYSTEM STANDBY';$('#freeKicker').textContent='NEXT WAKE DIRECTIVE';$('#freeTitle').textContent='Wake Protocol';
       const tomorrow=new Date(now),wakeParts=systemWakeTime().split(':').map(Number);tomorrow.setDate(tomorrow.getDate()+1);tomorrow.setHours(wakeParts[0],wakeParts[1],0,0);
-      $('#freeNextTime').textContent=`Tomorrow at ${formatTime(systemWakeTime())}`;$('#freeCountdown').textContent=formatDuration(tomorrow-now);$('#freePrep').textContent=`Protect the sleep window. The System begins again at ${formatTime(systemWakeTime())}.`;return;
+      $('#freeNextTime').textContent=`Tomorrow at ${formatTime(systemWakeTime())}`;setLiveCountdown('#freeCountdown',tomorrow);$('#freePrep').textContent=`Protect the sleep window. The System begins again at ${formatTime(systemWakeTime())}.`;return;
     }
     if(event.type==='class'){
       $('#freeEyebrow').textContent='DAYTIME FREE WINDOW';$('#freeKicker').textContent='NEXT CLASS';$('#freeTitle').textContent=event.data.subject;
-      $('#freeNextTime').textContent=`Starts at ${formatTime(event.data.start)}`;$('#freeCountdown').textContent=formatDuration(event.time-now);
+      $('#freeNextTime').textContent=`Starts at ${formatTime(event.data.start)}`;setLiveCountdown('#freeCountdown',event.time);
       const location=[event.data.modality,event.data.room].filter(Boolean).join(' · ');$('#freePrep').textContent=location?`Prepare for ${location}.`:'Prepare the required materials before class.';
     }else{
       const config=event.data,bossNext=config.id==='productivity'&&record.weeklyBoss;
       $('#freeEyebrow').textContent='FREE WINDOW';$('#freeKicker').textContent=bossNext?`WEEKLY BOSS · ${record.weeklyBossPlan?.title||'CHALLENGE'}`:'NEXT DIRECTIVE';
-      $('#freeTitle').textContent=config.name;$('#freeNextTime').textContent=`Starts at ${formatTime(config.start)}`;$('#freeCountdown').textContent=formatDuration(event.time-now);$('#freePrep').textContent=bossNext?record.weeklyBossPlan?.copy||config.prep:config.prep;
+      $('#freeTitle').textContent=config.name;$('#freeNextTime').textContent=`Starts at ${formatTime(config.start)}`;setLiveCountdown('#freeCountdown',event.time);$('#freePrep').textContent=bossNext?record.weeklyBossPlan?.copy||config.prep:config.prep;
     }
   };
 
@@ -1085,16 +1169,16 @@
   const renderStandardTask=(record,protocol,task)=>{
     $('#customTaskArea').hidden=true;$('#customTaskArea').innerHTML='';$('#actionButton').hidden=false;$('#subtaskTimer').hidden=true;
     const mode=task.type;
-    $('#actionButton').dataset.mode=mode;$('#holdFill').style.width='0%';$('#actionButton').disabled=false;
+    $('#actionButton').dataset.mode=mode;setHoldProgress('#holdFill',0);$('#actionButton').disabled=false;
     if(mode==='system'){$('#actionLabel').textContent='System Confirmed';$('#actionButton').disabled=true}
     else if(mode==='hold'){$('#actionLabel').textContent='Hold to Confirm'}
     else if(mode==='tap'){$('#actionLabel').textContent='Confirm Complete'}
     else if(mode==='timer'){
       $('#subtaskTimer').hidden=false;
-      if(task.status==='pending'){$('#timerValue').textContent=`${task.duration}:00`;$('#timerCaption').textContent='REQUIRED TIME';$('#actionLabel').textContent='Start Dungeon'}
+      if(task.status==='pending'){setLiveCountdown('#timerValue',null);$('#timerValue').textContent=`${task.duration}:00`;$('#timerCaption').textContent='REQUIRED TIME';$('#actionLabel').textContent='Start Dungeon'}
       else{
-        const elapsed=Date.now()-new Date(task.startedAt).getTime();const remaining=task.duration*60000-elapsed;
-        $('#timerValue').textContent=formatDuration(Math.max(0,remaining)).slice(3);$('#timerCaption').textContent=remaining>0?'DUNGEON ACTIVE':'TIME REQUIREMENT CLEARED';
+        const elapsed=Date.now()-new Date(task.startedAt).getTime();const remaining=task.duration*60000-elapsed,target=new Date(task.startedAt).getTime()+task.duration*60000;
+        setLiveCountdown('#timerValue',target,'short');$('#timerCaption').textContent=remaining>0?'DUNGEON ACTIVE':'TIME REQUIREMENT CLEARED';
         if(remaining>0){$('#actionLabel').textContent='Dungeon in Progress';$('#actionButton').disabled=true}else $('#actionLabel').textContent='Confirm Dungeon Clear';
       }
     }
@@ -1221,7 +1305,7 @@
     }
     const remaining=academicRemaining(step);
     if(remaining>0){
-      $('#customTaskArea').innerHTML=`<div class="academic-card active"><strong>${escapeHtml(title)}</strong><small>${escapeHtml(meta)}</small><b>${formatDuration(remaining).slice(3)}</b><em>TIMER ACTIVE</em></div>`;return;
+      $('#customTaskArea').innerHTML=`<div class="academic-card active"><strong>${escapeHtml(title)}</strong><small>${escapeHtml(meta)}</small><b data-live-target="${new Date(step.startedAt).getTime()+step.duration*60000}" data-live-format="short">${formatDuration(remaining).slice(3)}</b><em>TIMER ACTIVE</em></div>`;return;
     }
     if(!task){
       $('#customTaskArea').innerHTML=`<div class="academic-card"><strong>MAINTENANCE COMPLETE</strong><small>Required time fulfilled.</small></div><button class="custom-primary" type="button" data-custom="finish-maintenance">Confirm Completion</button>`;return;
@@ -1240,7 +1324,7 @@
     }
     const remaining=tradingRemaining(step);
     if(remaining>0){
-      $('#customTaskArea').innerHTML=`<div class="academic-card active"><strong>MARKET REVIEW ACTIVE</strong><small>A no-trade decision is valid when no setup meets your rules.</small><b>${formatDuration(remaining).slice(3)}</b><em>TIMER ACTIVE</em></div>`;return;
+      $('#customTaskArea').innerHTML=`<div class="academic-card active"><strong>MARKET REVIEW ACTIVE</strong><small>A no-trade decision is valid when no setup meets your rules.</small><b data-live-target="${new Date(step.startedAt).getTime()+step.duration*60000}" data-live-format="short">${formatDuration(remaining).slice(3)}</b><em>TIMER ACTIVE</em></div>`;return;
     }
     $('#customTaskArea').innerHTML=`
       <div class="compact-form trading-form">
@@ -1260,7 +1344,15 @@
     const elapsed=workoutElapsed(step),minimumCleared=elapsed>=minMs,limitReached=elapsed>=maxMs;
     const status=limitReached?'DUNGEON LIMIT REACHED':minimumCleared?'MINIMUM CLEARED':'MINIMUM RUN ACTIVE';
     const copy=limitReached?'Finish the current set, then end the workout when ready.':minimumCleared?'You may end the workout whenever the planned session is complete.':`${formatDuration(Math.max(0,minMs-elapsed)).slice(3)} until the 15-minute minimum.`;
-    $('#customTaskArea').innerHTML=`<div class="academic-card active workout-dungeon-card"><strong>WORKOUT DUNGEON ACTIVE</strong><small>${escapeHtml(copy)}</small><b>${formatDuration(elapsed)}</b><em>${status}</em></div>${minimumCleared?'<button class="custom-primary" type="button" data-custom="end-workout">End Workout</button>':'<button class="danger-button compact-danger workout-early-exit" type="button" data-custom="exit-workout-early"><b>Exit Early · No Clear</b></button>'}`;
+    $('#customTaskArea').innerHTML=`<div class="academic-card active workout-dungeon-card"><strong>WORKOUT DUNGEON ACTIVE</strong><small>${escapeHtml(copy)}</small><b data-live-start="${new Date(step.startedAt).getTime()}" data-live-format="full">${formatDuration(elapsed)}</b><em>${status}</em></div>${minimumCleared?'<button class="custom-primary" type="button" data-custom="end-workout">End Workout</button>':'<button class="danger-button compact-danger workout-early-exit" type="button" data-custom="exit-workout-early"><b>Exit Early · No Clear</b></button>'}`;
+  };
+  const protocolDynamicPhase=(protocol,task)=>{
+    if(!protocol||!task)return'none';
+    if(task.type==='timer'&&task.status==='active'){const remaining=task.duration*60000-(Date.now()-new Date(task.startedAt).getTime());return`timer:${task.id}:${remaining>0?'running':'ready'}`}
+    if(task.type==='academic'&&task.status==='active')return`academic:${task.id}:${academicRemaining(task)>0?'running':'ready'}`;
+    if(task.type==='trading'&&task.status==='active')return`trading:${task.id}:${tradingRemaining(task)>0?'running':'ready'}`;
+    if(task.type==='workout'&&task.status==='active'){const elapsed=workoutElapsed(task),min=Number(task.minDuration||15)*60000,max=Number(task.recommendedMax||45)*60000;return`workout:${task.id}:${elapsed<min?'minimum':elapsed<max?'cleared':'limit'}`}
+    return`${task.type}:${task.id}:${task.status}`;
   };
   const advanceAutomaticProtocolSteps=protocol=>{
     const task=currentStep(protocol);if(!task||task.type!=='timer'||!task.autoComplete||task.status!=='active'||!task.startedAt)return false;
@@ -1280,7 +1372,7 @@
     $('#protocolWindow').textContent=`${formatTime(config.start)} – ${formatTime(config.end)}`;
     const index=protocol.steps.indexOf(task);$('#stepCurrent').textContent=index+1;$('#stepTotal').textContent=protocol.steps.length;
     const punctual=protocolOnTime(record,protocol);$('#punctualityBadge').textContent=task.type==='timer'||task.type==='academic'||task.type==='trading'?'TIMER ACTIVE':punctual?'ON TIME':'LATE';$('#punctualityBadge').classList.toggle('late',!punctual);
-    $('#deadlineCountdown').textContent=`${formatDuration(deadlineMs)} LEFT`;
+    setLiveCountdown('#deadlineCountdown',deadline,'deadline');
     const customLayout=['audit','planner','academic','trading','workout'].includes(task.type);
     $('#focusCard').dataset.layout=customLayout?'custom':task.type==='timer'?'timed':'plain';
     $('#focusSigil').hidden=customLayout;
@@ -1295,6 +1387,7 @@
     else if(task.type==='trading')renderTrading(protocol,task);
     else if(task.type==='workout')renderWorkoutDungeon(protocol,task);
     else renderStandardTask(record,protocol,task);
+    liveProtocolPhase=protocolDynamicPhase(protocol,task);
   };
 
   const renderResult=record=>{
@@ -1315,25 +1408,26 @@
     }
   };
 
-  const renderApp=()=>{
-    updateClock();
-    const record=updateCheckInAndEvaluation();
-    syncAmbientState(record,activeProtocolRecord());
-    if(!state.initialized){renderSetup();return}
-    if(transitionLocked)return;
+  const renderApp=(options={})=>{
     const now=new Date();
-    if(isSleepWindow(now)){renderSleep(now);return}
-    if(record.status!=='active'){renderResult(record);return}
+    lastRuntimeMinute=`${S.dateKey(now)}|${now.getHours()}|${now.getMinutes()}`;
+    updateClock();
+    const record=updateCheckInAndEvaluation(Boolean(options.maintenance));
+    syncAmbientState(record,activeProtocolRecord());
+    if(!state.initialized){liveProtocolPhase='';renderSetup();return}
+    if(transitionLocked)return;
+    if(isSleepWindow(now)){liveProtocolPhase='';renderSleep(now);return}
+    if(record.status!=='active'){liveProtocolPhase='';renderResult(record);return}
     if(!record.wakeCheckInAt&&isEarlyWakeWindow(now)){
-      if(earlyWakeDismissedSession)renderSleep(now,true);else renderEarlyWake();
+      liveProtocolPhase='';if(earlyWakeDismissedSession)renderSleep(now,true);else renderEarlyWake();
       return;
     }
     const config=findCurrentProtocol(record,now);
     const classState=classStateAt(now);
-    if(classState&&config?.id==='workout'){renderClassScreen(classState,now);return}
+    if(classState&&config?.id==='workout'){liveProtocolPhase='';renderClassScreen(classState,now);return}
     if(config){renderProtocol(record,config);return}
-    if(classState){renderClassScreen(classState,now);return}
-    renderFree(record,now);
+    if(classState){liveProtocolPhase='';renderClassScreen(classState,now);return}
+    liveProtocolPhase='';renderFree(record,now);
   };
 
   const completeSubtask=async()=>{
@@ -1341,7 +1435,7 @@
     const task=currentStep(protocol);if(!task)return;
     if(task.type==='timer'&&task.status==='active'&&Date.now()-new Date(task.startedAt).getTime()<task.duration*60000)return;
     if(!transitionStep(task,'completed',new Date().toISOString()))return;
-    state.logs.push({id:S.uid('log'),at:task.completedAt,type:'subtask',message:`${task.title} completed.`});save();
+    state.logs.push({id:S.uid('log'),at:task.completedAt,type:'subtask',message:`${task.title} completed.`});save({immediate:true});
     const count=protocol.steps.filter(step=>step.status==='completed').length;
     await showOverlay('SUBTASK CONFIRMED',task.title,`${count} / ${protocol.steps.length}`);
     if(!currentStep(protocol))await clearProtocol(record,protocol);else renderApp();
@@ -1351,7 +1445,7 @@
     const record=dayRecord(),protocol=activeProtocolRecord();if(!record||!protocol)return;const task=currentStep(protocol);if(!task)return;
     const skippable=task.allowSkip===true||task.required===false||['timer','academic','trading','workout'].includes(task.type);if(!skippable)return;
     if(!transitionStep(task,'skipped',new Date().toISOString()))return;task.skipReason='Skipped manually';if(task.required!==false&&task.perfectRequired!==false)protocol.hadRequiredSkip=true;
-    state.logs.push({id:S.uid('log'),at:task.completedAt,type:'subtask',message:`${task.title} skipped${task.required!==false?' · required skip recorded':''}.`});save();
+    state.logs.push({id:S.uid('log'),at:task.completedAt,type:'subtask',message:`${task.title} skipped${task.required!==false?' · required skip recorded':''}.`});save({immediate:true});
     await showOverlay('DIRECTIVE SKIPPED',task.title,task.required!==false?'PERFECT CLEAR LOCKED':'OPTIONAL');if(!currentStep(protocol))await clearProtocol(record,protocol);else renderApp();
   };
 
@@ -1373,7 +1467,7 @@
   };
   const recordConfirmationAudit=(owner,result,reason,context)=>{
     state.system.auditTrail=state.system.auditTrail||[];const entry={id:S.uid('audit'),at:new Date().toISOString(),type:'confirmation',owner,result,reason,token:context?.token||null,source:'live'};state.system.auditTrail.push(entry);state.system.auditTrail=state.system.auditTrail.slice(-240);
-    if(result!=='accepted')state.logs.push({id:S.uid('log'),at:entry.at,type:'system',message:`${owner} confirmation ${result}: ${reason}.`});S.save(state);
+    if(result!=='accepted')state.logs.push({id:S.uid('log'),at:entry.at,type:'system',message:`${owner} confirmation ${result}: ${reason}.`});save({silent:true});
   };
   const validateConfirmation=(owner,startContext)=>{
     if(!criticalConfirmationOwners.has(owner))return{ok:true};
@@ -1384,28 +1478,47 @@
     if(processedConfirmationTokens.has(startContext.token))return{ok:false,reason:'This confirmation was already processed'};
     return{ok:true,current};
   };
-  const cancelHold=(owner=null)=>{
-    if(!holdSession)return;if(owner&&holdSession.owner!==owner)return;
-    const cancelled=holdSession;cancelAnimationFrame(cancelled.raf);cancelled.onProgress?.(0);
-    if(navigator.vibrate)navigator.vibrate(0);
-    document.body.classList.remove('hold-active');delete document.body.dataset.holdOwner;holdSession=null;
-    if(criticalConfirmationOwners.has(cancelled.owner)&&Number(cancelled.progress||0)>=.25)recordConfirmationAudit(cancelled.owner,'interrupted','Hold released or visibility changed before completion',cancelled.context);
+  const setHoldProgress=(target,progress=0)=>{
+    const element=typeof target==='string'?$(target):target;if(!element)return;
+    element.style.setProperty('--hold-progress',String(clamp(Number(progress)||0,0,1)));
   };
-  const beginHold=(owner,duration,onProgress,onComplete)=>{
-    cancelHold();const started=performance.now(),checkpoints=[.25,.5,.75],checkpointOwners=new Set(['brand','emergency-exit','clock-backup']),context=confirmationContext(owner);let checkpointIndex=0;
+  const releaseHoldPointer=session=>{
+    if(!session?.target||session.pointerId===null||session.pointerId===undefined)return;
+    try{if(session.target.hasPointerCapture?.(session.pointerId))session.target.releasePointerCapture(session.pointerId)}catch(error){}
+  };
+  const cancelHold=(owner=null,reason='Hold released or visibility changed before completion',pointerId=null)=>{
+    if(!holdSession)return false;if(owner&&holdSession.owner!==owner)return false;
+    if(pointerId!==null&&holdSession.pointerId!==null&&holdSession.pointerId!==undefined&&pointerId!==holdSession.pointerId)return false;
+    const cancelled=holdSession;holdSession=null;cancelAnimationFrame(cancelled.raf);cancelled.onProgress?.(0);releaseHoldPointer(cancelled);
+    if(navigator.vibrate)navigator.vibrate(0);
+    document.body.classList.remove('hold-active');delete document.body.dataset.holdOwner;
+    if(criticalConfirmationOwners.has(cancelled.owner)&&Number(cancelled.progress||0)>=.25)recordConfirmationAudit(cancelled.owner,'interrupted',reason,cancelled.context);
+    return true;
+  };
+  const beginHold=(owner,duration,onProgress,onComplete,options={})=>{
+    cancelHold();
+    const target=options.target||null,pointerId=options.pointerId??null,started=performance.now(),checkpoints=[.25,.5,.75],checkpointOwners=new Set(['brand-access','emergency-exit','clock-backup']),context=confirmationContext(owner);let checkpointIndex=0;
+    if(target&&pointerId!==null){try{target.setPointerCapture?.(pointerId)}catch(error){}}
     document.body.classList.add('hold-active');document.body.dataset.holdOwner=owner;
     const frame=now=>{
-      const progress=clamp((now-started)/duration,0,1);if(holdSession)holdSession.progress=progress;onProgress?.(progress);
+      if(!holdSession||holdSession.owner!==owner)return;
+      const progress=clamp((now-started)/duration,0,1);holdSession.progress=progress;onProgress?.(progress);
       if(checkpointOwners.has(owner)&&checkpointIndex<checkpoints.length&&progress>=checkpoints[checkpointIndex]){haptic(checkpointIndex===1?'hold-mid':'hold');checkpointIndex+=1}
       if(progress>=1){
-        holdSession=null;onProgress?.(0);document.body.classList.remove('hold-active');delete document.body.dataset.holdOwner;
-        const validation=validateConfirmation(owner,context);if(!validation.ok){recordConfirmationAudit(owner,'rejected',validation.reason,context);haptic('failed');showBreachWarning('CONFIRMATION REJECTED',validation.reason);return}
+        const completed=holdSession;holdSession=null;onProgress?.(0);document.body.classList.remove('hold-active');delete document.body.dataset.holdOwner;
+        const validation=validateConfirmation(owner,context);if(!validation.ok){releaseHoldPointer(completed);recordConfirmationAudit(owner,'rejected',validation.reason,context);haptic('failed');showBreachWarning('CONFIRMATION REJECTED',validation.reason);return}
         if(criticalConfirmationOwners.has(owner)){processedConfirmationTokens.add(context.token);recordConfirmationAudit(owner,'accepted','State, visibility, and deadline checks passed',context)}
-        haptic('hold-final');onComplete();
+        haptic('hold-final');onComplete();releaseHoldPointer(completed);
       }else holdSession.raf=requestAnimationFrame(frame);
     };
-    holdSession={owner,raf:requestAnimationFrame(frame),onProgress,progress:0,context};
+    holdSession={owner,raf:0,onProgress,progress:0,context,target,pointerId};
+    holdSession.raf=requestAnimationFrame(frame);
   };
+  const beginPointerHold=(event,owner,duration,onProgress,onComplete)=>{
+    if(event.button!==undefined&&event.button!==0)return false;
+    event.preventDefault();beginHold(owner,duration,onProgress,onComplete,{target:event.currentTarget,pointerId:event.pointerId});return true;
+  };
+  const endPointerHold=(event,owner,reason='Hold released before completion')=>cancelHold(owner,reason,event.pointerId);
 
   const confirmEarlyWake=async()=>{
     const record=createDayRecord(new Date());if(record.wakeCheckInAt){renderApp();return}
@@ -1654,7 +1767,7 @@
     safeSession.set(BOOT_GUARD_KEY,JSON.stringify({pending:true,startedAt:Date.now(),failures}));
     if(failures>=2){state.system.safeMode=true;state.system.recoveredFrom=state.system.recoveredFrom||'startup-guard';return true}return false;
   };
-  const completeBootGuard=()=>{clearTimeout(bootCompletionTimer);state.system.lastSuccessfulBoot=new Date().toISOString();safeSession.set(BOOT_GUARD_KEY,JSON.stringify({pending:false,startedAt:Date.now(),failures:0}));S.save(state)};
+  const completeBootGuard=()=>{clearTimeout(bootCompletionTimer);state.system.lastSuccessfulBoot=new Date().toISOString();safeSession.set(BOOT_GUARD_KEY,JSON.stringify({pending:false,startedAt:Date.now(),failures:0}));save({silent:true})};
   const applySafeMode=()=>{document.body.classList.toggle('safe-mode',Boolean(state.system?.safeMode));if(state.system?.safeMode){releaseWakeLock();const splash=$('#launchSplash');if(splash)splash.hidden=true;launchDismissed=true}};
 
   const scanAcademicConflicts=()=>{
@@ -1884,7 +1997,7 @@
   const renderDeveloperRun=()=>{
     if(!developerRunSession)return;const live=developerLiveStateAt(new Date(developerRunSession.simulatedAt)),isLab=live.kind==='lab',overlay=$('#developerRunOverlay');developerRunSession.currentState=live;
     overlay.dataset.result=live.resultClass||'success';overlay.dataset.scenario=isLab?'lab':'live';overlay.dataset.mode='live';$('#developerRunCard').classList.toggle('developer-run-card-lab',isLab);$('#developerRunCard').dataset.layout=live.layout||'plain';$('#developerRunActive').hidden=false;$('#developerRunResult').hidden=true;
-    $('#developerRunProtocol').textContent=live.protocol;$('#developerRunWindow').textContent=live.window;$('#developerRunStatus').textContent=live.status;$('#developerRunCountdown').textContent=live.countdown;$('#developerRunType').textContent=live.type;$('#developerRunTitle').textContent=live.title;$('#developerRunCopy').textContent=live.copy;$('#developerRunDetail').innerHTML=live.detail?`<strong>${escapeHtml(live.detail)}</strong>`:'';$('#developerRunDetail').hidden=isLab||!live.detail;$('#developerLabPanel').hidden=!isLab;$('#developerLiveToolbar').hidden=isLab;$('#developerRunFill').style.width='0%';setGlyph('developerRunGlyph',live.icon||'apex');
+    $('#developerRunProtocol').textContent=live.protocol;$('#developerRunWindow').textContent=live.window;$('#developerRunStatus').textContent=live.status;$('#developerRunCountdown').textContent=live.countdown;$('#developerRunType').textContent=live.type;$('#developerRunTitle').textContent=live.title;$('#developerRunCopy').textContent=live.copy;$('#developerRunDetail').innerHTML=live.detail?`<strong>${escapeHtml(live.detail)}</strong>`:'';$('#developerRunDetail').hidden=isLab||!live.detail;$('#developerLabPanel').hidden=!isLab;$('#developerLiveToolbar').hidden=isLab;setHoldProgress('#developerRunFill',0);setGlyph('developerRunGlyph',live.icon||'apex');
     const action=$('#developerRunAction');action.hidden=!live.action;action.disabled=Boolean(live.actionDisabled);$('#developerRunActionLabel').textContent=live.action||'No Action Required';$('#developerRunNote').textContent=live.note||'Test data only. Live records remain protected.';$('#developerRunNote').hidden=!live.note;
     const step=$('.developer-run-step');if(step){step.querySelector('strong').textContent=isLab?'LAB':'LIVE';step.querySelector('span').textContent=isLab?'MODE':'TIME'}
     updateDeveloperTimeDisplay();
@@ -1927,10 +2040,10 @@
   const previewDeveloperHaptic=()=>{if(!developerRunSession)return;const kind=$('#developerLabEvent').value;haptic(kind);addDeveloperEvent('haptic',`Previewed ${kind} vibration pattern`);showSystemNotice('diagnostic','HAPTIC PREVIEW',`${kind.toUpperCase()} pattern triggered.`,1600)};
   const sendDeveloperTestNotification=async()=>{if(!developerRunSession)return;const kind=$('#developerLabEvent').value;if(!('Notification' in window)){showBreachWarning('NOTIFICATIONS UNSUPPORTED','This browser cannot send a local test alert.');return}let permission=Notification.permission;if(permission==='default')permission=await Notification.requestPermission();if(permission!=='granted'){showBreachWarning('ALERT PERMISSION REQUIRED','Allow notifications before running the alert laboratory.');return}try{new Notification(`ASCEND TEST · ${kind.toUpperCase()}`,{body:'Developer Test Mode notification. Live schedule records are unchanged.',tag:`ascend-test-${Date.now()}`,icon:'assets/icon-192.png'});addDeveloperEvent('notification',`Sent ${kind} test notification`);showSystemNotice('alert','TEST ALERT SENT','The notification laboratory completed successfully.',1800)}catch(error){showBreachWarning('TEST ALERT FAILED',error.message||'Notification could not be created.')}};
   const exitDeveloperRun=(returnToPanel=false)=>{
-    stopDeveloperClock();cancelHold('developer-run');$('#developerRunFill').style.width='0%';const returnDirect=developerRunSession?.returnDirect??true,overlay=$('#developerRunOverlay');overlay.classList.remove('developer-run-visible');overlay.hidden=true;delete overlay.dataset.scenario;delete overlay.dataset.mode;$('#developerRunCard').classList.remove('developer-run-card-lab');$('#developerRunDetail').hidden=false;document.body.classList.remove('developer-test-running');developerRunSession=null;
+    stopDeveloperClock();cancelHold('developer-run');setHoldProgress('#developerRunFill',0);const returnDirect=developerRunSession?.returnDirect??true,overlay=$('#developerRunOverlay');overlay.classList.remove('developer-run-visible');overlay.hidden=true;delete overlay.dataset.scenario;delete overlay.dataset.mode;$('#developerRunCard').classList.remove('developer-run-card-lab');$('#developerRunDetail').hidden=false;document.body.classList.remove('developer-test-running');developerRunSession=null;
     if(returnToPanel){controlUi.directDeveloper=returnDirect;$('#scheduleOverlay').hidden=false;renderDeveloperTest();releaseWakeLock()}else{controlUi.directDeveloper=false;renderApp();if(activeProtocolRecord())requestWakeLock()}
   };
-  const startDeveloperRunAction=event=>{if(!developerRunSession||!developerRunSession.currentState?.action||$('#developerRunAction').disabled)return;event?.preventDefault();beginHold('developer-run',1200,progress=>{$('#developerRunFill').style.width=`${progress*100}%`},completeDeveloperRun)};
+  const startDeveloperRunAction=event=>{if(!developerRunSession||!developerRunSession.currentState?.action||$('#developerRunAction').disabled)return;beginPointerHold(event,'developer-run',1200,progress=>{setHoldProgress('#developerRunFill',progress)},completeDeveloperRun)};
   const runDeveloperTest=()=>launchDeveloperRun({mode:'live'});
   const resetDeveloperTest=()=>{state.system.developerTest={enabled:false,unlocked:true,scenario:'live',simulatedDate:null,runs:0,lastResult:null,sandboxMode:'profile',reports:[],labHistory:[]};save({silent:true});renderDeveloperTest();showSystemNotice('diagnostic','TEST HISTORY CLEARED','Developer sandbox history was reset.',1600)};
   const renderRecoverySystem=()=>{setControlView('recoverySystemView');const snapshots=S.listSnapshots(),rollbacks=S.listRollbackPoints();$('#recoverySystemSummary').innerHTML=`<div><span>SAFE MODE</span><strong>${state.system.safeMode?'ACTIVE':'STANDBY'}</strong></div><div><span>SNAPSHOTS</span><strong>${snapshots.length}</strong></div><div><span>ROLLBACKS</span><strong>${rollbacks.length}</strong></div><div><span>LAST BOOT</span><strong>${state.system.lastSuccessfulBoot?formatShortDate(state.system.lastSuccessfulBoot):'PENDING'}</strong></div>`;$('#toggleSafeMode').textContent=state.system.safeMode?'Exit Emergency Safe Mode':'Emergency Safe Mode'};
@@ -2251,9 +2364,10 @@
   };
   const renderSettings=()=>{
     setControlView('settingsView');
-    const lead=$('#settingsNotificationLead'),timeFormat=$('#settingsTimeFormat'),preview=$('#settingsImportPreview');
+    const lead=$('#settingsNotificationLead'),timeFormat=$('#settingsTimeFormat'),performanceMode=$('#settingsPerformanceMode'),preview=$('#settingsImportPreview');
     if(lead)lead.value=state.settings.notifications?String(state.settings.notificationLeadMinutes||10):'off';
     if(timeFormat)timeFormat.value=state.settings.timeFormat==='24'?'24':'12';
+    if(performanceMode)performanceMode.value=state.settings.performanceMode||'adaptive';
     if(preview){preview.hidden=!settingsUi.pending;if(settingsUi.pending){const summary=settingsUi.pending.summary;$('#settingsImportType').textContent=`${settingsUi.kind.toUpperCase()} LOAD PREVIEW`;$('#settingsImportTitle').textContent=summary.title;$('#settingsImportDetails').textContent=summary.details;$('#settingsImportWarning').textContent=settingsUi.kind==='full'?'This replaces the complete local ASCEND state. A safety rollback is created first.':`This replaces only ${settingsUi.kind} data. Everything else stays unchanged, and a safety rollback is created first.`}}
   };
   const exportSettingsData=kind=>{
@@ -2288,6 +2402,7 @@
     state.settings.notifications=true;state.settings.notificationLeadMinutes=lead;invalidateExternalCalendar();save({silent:true});renderSettings();
   };
   const updateSettingsTimeFormat=value=>{state.settings.timeFormat=value==='24'?'24':'12';save({silent:true});updateClock();renderSettings()};
+  const updateSettingsPerformance=value=>{state.settings.performanceMode=['adaptive','full','reduced'].includes(value)?value:'adaptive';adaptivePerformancePressure=0;applyPerformanceMode();watchRuntimePressure();save({silent:true});renderSettings()};
   const backupRecordTotal=summary=>summary.days+summary.attendance+summary.tasks+summary.schedules+(summary.exceptions||0)+summary.trading;
   const renderDataBackup=()=>{
     setControlView('dataBackupView');
@@ -2445,7 +2560,7 @@
     save();scheduleUi.day=Number(entry.day);scheduleUi.page=0;scheduleUi.editId=null;scheduleUi.isNew=false;renderScheduleOverview();showBreachWarning('CLASS DELETED',`${entry.subject} was removed from future meetings. Existing records were preserved.`);
   };
 
-  const openEmergencyOverlay=source=>{if(!activeProtocolRecord()||!$('#emergencyOverlay').hidden)return;cancelHold();releaseWakeLock();$('#emergencyOverlay').hidden=false;$('#emergencyExitFill').style.width='0%';$('#emergencyOverlay').dataset.source=source;systemFeedback('emergency','Emergency override opened.')};
+  const openEmergencyOverlay=source=>{if(!activeProtocolRecord()||!$('#emergencyOverlay').hidden)return;cancelHold();releaseWakeLock();$('#emergencyOverlay').hidden=false;setHoldProgress('#emergencyExitFill',0);$('#emergencyOverlay').dataset.source=source;systemFeedback('emergency','Emergency override opened.')};
   const closeEmergencyOverlay=()=>{$('#emergencyOverlay').hidden=true;requestWakeLock()};
   const emergencyExit=()=>{
     const record=dayRecord(),protocol=activeProtocolRecord();if(!record||!protocol){closeEmergencyOverlay();return}
@@ -2471,7 +2586,7 @@
     save({silent:true});controlUi.directDeveloper=true;releaseWakeLock();launchDeveloperRun({mode:'live',sandboxMode:'profile',simulatedAt:Date.now(),returnDirect:true});
     showSystemNotice('diagnostic','LIVE SIMULATOR OPEN','Change simulated time and watch ASCEND react without changing live progress.',2100);
   };
-  const startBrandAccessHold=()=>{
+  const startBrandAccessHold=event=>{
     if(!$('#scheduleOverlay').hidden||!$('#emergencyOverlay').hidden)return;
     brandHoldStartedAt=performance.now();brandHoldProtocolActive=Boolean(activeProtocolRecord());brandHoldDeveloperReady=false;
     const duration=brandHoldProtocolActive?6000:3000;
@@ -2492,40 +2607,40 @@
       const emergency=brandHoldProtocolActive;
       brandHoldStartedAt=0;brandHoldProtocolActive=false;brandHoldDeveloperReady=false;resetBrandAccessVisual();
       if(emergency)openEmergencyOverlay('brand-hold');else openDeveloperFromBrand();
-    });
+    },{target:event?.currentTarget||$('#systemBrand'),pointerId:event?.pointerId??null});
   };
-  const finishBrandAccessHold=()=>{
+  const finishBrandAccessHold=event=>{
     if(!brandHoldStartedAt)return;
     const elapsed=performance.now()-brandHoldStartedAt;
     const openProfile=elapsed<=650;
     const openDeveloper=brandHoldProtocolActive&&elapsed>=3000&&elapsed<6000;
-    cancelHold('brand-access');brandHoldStartedAt=0;brandHoldProtocolActive=false;brandHoldDeveloperReady=false;resetBrandAccessVisual();
+    cancelHold('brand-access','Brand hold released before completion',event?.pointerId??null);brandHoldStartedAt=0;brandHoldProtocolActive=false;brandHoldDeveloperReady=false;resetBrandAccessVisual();
     if(openDeveloper){openDeveloperFromBrand();return}
     if(openProfile)openProfileFromBrand();
   };
-  const cancelBrandAccessHold=()=>{cancelHold('brand-access');brandHoldStartedAt=0;brandHoldProtocolActive=false;brandHoldDeveloperReady=false;resetBrandAccessVisual()};
+  const cancelBrandAccessHold=event=>{cancelHold('brand-access','Brand hold was cancelled',event?.pointerId??null);brandHoldStartedAt=0;brandHoldProtocolActive=false;brandHoldDeveloperReady=false;resetBrandAccessVisual()};
   const armClockBackup=()=>{clockArmedUntil=Date.now()+6000;resetClockAccessVisual();$('#clockPanel').classList.add('backup-armed');showBreachWarning('OVERRIDE GESTURE ARMED','Hold the clock for 3 seconds to open Emergency Override.');setTimeout(()=>{if(Date.now()>=clockArmedUntil)$('#clockPanel').classList.remove('backup-armed')},6100)};
   const startClockAccessHold=event=>{
     if(!$('#scheduleOverlay').hidden||!$('#emergencyOverlay').hidden||!$('#developerRunOverlay').hidden)return;
     if(event.button!==undefined&&event.button!==0)return;
     event.preventDefault();clockHoldStartedAt=performance.now();clockHoldMode=Date.now()<=clockArmedUntil?'emergency':'schedule';
-    const clock=$('#clockPanel');clock.setPointerCapture?.(event.pointerId);
+    const clock=$('#clockPanel');
     if(clockHoldMode==='schedule')clock.classList.add('schedule-arming');
     beginHold(clockHoldMode==='emergency'?'clock-backup':'clock-schedule',3000,progress=>{
       if(clockHoldMode==='schedule')clock.style.setProperty('--schedule-access-progress',`${progress*360}deg`);
     },()=>{
       const mode=clockHoldMode;clockHoldStartedAt=0;clockHoldMode='';clockSuppressClick=true;setTimeout(()=>{clockSuppressClick=false},500);resetClockAccessVisual();
       if(mode==='emergency'){clockArmedUntil=0;clock.classList.remove('backup-armed');openEmergencyOverlay('clock-gesture')}else openControlOverlay();
-    });
+    },{target:clock,pointerId:event.pointerId});
   };
   const finishClockAccessHold=event=>{
     if(!clockHoldStartedAt)return;
     const elapsed=performance.now()-clockHoldStartedAt;
-    cancelHold(clockHoldMode==='emergency'?'clock-backup':'clock-schedule');clockHoldStartedAt=0;clockHoldMode='';resetClockAccessVisual();
+    cancelHold(clockHoldMode==='emergency'?'clock-backup':'clock-schedule','Clock hold released before completion',event?.pointerId??null);clockHoldStartedAt=0;clockHoldMode='';resetClockAccessVisual();
     if(elapsed>=450){clockSuppressClick=true;setTimeout(()=>{clockSuppressClick=false},500)}
     try{$('#clockPanel').releasePointerCapture?.(event.pointerId)}catch(error){}
   };
-  const cancelClockAccessHold=()=>{if(clockHoldMode)cancelHold(clockHoldMode==='emergency'?'clock-backup':'clock-schedule');clockHoldStartedAt=0;clockHoldMode='';resetClockAccessVisual()};
+  const cancelClockAccessHold=event=>{if(clockHoldMode)cancelHold(clockHoldMode==='emergency'?'clock-backup':'clock-schedule','Clock hold was cancelled',event?.pointerId??null);clockHoldStartedAt=0;clockHoldMode='';resetClockAccessVisual()};
 
   const revealUpdatePrompt=worker=>{
     if(!worker||waitingServiceWorker===worker)return;waitingServiceWorker=worker;
@@ -2562,6 +2677,10 @@
     });
   };
 
+  const resumeRuntime=()=>{
+    const now=Date.now();if(now-lastResumeAt<450)return;lastResumeAt=now;earlyWakeDismissedSession=false;applyPerformanceMode();renderApp({maintenance:true});
+  };
+
   const wireEvents=()=>{
     $('#applyUpdate').addEventListener('click',()=>{
       if(!waitingServiceWorker)return;
@@ -2573,12 +2692,12 @@
     window.addEventListener('online',()=>showSystemNotice('online','CONNECTION RESTORED','Local operation remains synchronized.',2200));
     window.addEventListener('resize',updateOrientationGuard,{passive:true});
     window.addEventListener('orientationchange',()=>setTimeout(updateOrientationGuard,80),{passive:true});
-    window.addEventListener('blur',()=>cancelHold());
-    document.addEventListener('pointerup',()=>cancelHold());
-    document.addEventListener('pointercancel',()=>cancelHold());
+    window.addEventListener('blur',()=>cancelHold(null,'Window focus changed before completion'));
     $('#activateButton').addEventListener('click',()=>{const name=$('#playerName').value.trim();if(!name){$('#playerName').focus();return}state.player.name=name;state.initialized=true;state.activatedAt=state.activatedAt||new Date().toISOString();state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'system',message:'Discipline System activated at Level 1.'});save();requestPersistentStorage();renderApp()});
-    $('#earlyWakeButton').addEventListener('pointerdown',event=>{event.preventDefault();beginHold('early-wake',2000,progress=>{$('#earlyWakeFill').style.width=`${progress*100}%`},confirmEarlyWake)});
-    ['pointerup','pointercancel','pointerleave'].forEach(type=>$('#earlyWakeButton').addEventListener(type,()=>cancelHold('early-wake')));
+    $('#earlyWakeButton').addEventListener('pointerdown',event=>beginPointerHold(event,'early-wake',2000,progress=>{setHoldProgress('#earlyWakeFill',progress)},confirmEarlyWake));
+    $('#earlyWakeButton').addEventListener('pointerup',event=>endPointerHold(event,'early-wake'));
+    $('#earlyWakeButton').addEventListener('pointercancel',event=>endPointerHold(event,'early-wake','Touch was cancelled before completion'));
+    $('#earlyWakeButton').addEventListener('lostpointercapture',event=>endPointerHold(event,'early-wake','Pointer capture ended before completion'));
     $('#notYetButton').addEventListener('click',()=>{earlyWakeDismissedSession=true;haptic('tap');renderApp()});
     $('#freeQuestOpen').addEventListener('click',openDailyQuest);
     $('#startFlexibleProtocolButton').addEventListener('click',startAvailableFlexibleProtocol);
@@ -2586,10 +2705,12 @@
     $('#closeDailyQuest').addEventListener('click',closeDailyQuest);
     $('#dailyQuestOverlay').addEventListener('click',event=>{if(event.target===$('#dailyQuestOverlay'))closeDailyQuest()});
 
-    $('#actionButton').addEventListener('click',beginAction);
+    $('#actionButton').addEventListener('click',event=>{if(Date.now()<actionClickSuppressedUntil){event.preventDefault();return}beginAction()});
     $('#skipDirectiveButton').addEventListener('click',skipCurrentDirective);
-    $('#actionButton').addEventListener('pointerdown',event=>{const protocol=activeProtocolRecord(),task=currentStep(protocol);if(!task||task.type!=='hold'||$('#actionButton').disabled)return;event.preventDefault();beginHold('action',task.holdDuration||1800,progress=>{$('#holdFill').style.width=`${progress*100}%`},completeSubtask)});
-    ['pointerup','pointercancel','pointerleave'].forEach(type=>$('#actionButton').addEventListener(type,()=>cancelHold('action')));
+    $('#actionButton').addEventListener('pointerdown',event=>{const protocol=activeProtocolRecord(),task=currentStep(protocol);if(!task||task.type!=='hold'||$('#actionButton').disabled)return;actionClickSuppressedUntil=Date.now()+(task.holdDuration||1800)+700;beginPointerHold(event,'action',task.holdDuration||1800,progress=>{setHoldProgress('#holdFill',progress)},completeSubtask)});
+    $('#actionButton').addEventListener('pointerup',event=>endPointerHold(event,'action'));
+    $('#actionButton').addEventListener('pointercancel',event=>endPointerHold(event,'action','Touch was cancelled before completion'));
+    $('#actionButton').addEventListener('lostpointercapture',event=>endPointerHold(event,'action','Pointer capture ended before completion'));
     const customTaskArea=$('#customTaskArea');
     customTaskArea.addEventListener('click',handleCustomAction);
     customTaskArea.addEventListener('focusin',event=>{if(event.target.matches('input,select,textarea'))customFormEditing=true});
@@ -2597,8 +2718,10 @@
     customTaskArea.addEventListener('input',()=>captureAuditDraft());
     customTaskArea.addEventListener('change',()=>{if(captureAuditDraft())save({silent:true})});
 
-    $('#classConfirmButton').addEventListener('pointerdown',event=>{event.preventDefault();beginHold('class-confirm',1400,progress=>{$('#classConfirmFill').style.width=`${progress*100}%`},checkInClass)});
-    ['pointerup','pointercancel','pointerleave'].forEach(type=>$('#classConfirmButton').addEventListener(type,()=>{cancelHold('class-confirm');$('#classConfirmFill').style.width='0%'}));
+    $('#classConfirmButton').addEventListener('pointerdown',event=>beginPointerHold(event,'class-confirm',1400,progress=>{setHoldProgress('#classConfirmFill',progress)},checkInClass));
+    $('#classConfirmButton').addEventListener('pointerup',event=>{endPointerHold(event,'class-confirm');setHoldProgress('#classConfirmFill',0)});
+    $('#classConfirmButton').addEventListener('pointercancel',event=>{endPointerHold(event,'class-confirm','Touch was cancelled before completion');setHoldProgress('#classConfirmFill',0)});
+    $('#classConfirmButton').addEventListener('lostpointercapture',event=>{endPointerHold(event,'class-confirm','Pointer capture ended before completion');setHoldProgress('#classConfirmFill',0)});
     $('#classScreen').addEventListener('click',event=>{const button=event.target.closest('[data-class-action]');if(button)handleClassAction(button.dataset.classAction)});
 
     $('#scheduleClose').addEventListener('click',closeScheduleOverlay);
@@ -2653,6 +2776,7 @@
     $('#settingsCancelImport').addEventListener('click',clearSettingsImport);
     $('#settingsNotificationLead').addEventListener('change',event=>updateSettingsNotification(event.target.value));
     $('#settingsTimeFormat').addEventListener('change',event=>updateSettingsTimeFormat(event.target.value));
+    $('#settingsPerformanceMode').addEventListener('change',event=>updateSettingsPerformance(event.target.value));
     $('#attendanceBack').addEventListener('click',renderControlHome);
     $('#academicTasksBack').addEventListener('click',renderAcademicHome);
     $('#advancedSystemBack').addEventListener('click',renderAcademicHome);
@@ -2684,7 +2808,9 @@
     $('#developerRunAgain').addEventListener('click',()=>exitDeveloperRun(true));
     $('#developerRunExitResult').addEventListener('click',()=>exitDeveloperRun(false));
     $('#developerRunAction').addEventListener('pointerdown',startDeveloperRunAction);
-    ['pointerup','pointercancel','pointerleave'].forEach(type=>$('#developerRunAction').addEventListener(type,()=>{cancelHold('developer-run');$('#developerRunFill').style.width='0%'}));
+    $('#developerRunAction').addEventListener('pointerup',event=>{endPointerHold(event,'developer-run');setHoldProgress('#developerRunFill',0)});
+    $('#developerRunAction').addEventListener('pointercancel',event=>{endPointerHold(event,'developer-run','Touch was cancelled before completion');setHoldProgress('#developerRunFill',0)});
+    $('#developerRunAction').addEventListener('lostpointercapture',event=>{endPointerHold(event,'developer-run','Pointer capture ended before completion');setHoldProgress('#developerRunFill',0)});
     $('#developerApplyTime').addEventListener('click',applyDeveloperDateTime);
     $('#developerSimulatedDateTime').addEventListener('keydown',event=>{if(event.key==='Enter')applyDeveloperDateTime()});
     $('#developerBackFifteen').addEventListener('click',()=>advanceDeveloperTime(-15,'Moved back 15 minutes'));
@@ -2731,11 +2857,11 @@
 
     $('#profileContent').addEventListener('pointerdown',event=>{
       const target=event.target.closest('[data-settings-hold]');if(!target||event.button!==undefined&&event.button!==0)return;
-      event.preventDefault();target.setPointerCapture?.(event.pointerId);target.classList.add('settings-arming');
-      beginHold('profile-settings',2000,progress=>target.style.setProperty('--settings-hold-progress',String(progress)),()=>{target.classList.remove('settings-arming');target.style.setProperty('--settings-hold-progress','0');$('#openSettings').click()});
+      event.preventDefault();target.classList.add('settings-arming');
+      beginHold('profile-settings',2000,progress=>target.style.setProperty('--settings-hold-progress',String(progress)),()=>{target.classList.remove('settings-arming');target.style.setProperty('--settings-hold-progress','0');$('#openSettings').click()},{target,pointerId:event.pointerId});
     });
-    $('#profileContent').addEventListener('pointerup',event=>{const target=event.target.closest('[data-settings-hold]');if(!target)return;try{target.releasePointerCapture?.(event.pointerId)}catch(error){}cancelHold('profile-settings');target.classList.remove('settings-arming');target.style.setProperty('--settings-hold-progress','0')});
-    $('#profileContent').addEventListener('pointercancel',event=>{const target=event.target.closest('[data-settings-hold]');if(!target)return;cancelHold('profile-settings');target.classList.remove('settings-arming');target.style.setProperty('--settings-hold-progress','0')});
+    $('#profileContent').addEventListener('pointerup',event=>{const target=event.target.closest('[data-settings-hold]')||holdSession?.target;if(!target)return;endPointerHold(event,'profile-settings');target.classList.remove('settings-arming');target.style.setProperty('--settings-hold-progress','0')});
+    $('#profileContent').addEventListener('pointercancel',event=>{const target=event.target.closest('[data-settings-hold]')||holdSession?.target;if(!target)return;endPointerHold(event,'profile-settings','Touch was cancelled before completion');target.classList.remove('settings-arming');target.style.setProperty('--settings-hold-progress','0')});
     $('#profileContent').addEventListener('contextmenu',event=>{if(event.target.closest('[data-settings-hold]'))event.preventDefault()});
     $('#profileContent').addEventListener('click',event=>{
       const button=event.target.closest('[data-profile-action]');if(!button)return;const action=button.dataset.profileAction;
@@ -2773,8 +2899,10 @@
     $('#scheduleClassList').addEventListener('click',event=>{const button=event.target.closest('[data-class-id]');if(button)openScheduleEditor(button.dataset.classId)});
     $('#schedulePagePrev').addEventListener('click',()=>{scheduleUi.page=Math.max(0,scheduleUi.page-1);renderScheduleOverview()});
     $('#schedulePageNext').addEventListener('click',()=>{scheduleUi.page+=1;renderScheduleOverview()});
-    $('#scheduleDelete').addEventListener('pointerdown',event=>{if(!currentScheduleEntry())return;event.preventDefault();beginHold('schedule-delete',2200,progress=>{$('#scheduleDeleteFill').style.width=`${progress*100}%`},deleteScheduleEntry)});
-    ['pointerup','pointercancel','pointerleave'].forEach(type=>$('#scheduleDelete').addEventListener(type,()=>{cancelHold('schedule-delete');$('#scheduleDeleteFill').style.width='0%'}));
+    $('#scheduleDelete').addEventListener('pointerdown',event=>{if(!currentScheduleEntry())return;beginPointerHold(event,'schedule-delete',2200,progress=>{setHoldProgress('#scheduleDeleteFill',progress)},deleteScheduleEntry)});
+    $('#scheduleDelete').addEventListener('pointerup',event=>{endPointerHold(event,'schedule-delete');setHoldProgress('#scheduleDeleteFill',0)});
+    $('#scheduleDelete').addEventListener('pointercancel',event=>{endPointerHold(event,'schedule-delete','Touch was cancelled before completion');setHoldProgress('#scheduleDeleteFill',0)});
+    $('#scheduleDelete').addEventListener('lostpointercapture',event=>{endPointerHold(event,'schedule-delete','Pointer capture ended before completion');setHoldProgress('#scheduleDeleteFill',0)});
 
     $('#scheduleOverlay').addEventListener('click',event=>{if(event.target===$('#scheduleOverlay'))closeScheduleOverlay()});
     $('#emergencyOverlay').addEventListener('click',event=>{if(event.target===$('#emergencyOverlay'))closeEmergencyOverlay()});
@@ -2786,16 +2914,18 @@
     document.addEventListener('contextmenu',event=>{
       if(event.target.closest('.brand,.system-emblem,.free-watermark,.state-watermark,.hold-button,.compact-status,.glyph-frame'))event.preventDefault();
     });
-    $('#systemBrand').addEventListener('pointerdown',event=>{if(event.button!==undefined&&event.button!==0)return;event.preventDefault();$('#systemBrand').setPointerCapture?.(event.pointerId);startBrandAccessHold()});
-    $('#systemBrand').addEventListener('pointerup',event=>{event.preventDefault();try{$('#systemBrand').releasePointerCapture?.(event.pointerId)}catch(error){}finishBrandAccessHold()});
+    $('#systemBrand').addEventListener('pointerdown',event=>{if(event.button!==undefined&&event.button!==0)return;event.preventDefault();startBrandAccessHold(event)});
+    $('#systemBrand').addEventListener('pointerup',event=>{event.preventDefault();finishBrandAccessHold(event)});
     ['pointercancel','lostpointercapture'].forEach(type=>$('#systemBrand').addEventListener(type,cancelBrandAccessHold));
     $('#clockPanel').addEventListener('click',()=>{if(clockSuppressClick){clockSuppressClick=false;return}clockTapCount+=1;clearTimeout(clockTapTimer);if(clockTapCount>=5){clockTapCount=0;armClockBackup();return}clockTapTimer=setTimeout(()=>{clockTapCount=0},1300)});
     $('#clockPanel').addEventListener('pointerdown',startClockAccessHold);
     $('#clockPanel').addEventListener('pointerup',finishClockAccessHold);
     ['pointercancel','lostpointercapture'].forEach(type=>$('#clockPanel').addEventListener(type,cancelClockAccessHold));
     $('#returnDirectiveButton').addEventListener('click',closeEmergencyOverlay);
-    $('#confirmEmergencyButton').addEventListener('pointerdown',event=>{event.preventDefault();beginHold('emergency-exit',3000,progress=>{$('#emergencyExitFill').style.width=`${progress*100}%`},emergencyExit)});
-    ['pointerup','pointercancel','pointerleave'].forEach(type=>$('#confirmEmergencyButton').addEventListener(type,()=>cancelHold('emergency-exit')));
+    $('#confirmEmergencyButton').addEventListener('pointerdown',event=>beginPointerHold(event,'emergency-exit',3000,progress=>{setHoldProgress('#emergencyExitFill',progress)},emergencyExit));
+    $('#confirmEmergencyButton').addEventListener('pointerup',event=>endPointerHold(event,'emergency-exit'));
+    $('#confirmEmergencyButton').addEventListener('pointercancel',event=>endPointerHold(event,'emergency-exit','Touch was cancelled before completion'));
+    $('#confirmEmergencyButton').addEventListener('lostpointercapture',event=>endPointerHold(event,'emergency-exit','Pointer capture ended before completion'));
 
     document.querySelectorAll('[data-mastery]').forEach(button=>button.addEventListener('click',()=>{const choice=button.dataset.mastery;state.player.masteryChoice=choice==='graduate'?'Graduated from the System':choice==='maintenance'?'Maintenance Mode':'New Mastery Path';state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'mastery',message:state.player.masteryChoice});save();renderApp()}));
     document.addEventListener('keydown',event=>{
@@ -2809,18 +2939,35 @@
       if(escapeTimer||!activeProtocolRecord())return;escapeTimer=setTimeout(()=>{escapeTimer=null;openEmergencyOverlay('escape-hold')},5000);
     });
     document.addEventListener('keyup',event=>{if(event.key==='Escape'&&escapeTimer){clearTimeout(escapeTimer);escapeTimer=null}});
-    document.addEventListener('visibilitychange',()=>{if(document.hidden)releaseWakeLock();else{earlyWakeDismissedSession=false;renderApp()}});
-    window.addEventListener('pageshow',renderApp);window.addEventListener('focus',renderApp);
+    document.addEventListener('visibilitychange',()=>{
+      if(document.hidden){cancelHold(null,'App left the foreground before confirmation completed');flushSave({silent:true,critical:true});releaseWakeLock()}
+      else resumeRuntime();
+    });
+    window.addEventListener('pagehide',()=>flushSave({silent:true,critical:true}));
+    window.addEventListener('beforeunload',()=>flushSave({silent:true,critical:true}));
+    window.addEventListener('pageshow',()=>{if(!document.hidden)resumeRuntime()});
+    window.addEventListener('focus',()=>{if(!document.hidden)resumeRuntime()});
   };
 
+  const refreshProtocolDynamicPhase=()=>{
+    if(activeScreenId!=='protocolScreen'){liveProtocolPhase='';return false}
+    const protocol=activeProtocolRecord(),task=currentStep(protocol);if(!protocol||!task)return false;
+    const phase=protocolDynamicPhase(protocol,task);
+    if(!liveProtocolPhase){liveProtocolPhase=phase;return false}
+    if(phase!==liveProtocolPhase){liveProtocolPhase=phase;renderApp();return true}
+    return false;
+  };
   const tick=()=>{
-    updateClock();
-    const currentDate=S.dateKey();if(currentDate!==advancedSyncDate){advancedSyncDate=currentDate;synchronizeAdvancedSystems();if(state.timezone?.pending&&!timezonePromptShown)setTimeout(showTimezoneOverlay,120)}
-    if(orientationBlocked||holdSession||transitionLocked||customFormEditing||!$('#scheduleOverlay').hidden||!$('#developerRunOverlay').hidden||state.system.safeMode)return;renderApp();
+    const now=new Date();updateClock();updateLiveCountdowns();
+    if(refreshProtocolDynamicPhase())return;
+    const currentDate=S.dateKey(now),minuteStamp=`${currentDate}|${now.getHours()}|${now.getMinutes()}`;
+    if(currentDate!==advancedSyncDate){advancedSyncDate=currentDate;synchronizeAdvancedSystems();if(state.timezone?.pending&&!timezonePromptShown)setTimeout(showTimezoneOverlay,120);if(!orientationBlocked&&!holdSession&&!transitionLocked&&!customFormEditing&&$('#scheduleOverlay').hidden&&$('#developerRunOverlay').hidden&&!state.system.safeMode)renderApp({maintenance:true});return}
+    if(orientationBlocked||holdSession||transitionLocked||customFormEditing||!$('#scheduleOverlay').hidden||!$('#developerRunOverlay').hidden||state.system.safeMode)return;
+    if(minuteStamp!==lastRuntimeMinute)renderApp();
   };
   const emergencyBoot=beginBootGuard();
-  synchronizeAdvancedSystems();advancedSyncDate=S.dateKey();applySafeMode();
-  wireEvents();updateOrientationGuard();renderApp();dismissLaunchSplash();setupServiceWorker();if(state.initialized)requestPersistentStorage();
+  synchronizeAdvancedSystems();advancedSyncDate=S.dateKey();applySafeMode();applyPerformanceMode();watchRuntimePressure();
+  wireEvents();updateOrientationGuard();renderApp({maintenance:true});dismissLaunchSplash();setupServiceWorker();if(state.initialized)requestPersistentStorage();
   bootCompletionTimer=setTimeout(completeBootGuard,2600);
   if(emergencyBoot||state.system?.recoveredFrom==='startup-guard')setTimeout(openEmergencyRecovery,700);
   if(state.timezone?.pending)setTimeout(showTimezoneOverlay,900);
