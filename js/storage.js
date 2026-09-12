@@ -6,11 +6,18 @@
   const SNAPSHOT_KEY='ascend_discipline_protocol_snapshots_v1';
   const ROLLBACK_KEY='ascend_discipline_protocol_rollbacks_v1';
   const LEGACY_KEYS=['ascend_discipline_protocol_v6','ascend_discipline_protocol_v5','ascend_discipline_protocol_v4','ascend_strict_system_v3','ascend_automatic_year_system_v2','ascend_personal_growth_system_v1'];
-  const VERSION=26;
-  const BACKUP_VERSION=7;
+  const VERSION=27;
+  const BACKUP_VERSION=8;
   const ROUTINE_LOG_LIMIT=420;
-  const SNAPSHOT_LIMIT=7;
-  const ROLLBACK_LIMIT=4;
+  const SNAPSHOT_LIMIT=3;
+  const ROLLBACK_LIMIT=3;
+  const DB_NAME='ascend_offline_database';
+  const DB_VERSION=1;
+  const META_KEY='ascend_storage_meta_v1';
+  const STORE_STATE='state';
+  const STORE_SNAPSHOTS='snapshots';
+  const STORE_ROLLBACKS='rollbacks';
+  const STORE_META='meta';
   const SNAPSHOT_MIN_INTERVAL_MS=5*60*1000;
   const RECOVERY_MIN_INTERVAL_MS=30*1000;
   let lastRecoveryWriteAt=0;
@@ -22,7 +29,73 @@
   const uid=(prefix='id')=>window.crypto?.randomUUID?`${prefix}_${crypto.randomUUID()}`:`${prefix}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
   const memory=(()=>{const map=new Map();return{getItem:key=>map.has(key)?map.get(key):null,setItem:(key,value)=>map.set(key,String(value)),removeItem:key=>map.delete(key)}})();
   const store=(()=>{try{localStorage.setItem('__ascend_test__','1');localStorage.removeItem('__ascend_test__');return localStorage}catch(error){console.warn('Persistent storage unavailable. Using temporary memory.',error);return memory}})();
-  const clone=value=>JSON.parse(JSON.stringify(value));
+  const clone=value=>typeof structuredClone==='function'?structuredClone(value):JSON.parse(JSON.stringify(value));
+  let database=null;
+  let indexedDbReady=false;
+  let indexedDbFailed=false;
+  let snapshotCache=[];
+  let rollbackCache=[];
+  let lastKnownState=null;
+  let pendingStateWrite=null;
+  let pendingStateTimer=null;
+  let pendingStatePromise=Promise.resolve();
+  const pendingArchiveWrites=new Set();
+  let storageEstimateCache={at:0,value:null};
+
+  const requestToPromise=request=>new Promise((resolve,reject)=>{request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error||new Error('IndexedDB request failed.'))});
+  const transactionDone=transaction=>new Promise((resolve,reject)=>{transaction.oncomplete=()=>resolve();transaction.onabort=()=>reject(transaction.error||new Error('IndexedDB transaction aborted.'));transaction.onerror=()=>reject(transaction.error||new Error('IndexedDB transaction failed.'))});
+  const openDatabase=async()=>{
+    if(database)return database;
+    if(indexedDbFailed||!('indexedDB' in window))throw new Error('IndexedDB unavailable.');
+    try{
+      database=await new Promise((resolve,reject)=>{
+        const request=indexedDB.open(DB_NAME,DB_VERSION);
+        request.onupgradeneeded=()=>{
+          const db=request.result;
+          if(!db.objectStoreNames.contains(STORE_STATE))db.createObjectStore(STORE_STATE,{keyPath:'key'});
+          if(!db.objectStoreNames.contains(STORE_SNAPSHOTS))db.createObjectStore(STORE_SNAPSHOTS,{keyPath:'id'});
+          if(!db.objectStoreNames.contains(STORE_ROLLBACKS))db.createObjectStore(STORE_ROLLBACKS,{keyPath:'id'});
+          if(!db.objectStoreNames.contains(STORE_META))db.createObjectStore(STORE_META,{keyPath:'key'});
+        };
+        request.onsuccess=()=>resolve(request.result);
+        request.onerror=()=>reject(request.error||new Error('IndexedDB could not be opened.'));
+        request.onblocked=()=>reject(new Error('IndexedDB upgrade is blocked by another ASCEND tab.'));
+      });
+      database.onversionchange=()=>{try{database.close()}catch(error){}database=null};
+      indexedDbReady=true;return database;
+    }catch(error){indexedDbFailed=true;console.warn('ASCEND IndexedDB unavailable; using compatibility storage.',error);throw error}
+  };
+  const idbGet=async(storeName,key)=>{const db=await openDatabase(),tx=db.transaction(storeName,'readonly');return requestToPromise(tx.objectStore(storeName).get(key))};
+  const idbGetAll=async storeName=>{const db=await openDatabase(),tx=db.transaction(storeName,'readonly');return requestToPromise(tx.objectStore(storeName).getAll())};
+  const idbPut=async(storeName,value)=>{const db=await openDatabase(),tx=db.transaction(storeName,'readwrite');tx.objectStore(storeName).put(value);await transactionDone(tx);return value};
+  const idbDelete=async(storeName,key)=>{const db=await openDatabase(),tx=db.transaction(storeName,'readwrite');tx.objectStore(storeName).delete(key);await transactionDone(tx)};
+  const idbClear=async storeName=>{const db=await openDatabase(),tx=db.transaction(storeName,'readwrite');tx.objectStore(storeName).clear();await transactionDone(tx)};
+  const bytesForText=text=>new TextEncoder().encode(String(text||'')).length;
+  const legacyLocalBytes=()=>[KEY,RECOVERY_KEY,SNAPSHOT_KEY,ROLLBACK_KEY,...LEGACY_KEYS].reduce((sum,key)=>sum+bytesForText(store.getItem(key)||''),0);
+  const writeStorageMeta=patch=>{try{const current=JSON.parse(store.getItem(META_KEY)||'{}');store.setItem(META_KEY,JSON.stringify({...current,...patch,backend:indexedDbReady?'indexeddb':'localStorage',schemaVersion:VERSION,updatedAt:nowIso()}))}catch(error){}};
+  const readStorageMeta=()=>{try{return JSON.parse(store.getItem(META_KEY)||'{}')}catch(error){return{}}};
+  const cleanupLegacyStorage=()=>{[KEY,RECOVERY_KEY,SNAPSHOT_KEY,ROLLBACK_KEY,...LEGACY_KEYS].forEach(key=>{try{store.removeItem(key)}catch(error){}});writeStorageMeta({migrated:true,migratedAt:readStorageMeta().migratedAt||nowIso()})};
+  const encodeArchiveState=async value=>{
+    const text=JSON.stringify(value);
+    if('CompressionStream' in window){try{const stream=new Blob([text]).stream().pipeThrough(new CompressionStream('gzip'));const blob=await new Response(stream).blob();return{encoding:'gzip-json',payload:blob,bytes:blob.size}}catch(error){}}
+    const blob=new Blob([text],{type:'application/json'});return{encoding:'json',payload:blob,bytes:blob.size};
+  };
+  const decodeArchiveState=async record=>{
+    if(!record)return null;
+    if(record.state&&typeof record.state==='object')return clone(record.state);
+    const blob=record.payload;if(!(blob instanceof Blob))throw new Error('Archive payload missing.');
+    let text;
+    if(record.encoding==='gzip-json'&&'DecompressionStream' in window){const stream=blob.stream().pipeThrough(new DecompressionStream('gzip'));text=await new Response(stream).text()}else text=await blob.text();
+    return JSON.parse(text);
+  };
+  const persistArchive=async(storeName,item)=>{const encoded=await encodeArchiveState(item.state);const stored={...item,state:undefined,payload:encoded.payload,encoding:encoded.encoding,bytes:encoded.bytes,summary:summarize(item.state)};delete stored.state;await idbPut(storeName,stored);return stored};
+  const loadArchiveCaches=async()=>{
+    try{
+      const [snapshots,rollbacks]=await Promise.all([idbGetAll(STORE_SNAPSHOTS),idbGetAll(STORE_ROLLBACKS)]);
+      snapshotCache=snapshots.sort((a,b)=>String(a.createdAt||'').localeCompare(String(b.createdAt||''))).map(({payload,encoding,...meta})=>meta);
+      rollbackCache=rollbacks.sort((a,b)=>String(a.createdAt||'').localeCompare(String(b.createdAt||''))).map(({payload,encoding,...meta})=>meta);
+    }catch(error){snapshotCache=[];rollbackCache=[]}
+  };
 
   const rankOrder=['E','D','C','B','A','S'];
   const pendingRankFor=(level,current='E')=>{
@@ -261,30 +334,43 @@
     return (hash>>>0).toString(16);
   };
 
-  const readList=(key)=>{try{const value=JSON.parse(store.getItem(key)||'[]');return Array.isArray(value)?value:[]}catch(error){return[]}};
-  const writeList=(key,value,limit)=>store.setItem(key,JSON.stringify(value.slice(-limit)));
+  const readLegacyList=key=>{try{const value=JSON.parse(store.getItem(key)||'[]');return Array.isArray(value)?value:[]}catch(error){return[]}};
+  const writeLegacyList=(key,value,limit)=>{try{store.setItem(key,JSON.stringify(value.slice(-limit)));return true}catch(error){return false}};
   const snapshotState=state=>clone({...state,system:{...(state.system||{}),recoveredFrom:null}});
   const snapshotLimitFor=()=>SNAPSHOT_LIMIT;
+  const trackArchiveWrite=promise=>{pendingArchiveWrites.add(promise);promise.finally(()=>pendingArchiveWrites.delete(promise));return promise};
+  const trimArchiveStore=(cache,storeName,limit)=>{
+    cache.sort((a,b)=>String(a.createdAt||'').localeCompare(String(b.createdAt||'')));
+    const removed=[];while(cache.length>limit)removed.push(cache.shift());
+    removed.forEach(item=>trackArchiveWrite(idbDelete(storeName,item.id).catch(()=>{})));
+    return removed;
+  };
 
   const createDailySnapshot=(state,force=false,preNormalized=false)=>{
-    const today=dateKey(),snapshots=readList(SNAPSHOT_KEY),last=snapshots[snapshots.length-1];
-    if(!force&&last&&last.date===today){
-      const lastAt=new Date(last.createdAt||0).getTime();
-      if(Number.isFinite(lastAt)&&Date.now()-lastAt<SNAPSHOT_MIN_INTERVAL_MS)return last;
-    }
+    if(!state?.initialized&&!force)return null;
+    const today=dateKey(),last=snapshotCache[snapshotCache.length-1];
+    if(!force&&last&&last.date===today){const lastAt=new Date(last.createdAt||0).getTime();if(Number.isFinite(lastAt)&&Date.now()-lastAt<SNAPSHOT_MIN_INTERVAL_MS)return last}
     const normalized=preNormalized?snapshotState(state):normalizeCurrent(snapshotState(state));
     const serialized=JSON.stringify(normalized),hash=hashText(serialized);
     if(!force&&last&&last.date===today&&last.hash===hash)return last;
-    const item={id:uid('snapshot'),date:today,createdAt:nowIso(),hash,state:normalized};
-    const filtered=snapshots.filter(snapshot=>snapshot.date!==today);filtered.push(item);writeList(SNAPSHOT_KEY,filtered,snapshotLimitFor(normalized));return item;
+    const item={id:uid('snapshot'),date:today,createdAt:nowIso(),hash,state:normalized,summary:null,bytes:0};
+    snapshotCache=snapshotCache.filter(snapshot=>snapshot.date!==today);snapshotCache.push({id:item.id,date:item.date,createdAt:item.createdAt,hash:item.hash,summary:summarize(normalized),bytes:0});
+    if(!indexedDbReady){const legacy=readLegacyList(SNAPSHOT_KEY).filter(snapshot=>snapshot.date!==today);legacy.push(item);writeLegacyList(SNAPSHOT_KEY,legacy,snapshotLimitFor());snapshotCache=legacy.slice(-snapshotLimitFor()).map(snapshot=>({id:snapshot.id,date:snapshot.date,createdAt:snapshot.createdAt,hash:snapshot.hash,summary:summarize(snapshot.state||{}),bytes:bytesForText(JSON.stringify(snapshot.state||{}))}));return snapshotCache.find(entry=>entry.id===item.id)||item}
+    trimArchiveStore(snapshotCache,STORE_SNAPSHOTS,snapshotLimitFor());
+    trackArchiveWrite(persistArchive(STORE_SNAPSHOTS,item).then(stored=>{const meta=snapshotCache.find(entry=>entry.id===item.id);if(meta){meta.bytes=Number(stored.bytes||0);meta.summary=stored.summary}}).catch(error=>console.warn('Snapshot persistence failed.',error)));
+    return snapshotCache.find(entry=>entry.id===item.id)||item;
   };
 
   const createPreUpdateRollback=(rawState,fromVersion=Number(rawState?.version||0),label='Pre-update data')=>{
     if(!rawState||typeof rawState!=='object')return null;
-    const rollbacks=readList(ROLLBACK_KEY),serialized=JSON.stringify(rawState),hash=hashText(serialized);
-    const last=rollbacks[rollbacks.length-1];if(last&&last.hash===hash&&last.fromVersion===fromVersion)return last;
+    const serialized=JSON.stringify(rawState),hash=hashText(serialized),last=rollbackCache[rollbackCache.length-1];
+    if(last&&last.hash===hash&&last.fromVersion===fromVersion)return last;
     const item={id:uid('rollback'),createdAt:nowIso(),fromVersion,toVersion:VERSION,label,hash,state:clone(rawState)};
-    rollbacks.push(item);writeList(ROLLBACK_KEY,rollbacks,ROLLBACK_LIMIT);return item;
+    rollbackCache.push({id:item.id,createdAt:item.createdAt,fromVersion,toVersion:VERSION,label,hash,summary:summarize(rawState),bytes:0});
+    if(!indexedDbReady){const legacy=readLegacyList(ROLLBACK_KEY);legacy.push(item);writeLegacyList(ROLLBACK_KEY,legacy,ROLLBACK_LIMIT);rollbackCache=legacy.slice(-ROLLBACK_LIMIT).map(point=>({id:point.id,createdAt:point.createdAt,fromVersion:point.fromVersion,toVersion:point.toVersion,label:point.label,hash:point.hash,summary:summarize(point.state||{}),bytes:bytesForText(JSON.stringify(point.state||{}))}));return rollbackCache.find(entry=>entry.id===item.id)||item}
+    trimArchiveStore(rollbackCache,STORE_ROLLBACKS,ROLLBACK_LIMIT);
+    trackArchiveWrite(persistArchive(STORE_ROLLBACKS,item).then(stored=>{const meta=rollbackCache.find(entry=>entry.id===item.id);if(meta){meta.bytes=Number(stored.bytes||0);meta.summary=stored.summary}}).catch(error=>console.warn('Rollback persistence failed.',error)));
+    return rollbackCache.find(entry=>entry.id===item.id)||item;
   };
 
   const migrateLegacy=raw=>{
@@ -292,20 +378,12 @@
     const heldDirectiveKeys=[];const heldAttendanceIds=[];
     Object.entries(raw?.dayRecords||{}).forEach(([date,day])=>{
       if(!day||day.rewardApplied||!(Number(day.heldXp||0)>0||day.integrityStatus==='held'))return;
-      Object.entries(day.protocols||{}).forEach(([protocolId,protocol])=>{
-        if(protocol?.status==='cleared'&&Number(protocol.earnedXp||0)>0&&!protocol.profileXpAppliedAt)heldDirectiveKeys.push(`${date}|${protocolId}`);
-      });
+      Object.entries(day.protocols||{}).forEach(([protocolId,protocol])=>{if(protocol?.status==='cleared'&&Number(protocol.earnedXp||0)>0&&!protocol.profileXpAppliedAt)heldDirectiveKeys.push(`${date}|${protocolId}`)});
     });
     (raw?.attendanceRecords||[]).forEach(record=>{if(Number(record?.profileXpHeld||0)>0&&!record.profileXpAppliedAt)heldAttendanceIds.push(record.id)});
     const state=normalizeCurrent(raw||{});
     let currentDayXpRepair=0,legacyHeldXpReopened=0;
-    if(fromVersion<18){
-      const today=state.dayRecords?.[dateKey()];
-      if(today?.status==='failed')Object.values(today.protocols||{}).forEach(protocol=>{
-        const earned=Math.max(0,Number(protocol?.earnedXp||0)),applied=Math.max(0,Number(protocol?.profileXpAppliedAmount||0));
-        if(protocol?.status==='cleared'&&earned>0&&applied===earned&&!protocol.profileXpAppliedAt){protocol.profileXpAppliedAmount=0;currentDayXpRepair+=earned}
-      });
-    }
+    if(fromVersion<18){const today=state.dayRecords?.[dateKey()];if(today?.status==='failed')Object.values(today.protocols||{}).forEach(protocol=>{const earned=Math.max(0,Number(protocol?.earnedXp||0)),applied=Math.max(0,Number(protocol?.profileXpAppliedAmount||0));if(protocol?.status==='cleared'&&earned>0&&applied===earned&&!protocol.profileXpAppliedAt){protocol.profileXpAppliedAmount=0;currentDayXpRepair+=earned}})}
     heldDirectiveKeys.forEach(key=>{const [date,protocolId]=key.split('|'),protocol=state.dayRecords?.[date]?.protocols?.[protocolId];if(protocol?.status==='cleared'&&!protocol.profileXpAppliedAt){legacyHeldXpReopened+=Math.max(0,Number(protocol.earnedXp||0)-Number(protocol.profileXpAppliedAmount||0));protocol.profileXpAppliedAmount=0}});
     heldAttendanceIds.forEach(id=>{const record=state.attendanceRecords.find(item=>item.id===id);if(record&&!record.profileXpAppliedAt){legacyHeldXpReopened+=Math.max(0,Number(record.xpAwarded||0)-Number(record.profileXpAppliedAmount||0));record.profileXpAppliedAmount=0}});
     if(['clean-timeline','recovery-action','attendance'].includes(state.quests?.daily?.id))state.quests.daily=null;
@@ -313,53 +391,93 @@
     if(fromVersion<22){
       Object.values(state.dayRecords||{}).forEach(day=>{
         const workout=day?.protocols?.workout;if(!workout||!['pending','active'].includes(workout.status))return;
-        workout.start='08:00';workout.end='09:30';
-        const steps=Array.isArray(workout.steps)?workout.steps:[];
-        workout.steps=steps.filter(step=>step?.id!=='workout-enter');
-        if(!workout.steps.some(step=>step?.id==='workout-shower')){
-          const confirmIndex=workout.steps.findIndex(step=>step?.id==='workout-confirm');
-          const shower={id:'workout-shower',title:'Shower & Recover',copy:['Shower, change into clean clothes, hydrate, and finish your immediate post-workout recovery.','Clean up after training and prepare for the rest of the day.'],icon:'bath',type:'hold',status:'pending',startedAt:null,completedAt:null};
-          if(confirmIndex>=0)workout.steps.splice(confirmIndex,0,shower);else workout.steps.push(shower);
-        }
-      });
-      state.settings.externalCalendarConfirmed=false;
+        workout.start='08:00';workout.end='09:30';const steps=Array.isArray(workout.steps)?workout.steps:[];workout.steps=steps.filter(step=>step?.id!=='workout-enter');
+        if(!workout.steps.some(step=>step?.id==='workout-shower')){const confirmIndex=workout.steps.findIndex(step=>step?.id==='workout-confirm');const shower={id:'workout-shower',title:'Shower & Recover',copy:['Shower, change into clean clothes, hydrate, and finish your immediate post-workout recovery.','Clean up after training and prepare for the rest of the day.'],icon:'bath',type:'hold',status:'pending',startedAt:null,completedAt:null};if(confirmIndex>=0)workout.steps.splice(confirmIndex,0,shower);else workout.steps.push(shower)}
+      });state.settings.externalCalendarConfirmed=false;
     }
-    const migration={id:uid('migration'),at:nowIso(),fromVersion,toVersion:VERSION,label:'Calendar and attendance history support'};
+    const migration={id:uid('migration'),at:nowIso(),fromVersion,toVersion:VERSION,label:'IndexedDB scalable offline storage'};
     state.system.migrationHistory.push(migration);
-    state.logs.push({id:uid('log'),at:migration.at,type:'migration',message:`ASCEND data migrated from schema ${fromVersion||'legacy'} to ${VERSION}. A rollback point was retained.${currentDayXpRepair?` ${currentDayXpRepair} legacy current-day XP reopened for reconciliation.`:''}${legacyHeldXpReopened?` ${legacyHeldXpReopened} previously held XP reopened for immediate Profile synchronization.`:''}`});
+    state.logs.push({id:uid('log'),at:migration.at,type:'migration',message:`ASCEND data migrated from schema ${fromVersion||'legacy'} to ${VERSION}. IndexedDB is now the primary offline database and a rollback point was retained.${currentDayXpRepair?` ${currentDayXpRepair} legacy current-day XP reopened for reconciliation.`:''}${legacyHeldXpReopened?` ${legacyHeldXpReopened} previously held XP reopened for immediate Profile synchronization.`:''}`});
     state.logs=pruneLogs(state.logs);return state;
   };
 
-  const parseStateText=text=>{
-    if(!text)throw new Error('No saved state.');
-    const parsed=JSON.parse(text);if(!parsed?.player)throw new Error('Player record missing.');
-    return Number(parsed.version||0)<VERSION?migrateLegacy(parsed):normalizeCurrent(parsed);
+  const parseStateText=text=>{if(!text)throw new Error('No saved state.');const parsed=JSON.parse(text);if(!parsed?.player)throw new Error('Player record missing.');return Number(parsed.version||0)<VERSION?migrateLegacy(parsed):normalizeCurrent(parsed)};
+  const importLegacyArchives=async()=>{
+    const legacySnapshots=readLegacyList(SNAPSHOT_KEY),legacyRollbacks=readLegacyList(ROLLBACK_KEY);
+    for(const snapshot of legacySnapshots.slice(-SNAPSHOT_LIMIT)){
+      if(!snapshot?.state)continue;const item={id:snapshot.id||uid('snapshot'),date:snapshot.date||dateKey(new Date(snapshot.createdAt||Date.now())),createdAt:snapshot.createdAt||nowIso(),hash:snapshot.hash||hashText(JSON.stringify(snapshot.state)),state:normalizeCurrent(snapshot.state)};
+      const stored=await persistArchive(STORE_SNAPSHOTS,item);snapshotCache.push({id:item.id,date:item.date,createdAt:item.createdAt,hash:item.hash,summary:stored.summary,bytes:stored.bytes});
+    }
+    for(const point of legacyRollbacks.slice(-ROLLBACK_LIMIT)){
+      if(!point?.state)continue;const item={id:point.id||uid('rollback'),createdAt:point.createdAt||nowIso(),fromVersion:Number(point.fromVersion||0),toVersion:Number(point.toVersion||VERSION),label:point.label||'Legacy rollback',hash:point.hash||hashText(JSON.stringify(point.state)),state:point.state};
+      const stored=await persistArchive(STORE_ROLLBACKS,item);rollbackCache.push({id:item.id,createdAt:item.createdAt,fromVersion:item.fromVersion,toVersion:item.toVersion,label:item.label,hash:item.hash,summary:stored.summary,bytes:stored.bytes});
+    }
+    const recoveryText=store.getItem(RECOVERY_KEY);if(recoveryText){try{await idbPut(STORE_STATE,{key:'recovery',value:parseStateText(recoveryText),updatedAt:nowIso()})}catch(error){}}
+    trimArchiveStore(snapshotCache,STORE_SNAPSHOTS,SNAPSHOT_LIMIT);trimArchiveStore(rollbackCache,STORE_ROLLBACKS,ROLLBACK_LIMIT);
   };
 
-  const recoverState=()=>{
-    const attempts=[['recovery',store.getItem(RECOVERY_KEY)],...readList(SNAPSHOT_KEY).slice().reverse().map(snapshot=>[`snapshot:${snapshot.date}`,JSON.stringify(snapshot.state)]),...readList(ROLLBACK_KEY).slice().reverse().map(point=>[`rollback:${point.fromVersion}`,JSON.stringify(point.state)])];
-    for(const [source,text] of attempts){
-      try{const state=parseStateText(text);state.system.recoveredFrom=source;state.system.safeMode=true;state.logs.push({id:uid('log'),at:nowIso(),type:'recovery',message:`Automatic data recovery completed from ${source}. Safe Mode enabled.`});store.setItem(KEY,JSON.stringify(state));return state}catch(error){}
+  const writeCurrentState=state=>{
+    if(!database||!indexedDbReady)return Promise.reject(new Error('IndexedDB not ready.'));
+    const recoveryDue=Date.now()-lastRecoveryWriteAt>=RECOVERY_MIN_INTERVAL_MS;
+    try{
+      const tx=database.transaction(STORE_STATE,'readwrite'),objectStore=tx.objectStore(STORE_STATE);
+      if(recoveryDue){const get=objectStore.get('current');get.onsuccess=()=>{if(get.result?.value)objectStore.put({key:'recovery',value:get.result.value,updatedAt:nowIso()})};lastRecoveryWriteAt=Date.now()}
+      objectStore.put({key:'current',value:state,updatedAt:nowIso()});
+      pendingStatePromise=transactionDone(tx).then(()=>{lastKnownState=state;writeStorageMeta({lastWriteAt:nowIso()});storageEstimateCache={at:0,value:null}}).catch(error=>{console.warn('IndexedDB state write failed.',error);throw error});
+      return pendingStatePromise;
+    }catch(error){return Promise.reject(error)}
+  };
+  const scheduleStateWrite=(state,options={})=>{
+    pendingStateWrite=state;clearTimeout(pendingStateTimer);
+    const commit=()=>{pendingStateTimer=null;const target=pendingStateWrite;pendingStateWrite=null;if(!target)return;writeCurrentState(target).catch(error=>{try{store.setItem(KEY,JSON.stringify(target));writeStorageMeta({fallback:true})}catch(fallbackError){console.error('ASCEND persistence fallback failed.',fallbackError)}})};
+    if(options.critical)commit();else pendingStateTimer=setTimeout(commit,120);
+  };
+  const flush=async()=>{if(pendingStateTimer){clearTimeout(pendingStateTimer);pendingStateTimer=null;const target=pendingStateWrite;pendingStateWrite=null;if(target)await writeCurrentState(target)}await pendingStatePromise;await Promise.allSettled([...pendingArchiveWrites])};
+
+  const recoverState=async()=>{
+    const attempts=[];
+    try{const recovery=await idbGet(STORE_STATE,'recovery');if(recovery?.value)attempts.push(['recovery',recovery.value])}catch(error){}
+    for(const snapshot of [...snapshotCache].reverse())attempts.push([`snapshot:${snapshot.date}`,snapshot]);
+    for(const point of [...rollbackCache].reverse())attempts.push([`rollback:${point.fromVersion}`,point]);
+    for(const [source,payload] of attempts){
+      try{
+        let raw=payload;
+        if(source.startsWith('snapshot:'))raw=await decodeArchiveState(await idbGet(STORE_SNAPSHOTS,payload.id));
+        if(source.startsWith('rollback:'))raw=await decodeArchiveState(await idbGet(STORE_ROLLBACKS,payload.id));
+        const state=typeof raw==='string'?parseStateText(raw):(Number(raw?.version||0)<VERSION?migrateLegacy(raw):normalizeCurrent(raw));
+        state.system.recoveredFrom=source;state.system.safeMode=true;state.logs.push({id:uid('log'),at:nowIso(),type:'recovery',message:`Automatic data recovery completed from ${source}. Safe Mode enabled.`});await idbPut(STORE_STATE,{key:'current',value:state,updatedAt:nowIso()});return state;
+      }catch(error){}
     }
     const clean=initialState();clean.system.recoveredFrom='clean-state';clean.system.safeMode=true;return clean;
   };
 
-  const load=()=>{
+  const load=async()=>{
+    let dbReady=false;
+    try{await openDatabase();dbReady=true;await loadArchiveCaches()}catch(error){}
+    if(dbReady){
+      try{
+        const current=await idbGet(STORE_STATE,'current');
+        if(current?.value){const raw=current.value,state=Number(raw?.version||0)<VERSION?migrateLegacy(raw):normalizeCurrent(raw);if(Number(raw?.version||0)<VERSION)await idbPut(STORE_STATE,{key:'current',value:state,updatedAt:nowIso()});lastKnownState=state;cleanupLegacyStorage();return state}
+        const currentText=store.getItem(KEY);let state=null;
+        if(currentText)state=parseStateText(currentText);
+        if(!state){for(const key of LEGACY_KEYS){const legacy=store.getItem(key);if(!legacy)continue;state=migrateLegacy(JSON.parse(legacy));break}}
+        if(state){await importLegacyArchives();await idbPut(STORE_STATE,{key:'current',value:state,updatedAt:nowIso()});lastKnownState=state;await flush();cleanupLegacyStorage();writeStorageMeta({migrated:true,migratedAt:nowIso()});return state}
+        const clean=initialState();lastKnownState=clean;writeStorageMeta({migrated:true,migratedAt:nowIso()});return clean;
+      }catch(error){console.error('ASCEND IndexedDB load failed. Attempting recovery.',error);return recoverState()}
+    }
     try{
-      const current=store.getItem(KEY);
-      if(current){const parsed=JSON.parse(current);const state=Number(parsed?.version||0)<VERSION?migrateLegacy(parsed):normalizeCurrent(parsed);if(Number(parsed?.version||0)<VERSION){store.setItem(KEY,JSON.stringify(state));createDailySnapshot(state,true)}return state}
-      for(const key of LEGACY_KEYS){const legacy=store.getItem(key);if(!legacy)continue;const migrated=migrateLegacy(JSON.parse(legacy));store.setItem(KEY,JSON.stringify(migrated));createDailySnapshot(migrated,true);return migrated}
+      snapshotCache=readLegacyList(SNAPSHOT_KEY).slice(-SNAPSHOT_LIMIT).map(snapshot=>({id:snapshot.id,date:snapshot.date,createdAt:snapshot.createdAt,hash:snapshot.hash,summary:summarize(snapshot.state||{}),bytes:bytesForText(JSON.stringify(snapshot.state||{}))}));
+      rollbackCache=readLegacyList(ROLLBACK_KEY).slice(-ROLLBACK_LIMIT).map(point=>({id:point.id,createdAt:point.createdAt,fromVersion:point.fromVersion,toVersion:point.toVersion,label:point.label,hash:point.hash,summary:summarize(point.state||{}),bytes:bytesForText(JSON.stringify(point.state||{}))}));
+      const current=store.getItem(KEY);if(current){const parsed=JSON.parse(current),state=Number(parsed?.version||0)<VERSION?migrateLegacy(parsed):normalizeCurrent(parsed);return state}
+      for(const key of LEGACY_KEYS){const legacy=store.getItem(key);if(!legacy)continue;return migrateLegacy(JSON.parse(legacy))}
       return initialState();
-    }catch(error){console.error('ASCEND load failed. Attempting recovery.',error);return recoverState()}
+    }catch(error){console.error('ASCEND compatibility load failed.',error);const clean=initialState();clean.system.safeMode=true;return clean}
   };
 
   const persist=(state,options={})=>{
     const normalized=options.trusted?state:normalizeCurrent(state);normalized.updatedAt=nowIso();normalized.version=VERSION;normalized.logs=pruneLogs(normalized.logs);
-    const previous=store.getItem(KEY);
-    if(previous&&(options.forceRecovery||Date.now()-lastRecoveryWriteAt>=RECOVERY_MIN_INTERVAL_MS)){
-      try{JSON.parse(previous);store.setItem(RECOVERY_KEY,previous);lastRecoveryWriteAt=Date.now()}catch(error){}
-    }
-    try{store.setItem(KEY,JSON.stringify(normalized))}catch(error){normalized.logs=pruneLogs(normalized.logs).slice(-Math.floor(ROUTINE_LOG_LIMIT/2));store.setItem(KEY,JSON.stringify(normalized))}
+    if(indexedDbReady)scheduleStateWrite(normalized,{critical:Boolean(options.forceRecovery||options.critical)});
+    else{try{const previous=store.getItem(KEY);if(previous&&(options.forceRecovery||Date.now()-lastRecoveryWriteAt>=RECOVERY_MIN_INTERVAL_MS)){try{JSON.parse(previous);store.setItem(RECOVERY_KEY,previous);lastRecoveryWriteAt=Date.now()}catch(error){}}store.setItem(KEY,JSON.stringify(normalized))}catch(error){normalized.logs=pruneLogs(normalized.logs).slice(-Math.floor(ROUTINE_LOG_LIMIT/2));store.setItem(KEY,JSON.stringify(normalized))}}
     createDailySnapshot(normalized,Boolean(options.forceSnapshot),true);
     if(normalized!==state){Object.keys(state).forEach(key=>delete state[key]);Object.assign(state,normalized)}
     return state;
@@ -367,29 +485,29 @@
 
   const save=(state,options={})=>persist(state,options);
   const createBackup=state=>JSON.stringify({app:'ASCEND',backupVersion:BACKUP_VERSION,schemaVersion:VERSION,exportedAt:nowIso(),state:normalizeCurrent(clone(state))},null,2);
-  const parseBackup=text=>{
-    let parsed;try{parsed=JSON.parse(text)}catch(error){throw new Error('The selected file is not valid JSON.')}
-    const raw=parsed&&parsed.app==='ASCEND'&&parsed.state?parsed.state:parsed;
-    if(!raw||typeof raw!=='object'||Array.isArray(raw))throw new Error('The selected file does not contain ASCEND data.');
-    if(!raw.player||typeof raw.player!=='object')throw new Error('The backup is missing the Player record.');
-    return Number(raw.version||0)<VERSION?migrateLegacy(raw):normalizeCurrent(raw);
+  const parseBackup=text=>{let parsed;try{parsed=JSON.parse(text)}catch(error){throw new Error('The selected file is not valid JSON.')}const raw=parsed&&parsed.app==='ASCEND'&&parsed.state?parsed.state:parsed;if(!raw||typeof raw!=='object'||Array.isArray(raw))throw new Error('The selected file does not contain ASCEND data.');if(!raw.player||typeof raw.player!=='object')throw new Error('The backup is missing the Player record.');return Number(raw.version||0)<VERSION?migrateLegacy(raw):normalizeCurrent(raw)};
+  const summarize=state=>({initialized:Boolean(state.initialized),playerName:state.player?.codename||state.player?.name||'Player',level:Number(state.player?.level||1),rank:state.player?.rank||'E',days:Object.keys(state.dayRecords||{}).length,attendance:Array.isArray(state.attendanceRecords)?state.attendanceRecords.length:0,tasks:Array.isArray(state.academicTasks)?state.academicTasks.length:0,recurring:Array.isArray(state.recurringTaskRules)?state.recurringTaskRules.length:0,schedules:Array.isArray(state.classSchedule)?state.classSchedule.length:0,exceptions:Array.isArray(state.scheduleExceptions)?state.scheduleExceptions.length:0,trading:Array.isArray(state.tradingNotes)?state.tradingNotes.length:0,logs:Array.isArray(state.logs)?state.logs.length:0,updatedAt:state.updatedAt||state.createdAt||nowIso()});
+  const listSnapshots=()=>[...snapshotCache].sort((a,b)=>String(b.createdAt||'').localeCompare(String(a.createdAt||''))).map(item=>({id:item.id,date:item.date,createdAt:item.createdAt,summary:item.summary||{},bytes:Number(item.bytes||0)}));
+  const restoreSnapshot=async id=>{if(!indexedDbReady){const snapshot=readLegacyList(SNAPSHOT_KEY).find(item=>item.id===id);if(!snapshot?.state)throw new Error('Snapshot not found.');return normalizeCurrent(clone(snapshot.state))}const record=await idbGet(STORE_SNAPSHOTS,id);if(!record)throw new Error('Snapshot not found.');return normalizeCurrent(await decodeArchiveState(record))};
+  const listRollbackPoints=()=>[...rollbackCache].sort((a,b)=>String(b.createdAt||'').localeCompare(String(a.createdAt||''))).map(item=>({id:item.id,createdAt:item.createdAt,fromVersion:item.fromVersion,toVersion:item.toVersion,label:item.label,summary:item.summary||{},bytes:Number(item.bytes||0)}));
+  const restoreRollbackPoint=async id=>{if(!indexedDbReady){const point=readLegacyList(ROLLBACK_KEY).find(item=>item.id===id);if(!point?.state)throw new Error('Rollback point not found.');return normalizeCurrent(clone(point.state))}const record=await idbGet(STORE_ROLLBACKS,id);if(!record)throw new Error('Rollback point not found.');return normalizeCurrent(await decodeArchiveState(record))};
+  const storageBytes=state=>{try{return bytesForText(JSON.stringify(state||{}))}catch(error){return 0}};
+  const storageStats=async(state=null,force=false)=>{
+    if(!force&&storageEstimateCache.value&&Date.now()-storageEstimateCache.at<30000)return storageEstimateCache.value;
+    let usage=0,quota=0,persisted=false;try{const estimate=await navigator.storage?.estimate?.();usage=Number(estimate?.usage||0);quota=Number(estimate?.quota||0)}catch(error){}try{persisted=Boolean(await navigator.storage?.persisted?.())}catch(error){}
+    const archiveBytes=[...snapshotCache,...rollbackCache].reduce((sum,item)=>sum+Number(item.bytes||0),0),primaryBytes=state?storageBytes(state):0,legacyBytes=legacyLocalBytes();
+    const value={backend:indexedDbReady?'IndexedDB':'localStorage',usage,quota,ratio:quota?usage/quota:0,persisted,primaryBytes,archiveBytes,legacyBytes,snapshotCount:snapshotCache.length,rollbackCount:rollbackCache.length,migrated:Boolean(readStorageMeta().migrated)};
+    storageEstimateCache={at:Date.now(),value};return value;
   };
-  const summarize=state=>({
-    initialized:Boolean(state.initialized),playerName:state.player?.codename||state.player?.name||'Player',level:Number(state.player?.level||1),rank:state.player?.rank||'E',
-    days:Object.keys(state.dayRecords||{}).length,attendance:Array.isArray(state.attendanceRecords)?state.attendanceRecords.length:0,tasks:Array.isArray(state.academicTasks)?state.academicTasks.length:0,
-    recurring:Array.isArray(state.recurringTaskRules)?state.recurringTaskRules.length:0,schedules:Array.isArray(state.classSchedule)?state.classSchedule.length:0,exceptions:Array.isArray(state.scheduleExceptions)?state.scheduleExceptions.length:0,
-    trading:Array.isArray(state.tradingNotes)?state.tradingNotes.length:0,logs:Array.isArray(state.logs)?state.logs.length:0,updatedAt:state.updatedAt||state.createdAt||nowIso()
-  });
-  const listSnapshots=()=>readList(SNAPSHOT_KEY).map(({id,date,createdAt,state})=>({id,date,createdAt,summary:summarize(state)})).reverse();
-  const restoreSnapshot=id=>{const snapshot=readList(SNAPSHOT_KEY).find(item=>item.id===id);if(!snapshot)throw new Error('Snapshot not found.');return normalizeCurrent(clone(snapshot.state))};
-  const listRollbackPoints=()=>readList(ROLLBACK_KEY).map(({id,createdAt,fromVersion,toVersion,label,state})=>({id,createdAt,fromVersion,toVersion,label,summary:summarize(state)})).reverse();
-  const restoreRollbackPoint=id=>{const point=readList(ROLLBACK_KEY).find(item=>item.id===id);if(!point)throw new Error('Rollback point not found.');return normalizeCurrent(clone(point.state))};
-  const storageBytes=state=>{
-    const primary=JSON.stringify(state||{}),snapshots=store.getItem(SNAPSHOT_KEY)||'[]',recovery=store.getItem(RECOVERY_KEY)||'',rollbacks=store.getItem(ROLLBACK_KEY)||'[]';
-    return new TextEncoder().encode(primary+snapshots+recovery+rollbacks).length;
+  const compactOldHistory=(state,days=120)=>{const cutoff=new Date();cutoff.setHours(0,0,0,0);cutoff.setDate(cutoff.getDate()-Math.max(30,Number(days||120)));let compactedDays=0,removedCopies=0;Object.entries(state.dayRecords||{}).forEach(([key,day])=>{const date=new Date(`${key}T12:00:00`);if(Number.isNaN(date.getTime())||date>=cutoff||!day||typeof day!=='object')return;let changed=false;Object.values(day.protocols||{}).forEach(protocol=>(protocol?.steps||[]).forEach(step=>{if(Object.prototype.hasOwnProperty.call(step,'copy')){delete step.copy;removedCopies+=1;changed=true}if(Object.prototype.hasOwnProperty.call(step,'icon')){delete step.icon;changed=true}}));if(changed){day.archivedDetail=true;compactedDays+=1}});return{compactedDays,removedCopies}};
+  const optimizeStorage=async state=>{
+    const before=await storageStats(state,true);const compaction=compactOldHistory(state,120);state.logs=pruneLogs(state.logs);state.system.auditTrail=Array.isArray(state.system.auditTrail)?state.system.auditTrail.slice(-160):[];state.system.developerTest.reports=Array.isArray(state.system.developerTest.reports)?state.system.developerTest.reports.slice(-20):[];state.system.developerTest.labHistory=Array.isArray(state.system.developerTest.labHistory)?state.system.developerTest.labHistory.slice(-24):[];
+    const dedupe=(cache,storeName,limit)=>{const seen=new Set(),keep=[];[...cache].sort((a,b)=>String(b.createdAt||'').localeCompare(String(a.createdAt||''))).forEach(item=>{const key=item.hash||item.id;if(seen.has(key)||keep.length>=limit){trackArchiveWrite(idbDelete(storeName,item.id).catch(()=>{}));return}seen.add(key);keep.push(item)});return keep.sort((a,b)=>String(a.createdAt||'').localeCompare(String(b.createdAt||'')))};
+    if(indexedDbReady){snapshotCache=dedupe(snapshotCache,STORE_SNAPSHOTS,SNAPSHOT_LIMIT);rollbackCache=dedupe(rollbackCache,STORE_ROLLBACKS,ROLLBACK_LIMIT);cleanupLegacyStorage()}
+    persist(state,{trusted:true,forceRecovery:true});await flush();storageEstimateCache={at:0,value:null};const after=await storageStats(state,true);return{before,after,compaction};
   };
   const clearRecoveryNotice=state=>{if(state?.system)state.system.recoveredFrom=null;return state};
-  const schemaInfo=()=>({version:VERSION,backupVersion:BACKUP_VERSION,key:KEY,rollbackCount:readList(ROLLBACK_KEY).length,snapshotCount:readList(SNAPSHOT_KEY).length});
+  const schemaInfo=()=>({version:VERSION,backupVersion:BACKUP_VERSION,key:KEY,backend:indexedDbReady?'indexeddb':'localStorage',rollbackCount:rollbackCache.length,snapshotCount:snapshotCache.length});
 
-  A.storage={load,save,dateKey,uid,createBackup,parseBackup,summarize,pruneLogs,normalizeCurrent,createDailySnapshot,listSnapshots,restoreSnapshot,createPreUpdateRollback,listRollbackPoints,restoreRollbackPoint,storageBytes,clearRecoveryNotice,schemaInfo,timezoneName,timezoneOffset};
+  A.storage={load,save,flush,dateKey,uid,createBackup,parseBackup,summarize,pruneLogs,normalizeCurrent,createDailySnapshot,listSnapshots,restoreSnapshot,createPreUpdateRollback,listRollbackPoints,restoreRollbackPoint,storageBytes,storageStats,optimizeStorage,clearRecoveryNotice,schemaInfo,timezoneName,timezoneOffset};
 })();

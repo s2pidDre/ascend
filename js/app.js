@@ -1,8 +1,8 @@
-(function(){
+(async function(){
   'use strict';
   const A=window.ASCEND;
   const S=A.storage;
-  let state=S.load();
+  let state=await S.load();
   let transitionLocked=false;
   let transitionTimer=null;
   let wakeLock=null;
@@ -19,7 +19,7 @@
   let clockSuppressClick=false;
   let escapeTimer=null;
   let scheduleUi={view:'home',day:new Date().getDay(),page:0,editId:null,isNew:false};
-  let controlUi={view:'home',profilePage:0,profileMonth:null,profileDay:null,attendanceTab:'overall',subjectIndex:0,subjectAbsencePage:0,subjectFilter:'all',unverifiedIndex:0,unverifiedResolveId:null,attendanceEditId:null,historyIndex:0,correction:false,taskTab:'tasks',taskIndex:0,ruleIndex:0,dependencyIndex:0,rollbackIndex:0,directDeveloper:false,directProfile:false};
+  let controlUi={view:'home',reliabilityReturn:'advanced',profilePage:0,profileMonth:null,profileDay:null,attendanceTab:'overall',subjectIndex:0,subjectAbsencePage:0,subjectFilter:'all',unverifiedIndex:0,unverifiedResolveId:null,attendanceEditId:null,historyIndex:0,correction:false,taskTab:'tasks',taskIndex:0,ruleIndex:0,dependencyIndex:0,rollbackIndex:0,directDeveloper:false,directProfile:false};
   let developerRunSession=null;
   let developerClockTimer=null;
   let conflictUi={index:0,issues:[]};
@@ -1084,14 +1084,16 @@
     if(record?.weeklyBoss&&record.weeklyBossPlan){const boss=record.protocols?.productivity,start=recordMoment(record,blueprint('productivity')?.start||'20:30'),delta=start-now;if(boss?.status==='pending'&&delta>0&&delta<=lead)sendLocalNotification(`${record.date}:weekly-boss`, `Weekly Boss: ${record.weeklyBossPlan.title}`,record.weeklyBossPlan.copy)}
     Object.values(record?.protocols||{}).filter(protocol=>protocol.status==='failed'&&protocol.completedAt&&now-new Date(protocol.completedAt)<=60*60000).forEach(protocol=>sendLocalNotification(`${record.date}:${protocol.id}:failed`,`${protocol.name} failed`,protocol.failureReason||'The fixed deadline passed.'));
   };
-  const storageReport=async()=>{
-    const localBytes=S.storageBytes(state);let usage=localBytes,quota=5*1024*1024;
-    try{const estimate=await navigator.storage?.estimate?.();if(estimate){usage=Math.max(usage,Number(estimate.usage||0));quota=Number(estimate.quota||quota)}}catch(error){}
-    return{usage,quota,ratio:quota?usage/quota:0,localBytes};
-  };
+  const formatBytes=value=>{const bytes=Math.max(0,Number(value||0));if(bytes<1024)return`${Math.round(bytes)} B`;const units=['KB','MB','GB','TB'];let size=bytes/1024,index=0;while(size>=1024&&index<units.length-1){size/=1024;index+=1}return`${size>=100?Math.round(size):size>=10?size.toFixed(1):size.toFixed(2)} ${units[index]}`};
+  const storageReport=async(force=false)=>S.storageStats?S.storageStats(state,force):{backend:'localStorage',usage:S.storageBytes(state),quota:5*1024*1024,ratio:S.storageBytes(state)/(5*1024*1024),persisted:false,primaryBytes:S.storageBytes(state),archiveBytes:0,legacyBytes:0,snapshotCount:S.listSnapshots().length,rollbackCount:S.listRollbackPoints().length};
   const checkStoragePressure=async(force=false)=>{
-    if(!force&&Date.now()-storageCheckAt<60000)return;storageCheckAt=Date.now();const report=await storageReport();
-    if(report.ratio>=.8||report.localBytes>=4*1024*1024){const today=S.dateKey();if(state.system.lastStorageWarningAt!==today){state.system.lastStorageWarningAt=today;state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'system',message:'Local storage pressure warning issued.'});save({silent:true});showSystemNotice('alert','STORAGE CAPACITY WARNING','Export a backup. Routine logs are being limited automatically.',4200)}}
+    if(!force&&Date.now()-storageCheckAt<60000)return;storageCheckAt=Date.now();let report=await storageReport(force);
+    if(report.backend==='IndexedDB'&&report.ratio>=.8&&S.optimizeStorage){
+      const lastOptimize=state.system.lastStorageOptimizeAt?new Date(state.system.lastStorageOptimizeAt).getTime():0;
+      if(!Number.isFinite(lastOptimize)||Date.now()-lastOptimize>24*60*60*1000){try{await S.optimizeStorage(state);state.system.lastStorageOptimizeAt=new Date().toISOString();save({silent:true,critical:true});report=await storageReport(true)}catch(error){}}
+    }
+    const high=report.ratio>=.9||(report.backend!=='IndexedDB'&&report.primaryBytes>=4*1024*1024);
+    if(high){const today=S.dateKey();if(state.system.lastStorageWarningAt!==today){state.system.lastStorageWarningAt=today;state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'system',message:'Storage pressure warning issued.'});save({silent:true});showSystemNotice('alert','STORAGE CAPACITY WARNING',report.backend==='IndexedDB'?'ASCEND optimized its local database. Export a backup if device storage is also running low.':'Browser fallback storage is nearly full. Keep this tab open so ASCEND can migrate to IndexedDB.',4600)}}
     return report;
   };
 
@@ -1849,7 +1851,7 @@
     $('#rollbackNav').hidden=points.length<=1;$('#rollbackPageLabel').textContent=points.length?`${controlUi.rollbackIndex+1} / ${points.length}`:'0 / 0';$('#rollbackPrev').disabled=controlUi.rollbackIndex===0;$('#rollbackNext').disabled=controlUi.rollbackIndex>=points.length-1;$('#restoreRollback').hidden=!point;
     $('#rollbackRecord').innerHTML=point?`<span>${formatShortDate(point.createdAt)} · SCHEMA ${point.fromVersion}</span><strong>${escapeHtml(point.label)}</strong><small>${escapeHtml(point.summary.playerName)} · Level ${Number(point.summary.level)||0} · ${Number(point.summary.days)||0} day records · ${Number(point.summary.tasks)||0} tasks</small>`:'<div class="schedule-empty"><strong>No Migration Rollback</strong><span>A rollback point is created automatically before a future data-schema migration.</span></div>';
   };
-  const restoreSelectedRollback=()=>{const point=S.listRollbackPoints()[controlUi.rollbackIndex];if(!point)return;try{state=S.restoreRollbackPoint(point.id);state.system.safeMode=true;state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'restore',message:`Migration rollback restored from schema ${point.fromVersion}.`});save({silent:true});closeScheduleOverlay();activeScreenId=null;applySafeMode();renderApp();showBreachWarning('ROLLBACK RESTORED','Pre-update data was restored in Safe Mode.','clear')}catch(error){showBreachWarning('ROLLBACK FAILED',error.message||'Rollback data could not be restored.')}};
+  const restoreSelectedRollback=async()=>{const point=S.listRollbackPoints()[controlUi.rollbackIndex];if(!point)return;try{state=await S.restoreRollbackPoint(point.id);state.system.safeMode=true;state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'restore',message:`Migration rollback restored from schema ${point.fromVersion}.`});save({silent:true});closeScheduleOverlay();activeScreenId=null;applySafeMode();renderApp();showBreachWarning('ROLLBACK RESTORED','Pre-update data was restored in Safe Mode.','clear')}catch(error){showBreachWarning('ROLLBACK FAILED',error.message||'Rollback data could not be restored.')}};
   const collectDiagnostics=async()=>{
     let persistent='UNKNOWN';try{persistent=navigator.storage?.persisted?await navigator.storage.persisted()?'READY':'AVAILABLE':'UNSUPPORTED'}catch(error){persistent='BLOCKED'}
     return[
@@ -2101,16 +2103,21 @@
   };
   const renderReliability=async()=>{
     setControlView('systemReliabilityView');
-    const snapshots=S.listSnapshots();const report=await storageReport();const percent=Math.min(999,Math.round(report.ratio*100));
+    const snapshots=S.listSnapshots();const report=await storageReport(true);const percent=Math.min(999,Math.round(report.ratio*100));
     $('#reliabilityTimezoneStatus').textContent=`UTC ${timezoneOffsetLabel(state.timezone?.offset??S.timezoneOffset())}`;
-    $('#reliabilityStorageStatus').textContent=report.ratio>=.8?'HIGH':`${percent}%`;
-    $('#reliabilitySnapshotCount').textContent=`${snapshots.length} / 7`;
+    $('#reliabilityStorageStatus').textContent=report.ratio>=.9?'HIGH':report.ratio>=.75?'WATCH':`${percent}%`;
+    $('#reliabilitySnapshotCount').textContent=`${snapshots.length} / 3`;
     $('#reliabilityNotificationStatus').textContent=state.settings.notifications&&('Notification' in window)&&Notification.permission==='granted'?'ON':'OFF';
-    $('#reliabilityCopy').textContent=`Local recovery and alerts remain available offline · ${state.timezone?.name||S.timezoneName()}.`;
+    $('#reliabilityCopy').textContent=`Indexed offline storage, recovery, and alerts remain available without internet · ${state.timezone?.name||S.timezoneName()}.`;
     $('#reviewTimezone').textContent=state.timezone?.pending?'Review Detected Timezone':'Review Timezone';
     $('#toggleNotifications b').textContent=state.settings.notifications?'Disable Local Alerts':'Enable Local Alerts';
     $('#toggleWakeLock b').textContent=`Keep Screen Awake: ${state.settings.keepAwake?'On':'Off'}`;
     $('#restoreLatestSnapshot').disabled=!snapshots.length;
+    const health=report.ratio>=.9?'HIGH':report.ratio>=.75?'WATCH':'GOOD',available=Math.max(0,Number(report.quota||0)-Number(report.usage||0));
+    $('#storageHealthLabel').textContent=health;$('#storageBackendLabel').textContent=String(report.backend||'Local').toUpperCase();$('#storageUsedLabel').textContent=report.usage?formatBytes(report.usage):formatBytes(report.primaryBytes);$('#storageAvailableLabel').textContent=report.quota?formatBytes(available):'Browser managed';$('#storagePersistentLabel').textContent=report.persisted?'PROTECTED':'STANDARD';$('#storageMeterFill').style.width=`${Math.min(100,Math.max(2,percent))}%`;
+    $('#storageManagerCopy').textContent=report.backend==='IndexedDB'?`${report.snapshotCount} compressed recovery snapshot(s) · ${report.rollbackCount} rollback point(s) · heavy ASCEND data no longer lives in localStorage.${report.persisted?' Browser persistence protection is active.':' You can request browser persistence protection below.'}`:'IndexedDB is unavailable in this browser, so ASCEND is using compatibility storage with a smaller quota.';
+    $('#requestStoragePersistence').disabled=report.persisted||!navigator.storage?.persist;
+    $('#requestStoragePersistence').textContent=report.persisted?'Offline Data Protected':'Protect Offline Data';
   };
   const toggleNotifications=async()=>{
     if(!('Notification' in window)){showBreachWarning('ALERTS NOT SUPPORTED','This browser does not support local notifications.');return}
@@ -2118,9 +2125,9 @@
     else state.settings.notifications=false;
     state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'system',message:`Local alerts ${state.settings.notifications?'enabled':'disabled'}.`});save();renderReliability();
   };
-  const restoreLatestSnapshot=()=>{
+  const restoreLatestSnapshot=async()=>{
     const latest=S.listSnapshots()[0];if(!latest){showBreachWarning('NO SNAPSHOT','No automatic recovery snapshot is available.');return}
-    try{state=S.restoreSnapshot(latest.id);state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'restore',message:`Latest automatic snapshot restored: ${latest.date}.`});save({silent:true});closeScheduleOverlay();activeScreenId=null;renderApp();showSystemNotice('restore','SNAPSHOT RESTORED',`Recovered local state from ${latest.date}.`,3200)}catch(error){showBreachWarning('RESTORE FAILED',error.message||'Snapshot could not be restored.')}
+    try{state=await S.restoreSnapshot(latest.id);state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'restore',message:`Latest automatic snapshot restored: ${latest.date}.`});save({silent:true});closeScheduleOverlay();activeScreenId=null;renderApp();showSystemNotice('restore','SNAPSHOT RESTORED',`Recovered local state from ${latest.date}.`,3200)}catch(error){showBreachWarning('RESTORE FAILED',error.message||'Snapshot could not be restored.')}
   };
   const profilePages=['Overview','Identity'];
   const profileMonthKey=date=>`${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}`;
@@ -2647,16 +2654,11 @@
     const prompt=$('#updatePrompt');if(prompt){prompt.hidden=false;void prompt.offsetWidth;prompt.classList.add('update-show')}
     showSystemNotice('update','SYSTEM UPDATE READY','Refresh when you are ready to load the newest build.',3000);
   };
-  const requestPersistentStorage=async()=>{
+  const requestPersistentStorage=async(force=false)=>{
     if(!navigator.storage?.persist||!navigator.storage?.persisted)return false;
-    if(safeSession.get('ascend-persistence-attempted')){
-      try{return await navigator.storage.persisted()}catch(error){return false}
-    }
+    if(!force&&safeSession.get('ascend-persistence-attempted')){try{return await navigator.storage.persisted()}catch(error){return false}}
     safeSession.set('ascend-persistence-attempted','1');
-    try{
-      if(await navigator.storage.persisted())return true;
-      return await navigator.storage.persist();
-    }catch(error){return false}
+    try{if(await navigator.storage.persisted())return true;return await navigator.storage.persist()}catch(error){return false}
   };
 
   const setupServiceWorker=()=>{
@@ -2759,10 +2761,11 @@
     $('#openAcademicTasks').addEventListener('click',()=>{controlUi.taskTab='tasks';renderAcademicTasks()});
     $('#openAdvancedSystem').addEventListener('click',renderAdvancedSystemHome);
     $('#openDataBackup').addEventListener('click',()=>{backupUi={pending:null,fileName:''};renderDataBackup()});
-    $('#openSystemReliability').addEventListener('click',renderReliability);
+    $('#openSystemReliability').addEventListener('click',()=>{controlUi.reliabilityReturn='advanced';renderReliability()});
     $('#academicBack').addEventListener('click',renderControlHome);
     $('#profileBack').addEventListener('click',closeScheduleOverlay);
     $('#settingsBack').addEventListener('click',()=>{settingsUi={pending:null,fileName:'',kind:''};controlUi.profilePage=0;controlUi.profileDay=null;renderProfile()});
+    $('#settingsManageStorage').addEventListener('click',()=>{controlUi.reliabilityReturn='settings';renderReliability()});
     $('#settingsSaveProgress').addEventListener('click',()=>exportSettingsData('progress'));
     $('#settingsSaveSchedule').addEventListener('click',()=>exportSettingsData('schedule'));
     $('#settingsSaveFull').addEventListener('click',()=>exportSettingsData('full'));
@@ -2781,7 +2784,7 @@
     $('#academicTasksBack').addEventListener('click',renderAcademicHome);
     $('#advancedSystemBack').addEventListener('click',renderAcademicHome);
     $('#dataBackupBack').addEventListener('click',()=>{backupUi={pending:null,fileName:''};renderRecoverySystem()});
-    $('#systemReliabilityBack').addEventListener('click',renderAdvancedSystemHome);
+    $('#systemReliabilityBack').addEventListener('click',()=>{if(controlUi.reliabilityReturn==='settings')renderSettings();else renderAdvancedSystemHome()});
     $('#taskManagerTabs').addEventListener('click',event=>{const button=event.target.closest('[data-task-tab]');if(!button)return;controlUi.taskTab=button.dataset.taskTab;renderTaskManager()});
     $('#taskManagerContent').addEventListener('click',handleTaskManagerAction);
     $('#advancedSystemHomeView').addEventListener('click',event=>{const button=event.target.closest('[data-advanced-view]');if(!button||button.classList.contains('developer-entry'))return;const view=button.dataset.advancedView;if(view==='updatesRollbackView')renderUpdatesRollback();else if(view==='systemReliabilityView')renderReliability();else if(view==='diagnosticsView')renderDiagnostics();else if(view==='externalRemindersView')renderExternalReminders();else if(view==='recoverySystemView')renderRecoverySystem()});
@@ -2835,6 +2838,8 @@
     $('#toggleWakeLock').addEventListener('click',()=>{state.settings.keepAwake=!state.settings.keepAwake;if(!state.settings.keepAwake)releaseWakeLock();else if(activeProtocolRecord())requestWakeLock();save();renderReliability()});
     $('#createRecoverySnapshot').addEventListener('click',()=>{S.createDailySnapshot(state,true);state.logs.push({id:S.uid('log'),at:new Date().toISOString(),type:'snapshot',message:'Manual recovery snapshot created.'});save({silent:true});showSystemNotice('snapshot','SNAPSHOT CREATED','A known-good recovery point was stored locally.',2600);renderReliability()});
     $('#restoreLatestSnapshot').addEventListener('click',restoreLatestSnapshot);
+    $('#optimizeStorage').addEventListener('click',async()=>{const button=$('#optimizeStorage');button.disabled=true;button.textContent='Optimizing…';try{flushSave({silent:true,critical:true});const result=await S.optimizeStorage?.(state);state.system.lastStorageOptimizeAt=new Date().toISOString();save({silent:true,critical:true});await S.flush?.();const before=result?.before?.usage||0,after=result?.after?.usage||0,freed=Math.max(0,before-after);showSystemNotice('save','STORAGE OPTIMIZED',result?.compaction?.compactedDays?`${result.compaction.compactedDays} older day record(s) were compacted and redundant recovery data was optimized. Attendance, results, XP, and directive statuses were preserved.`:freed>0?`${formatBytes(freed)} of redundant local data was reclaimed. Your records were preserved.`:'Storage indexes, recovery archives, and technical logs are already optimized.',3800)}catch(error){showBreachWarning('STORAGE OPTIMIZATION FAILED',error.message||'ASCEND could not optimize browser storage.')}finally{button.disabled=false;button.textContent='Optimize Storage';renderReliability()}});
+    $('#requestStoragePersistence').addEventListener('click',async()=>{const button=$('#requestStoragePersistence');button.disabled=true;const granted=await requestPersistentStorage(true);showSystemNotice(granted?'save':'alert',granted?'OFFLINE DATA PROTECTED':'STANDARD STORAGE ACTIVE',granted?'The browser granted persistent storage protection for ASCEND.':'This browser did not grant persistent storage. IndexedDB still remains active and offline.',3400);renderReliability()});
     $('#exportBackup').addEventListener('click',exportDataBackup);
     $('#chooseBackup').addEventListener('click',()=>$('#backupFileInput').click());
     $('#backupFileInput').addEventListener('change',event=>previewBackupFile(event.target.files?.[0]));
@@ -2943,8 +2948,8 @@
       if(document.hidden){cancelHold(null,'App left the foreground before confirmation completed');flushSave({silent:true,critical:true});releaseWakeLock()}
       else resumeRuntime();
     });
-    window.addEventListener('pagehide',()=>flushSave({silent:true,critical:true}));
-    window.addEventListener('beforeunload',()=>flushSave({silent:true,critical:true}));
+    window.addEventListener('pagehide',()=>{flushSave({silent:true,critical:true});S.flush?.().catch?.(()=>{})});
+    window.addEventListener('beforeunload',()=>{flushSave({silent:true,critical:true});S.flush?.().catch?.(()=>{})});
     window.addEventListener('pageshow',()=>{if(!document.hidden)resumeRuntime()});
     window.addEventListener('focus',()=>{if(!document.hidden)resumeRuntime()});
   };

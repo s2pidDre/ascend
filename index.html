@@ -386,6 +386,10 @@
               <div><strong>Everything</strong><small>Complete ASCEND backup, including progress, schedule, and settings.</small></div>
               <div class="settings-inline-actions"><button type="button" id="settingsSaveFull">Save</button><button type="button" id="settingsLoadFull">Load</button></div>
             </div>
+            <div class="settings-data-row">
+              <div><strong>Storage</strong><small>IndexedDB capacity, offline protection, and safe optimization.</small></div>
+              <div class="settings-inline-actions"><button type="button" id="settingsManageStorage">Manage</button></div>
+            </div>
             <input id="settingsProgressFile" type="file" accept="application/json,.json" hidden>
             <input id="settingsScheduleFile" type="file" accept="application/json,.json" hidden>
             <input id="settingsFullFile" type="file" accept="application/json,.json" hidden>
@@ -424,14 +428,29 @@
       <section class="system-reliability-view" id="systemReliabilityView" hidden>
         <div class="config-sigil glyph-frame" aria-hidden="true"><svg class="system-glyph" viewBox="0 0 24 24"><use href="#glyph-shield"></use></svg></div>
         <p class="eyebrow">SYSTEM RELIABILITY</p>
-        <h2>Snapshots & Alerts</h2>
+        <h2>Storage & Reliability</h2>
         <div class="reliability-summary">
           <div><span>TIMEZONE</span><strong id="reliabilityTimezoneStatus">LOCAL</strong></div>
           <div><span>STORAGE</span><strong id="reliabilityStorageStatus">CHECKING</strong></div>
-          <div><span>SNAPSHOTS</span><strong id="reliabilitySnapshotCount">0 / 7</strong></div>
+          <div><span>SNAPSHOTS</span><strong id="reliabilitySnapshotCount">0 / 3</strong></div>
           <div><span>ALERTS</span><strong id="reliabilityNotificationStatus">OFF</strong></div>
         </div>
         <p class="reliability-copy" id="reliabilityCopy">Local recovery snapshots and alerts are available offline.</p>
+        <div class="storage-manager" id="storageManager">
+          <div class="storage-manager-head"><span>OFFLINE STORAGE</span><strong id="storageHealthLabel">CHECKING</strong></div>
+          <div class="storage-meter" aria-hidden="true"><i id="storageMeterFill"></i></div>
+          <div class="storage-manager-grid">
+            <div><span>DATABASE</span><strong id="storageBackendLabel">CHECKING</strong></div>
+            <div><span>USED</span><strong id="storageUsedLabel">—</strong></div>
+            <div><span>AVAILABLE</span><strong id="storageAvailableLabel">—</strong></div>
+            <div><span>PROTECTION</span><strong id="storagePersistentLabel">CHECKING</strong></div>
+          </div>
+          <p id="storageManagerCopy">ASCEND is checking local database capacity.</p>
+          <div class="storage-manager-actions">
+            <button class="ghost-button" id="optimizeStorage" type="button">Optimize Storage</button>
+            <button class="ghost-button" id="requestStoragePersistence" type="button">Protect Offline Data</button>
+          </div>
+        </div>
         <div class="reliability-actions">
           <button class="ghost-button" id="reviewTimezone" type="button">Review Timezone</button>
           <button class="system-button compact-button" id="toggleNotifications" type="button"><b>Enable Local Alerts</b></button>
@@ -600,7 +619,7 @@
         <div class="recovery-system-summary" id="recoverySystemSummary"></div>
         <div class="control-actions">
           <button class="system-button compact-button" id="openDataBackup" type="button"><b>Backup & Restore</b></button>
-          <button class="system-button compact-button secondary-system-button" id="openSystemReliability" type="button"><b>Snapshots & Alerts</b></button>
+          <button class="system-button compact-button secondary-system-button" id="openSystemReliability" type="button"><b>Storage & Reliability</b></button>
           <button class="ghost-button" id="toggleSafeMode" type="button">Emergency Safe Mode</button>
           <button class="ghost-button" id="openEmergencyRecovery" type="button">Open Emergency Recovery</button>
         </div>
