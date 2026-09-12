@@ -1,5 +1,5 @@
 const CACHE_PREFIX='ascend-discipline-';
-const CACHE=`${CACHE_PREFIX}v68-indexeddb-storage`;
+const CACHE=`${CACHE_PREFIX}v69-directive-studio-simple`;
 const APP_SHELL=[
   './',
   './index.html',
